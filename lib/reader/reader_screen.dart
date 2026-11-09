@@ -108,14 +108,19 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
       _failedUrl = url;
     });
     try {
-      final adapter = ref.read(adapterRepoProvider).forUrl(url);
-      if (adapter == null) {
-        throw Exception('Chưa có adapter cho trang này. Vào Nguồn để thêm registry.');
-      }
       final db = ref.read(appDbProvider);
       ChapterContent? c;
       if (useCache) c = await db.getCachedChapter(url);
-      c ??= await ref.read(webFetcherProvider).fetchChapter(url, adapter);
+      if (c == null) {
+        if (url.startsWith('book:')) {
+          throw Exception('Chương này không còn trong máy. Hãy nhập lại sách.');
+        }
+        final adapter = ref.read(adapterRepoProvider).forUrl(url);
+        if (adapter == null) {
+          throw Exception('Chưa có adapter cho trang này. Vào Nguồn để thêm registry.');
+        }
+        c = await ref.read(webFetcherProvider).fetchChapter(url, adapter);
+      }
       final cc = c;
       await db.cacheChapter(cc);
       await db.setSetting('lastUrl', url);
@@ -145,7 +150,7 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
   }
 
   Future<void> _prefetchNext(String? url) async {
-    if (url == null) return;
+    if (url == null || url.startsWith('book:')) return;
     try {
       final db = ref.read(appDbProvider);
       if (await db.getCachedChapter(url) != null) return;
@@ -579,7 +584,7 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
               ),
               tooltip: 'Mục lục',
             ),
-          if (c != null)
+          if (c != null && !c.url.startsWith('book:'))
             IconButton(
               icon: _addingToLib
                   ? const SizedBox(

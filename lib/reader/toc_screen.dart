@@ -5,6 +5,10 @@ import '../core/providers.dart';
 import 'reader_screen.dart';
 
 String storyUrlFromChapter(String url) {
+  if (url.startsWith('book:')) {
+    final parts = url.split(':');
+    return parts.length >= 2 ? '${parts[0]}:${parts[1]}' : url;
+  }
   final uri = Uri.parse(url);
   final segs = [...uri.pathSegments];
   if (segs.isNotEmpty) segs.removeLast();
@@ -110,14 +114,15 @@ class _TocScreenState extends ConsumerState<TocScreen> {
       appBar: AppBar(
         title: Text(_title ?? 'Mục lục', maxLines: 1, overflow: TextOverflow.ellipsis),
         actions: [
-          IconButton(
-            icon: _downloading
-                ? const SizedBox(
-                    width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2))
-                : const Icon(Icons.download),
-            tooltip: 'Tải trước 5 chương',
-            onPressed: _downloading ? null : _downloadAhead,
-          ),
+          if (!widget.storyUrl.startsWith('book:'))
+            IconButton(
+              icon: _downloading
+                  ? const SizedBox(
+                      width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2))
+                  : const Icon(Icons.download),
+              tooltip: 'Tải trước 5 chương',
+              onPressed: _downloading ? null : _downloadAhead,
+            ),
         ],
       ),
       body: _loading

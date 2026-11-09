@@ -8,7 +8,7 @@ class AppDb {
 
   Future<Database> get database async => _db ??= await openDatabase(
         p.join(await getDatabasesPath(), 'story_reader.db'),
-        version: 1,
+        version: 2,
         onCreate: (db, v) async {
           await db.execute(
               'CREATE TABLE positions(url TEXT PRIMARY KEY, offset REAL NOT NULL, updated_at INTEGER NOT NULL)');
@@ -19,8 +19,17 @@ class AppDb {
               'CREATE TABLE library(story_url TEXT PRIMARY KEY, title TEXT NOT NULL, cover_url TEXT, last_chapter_url TEXT, updated_at INTEGER NOT NULL)');
           await db.execute(
               'CREATE TABLE toc(story_url TEXT NOT NULL, chapter_url TEXT NOT NULL, title TEXT NOT NULL, idx INTEGER NOT NULL, PRIMARY KEY(story_url, chapter_url))');
+          await _createLocalBooks(db);
+        },
+        onUpgrade: (db, from, to) async {
+          if (from < 2) await _createLocalBooks(db);
         },
       );
+
+  static Future<void> _createLocalBooks(Database db) async {
+    await db.execute(
+        'CREATE TABLE local_books(id TEXT PRIMARY KEY, title TEXT NOT NULL, author TEXT, format TEXT NOT NULL, cover_path TEXT, created_at INTEGER NOT NULL)');
+  }
 
   Future<void> savePosition(String url, double offset) async {
     final db = await database;
@@ -48,19 +57,25 @@ class AppDb {
     return rows.isEmpty ? null : rows.first['value'] as String;
   }
 
-  Future<void> cacheChapter(ChapterContent c) async {
+  Future<void> cacheChapter(ChapterContent c) => cacheChapters([c]);
+
+  Future<void> cacheChapters(List<ChapterContent> list) async {
     final db = await database;
-    await db.insert(
-        'chapter_cache',
-        {
-          'url': c.url,
-          'title': c.title,
-          'content': jsonEncode(c.paragraphs),
-          'next_url': c.nextUrl,
-          'prev_url': c.prevUrl,
-          'fetched_at': DateTime.now().millisecondsSinceEpoch,
-        },
-        conflictAlgorithm: ConflictAlgorithm.replace);
+    final batch = db.batch();
+    for (final c in list) {
+      batch.insert(
+          'chapter_cache',
+          {
+            'url': c.url,
+            'title': c.title,
+            'content': jsonEncode(c.paragraphs),
+            'next_url': c.nextUrl,
+            'prev_url': c.prevUrl,
+            'fetched_at': DateTime.now().millisecondsSinceEpoch,
+          },
+          conflictAlgorithm: ConflictAlgorithm.replace);
+    }
+    await batch.commit(noResult: true);
   }
 
   Future<ChapterContent?> getCachedChapter(String url) async {
@@ -119,6 +134,32 @@ class AppDb {
     final db = await database;
     await db.delete('library', where: 'story_url = ?', whereArgs: [storyUrl]);
     await db.delete('toc', where: 'story_url = ?', whereArgs: [storyUrl]);
+    if (storyUrl.startsWith('book:')) {
+      final id = storyUrl.substring(5);
+      await db.delete('chapter_cache', where: 'url LIKE ?', whereArgs: ['$storyUrl:%']);
+      await db.delete('local_books', where: 'id = ?', whereArgs: [id]);
+    }
+  }
+
+  Future<void> saveLocalBook({
+    required String id,
+    required String title,
+    String? author,
+    required String format,
+    String? coverPath,
+  }) async {
+    final db = await database;
+    await db.insert(
+        'local_books',
+        {
+          'id': id,
+          'title': title,
+          'author': author,
+          'format': format,
+          'cover_path': coverPath,
+          'created_at': DateTime.now().millisecondsSinceEpoch,
+        },
+        conflictAlgorithm: ConflictAlgorithm.replace);
   }
 
   Future<void> saveToc(String storyUrl, List<ChapterRef> chapters) async {
