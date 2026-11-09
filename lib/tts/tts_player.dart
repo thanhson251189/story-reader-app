@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_tts/flutter_tts.dart';
 import 'package:just_audio/just_audio.dart';
@@ -161,7 +162,10 @@ class TtsPlayer extends ChangeNotifier {
     try {
       final dir = await getTemporaryDirectory();
       final path = '${dir.path}/tts_chunk.wav';
-      final res = await _tts.synthesizeToFile(text, path);
+      // isFullPath=true: dùng overload File (fd mở phía app) để engine ghi
+      // được vào cache riêng; mặc định false đi nhánh MediaStore và kẹt.
+      final res = await _tts.synthesizeToFile(text, path, true);
+      debugPrint('TTS synth res=$res exists=${File(path).existsSync()}');
       return res == 1 ? path : null;
     } catch (e) {
       debugPrint('TTS synth error: $e');
