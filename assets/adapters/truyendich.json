@@ -1,0 +1,15 @@
+{
+  "id": "truyendich",
+  "domain": "truyendich.space",
+  "version": 1,
+  "selectors": {
+    "content": "#original-content-tab",
+    "nextLink": "a[aria-label='Chương sau']",
+    "prevLink": "a[aria-label='Chương trước']",
+    "chapterList": "a[href*='/chuong-']",
+    "storyTitle": "h1",
+    "cover": "img[data-fallback]"
+  },
+  "removeSelectors": ["script", "iframe", "ins", ".ads", ".advertisement"],
+  "textCleanup": []
+}
