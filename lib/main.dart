@@ -1,6 +1,7 @@
 import 'package:audio_service/audio_service.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:permission_handler/permission_handler.dart';
 import 'adapters/adapter_repository.dart';
 import 'core/providers.dart';
 import 'data/app_db.dart';
@@ -20,6 +21,7 @@ Future<void> main() async {
   final savedRate = double.tryParse(await db.getSetting('ttsRate') ?? '');
   if (savedRate != null) player.rate = savedRate;
   await player.init();
+  await Permission.notification.request();
   await AudioService.init(
     builder: () => TtsAudioHandler(player),
     config: const AudioServiceConfig(
