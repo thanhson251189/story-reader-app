@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_tts/flutter_tts.dart';
@@ -19,6 +20,7 @@ class SpeakChunk {
 class TtsPlayer extends ChangeNotifier {
   final FlutterTts _tts = FlutterTts();
   final AudioPlayer _audio = AudioPlayer();
+  final AudioPlayer _preview = AudioPlayer();
   final AppDb db;
   final WebFetcher fetcher;
   final AdapterRepository adapters;
@@ -29,6 +31,9 @@ class TtsPlayer extends ChangeNotifier {
   bool playing = false;
   bool loading = false;
   double rate = 0.5;
+  double pitch = 1.0;
+  List<Map<String, String>> voices = [];
+  Map<String, String>? currentVoice;
   String? voiceWarning;
   String? lastError;
   Timer? _sleepTimer;
@@ -37,6 +42,7 @@ class TtsPlayer extends ChangeNotifier {
   int _gen = 0;
   Completer<void>? _resumeWait;
   Completer<void>? _chunkDone;
+  Completer<void>? _synthIdle;
 
   TtsPlayer({required this.db, required this.fetcher, required this.adapters}) {
     // Phát trong process của app (foreground service mediaPlayback) để
@@ -60,19 +66,110 @@ class TtsPlayer extends ChangeNotifier {
   Future<void> init() async {
     final langResult = await _tts.setLanguage('vi-VN');
     await _tts.awaitSynthCompletion(true);
-    await _tts.setPitch(1.0);
     await _tts.setVolume(1.0);
+    pitch = double.tryParse(await db.getSetting('ttsPitch') ?? '') ?? 1.0;
+    await _tts.setPitch(pitch);
+    await reloadVoices();
+    await _restoreVoice();
+    if (langResult != 1 && viVoices.isEmpty) {
+      voiceWarning =
+          'Máy chưa có giọng tiếng Việt. Vào Cài đặt > Ngôn ngữ & nhập liệu > Chuyển văn bản thành giọng nói để tải giọng Google tiếng Việt.';
+    }
+  }
+
+  static bool _isVi(Map<String, String> v) =>
+      (v['locale'] ?? '').toLowerCase().startsWith('vi');
+
+  List<Map<String, String>> get viVoices => voices.where(_isVi).toList();
+
+  Future<void> reloadVoices() async {
     try {
-      final voices = await _tts.getVoices as List?;
-      final viVoices = voices
-          ?.where((v) => v.toString().toLowerCase().contains('vi'))
-          .toList();
-      debugPrint('TTS vi voices: $viVoices (langResult=$langResult)');
-      if (langResult != 1 && (viVoices == null || viVoices.isEmpty)) {
-        voiceWarning =
-            'Máy chưa có giọng tiếng Việt. Vào Cài đặt > Ngôn ngữ & nhập liệu > Chuyển văn bản thành giọng nói để tải giọng Google tiếng Việt.';
+      final raw = await _tts.getVoices as List?;
+      voices = (raw ?? [])
+          .whereType<Map>()
+          .map((m) => {
+                'name': '${m['name'] ?? ''}',
+                'locale': '${m['locale'] ?? ''}',
+                'quality': '${m['quality'] ?? ''}',
+                'latency': '${m['latency'] ?? ''}',
+                'network_required': '${m['network_required'] ?? '0'}',
+              })
+          .where((m) => m['name']!.isNotEmpty)
+          .toList()
+        ..sort((a, b) {
+          final av = _isVi(a) ? 0 : 1;
+          final bv = _isVi(b) ? 0 : 1;
+          if (av != bv) return av - bv;
+          return a['locale']!.compareTo(b['locale']!);
+        });
+      debugPrint('TTS voices loaded: ${voices.length}, vi=${viVoices.length}');
+      _notify();
+    } catch (e) {
+      debugPrint('TTS getVoices error: $e');
+    }
+  }
+
+  Future<void> _restoreVoice() async {
+    final raw = await db.getSetting('ttsVoice');
+    if (raw == null || raw.isEmpty) return;
+    try {
+      final m = jsonDecode(raw) as Map<String, dynamic>;
+      final name = m['name'] as String?;
+      final locale = m['locale'] as String?;
+      if (name == null || locale == null) return;
+      final res = await _tts.setVoice({'name': name, 'locale': locale});
+      if (res == 1) {
+        currentVoice = voices.firstWhere(
+          (v) => v['name'] == name && v['locale'] == locale,
+          orElse: () => {'name': name, 'locale': locale},
+        );
+      } else {
+        debugPrint('TTS saved voice not found: $name ($locale)');
       }
     } catch (_) {}
+  }
+
+  Future<bool> selectVoice(Map<String, String> v) async {
+    final name = v['name'];
+    final locale = v['locale'];
+    if (name == null || locale == null) return false;
+    final res = await _tts.setVoice({'name': name, 'locale': locale});
+    if (res != 1) return false;
+    currentVoice = Map<String, String>.from(v);
+    await db.setSetting('ttsVoice', jsonEncode({'name': name, 'locale': locale}));
+    _notify();
+    return true;
+  }
+
+  Future<void> useDefaultVoice() async {
+    // setLanguage đưa engine về giọng mặc định của vi-VN.
+    await _tts.setLanguage('vi-VN');
+    currentVoice = null;
+    await db.setSetting('ttsVoice', '');
+    _notify();
+  }
+
+  Future<void> setPitch(double v) async {
+    pitch = v.clamp(0.5, 2.0).toDouble();
+    await _tts.setPitch(pitch);
+    await db.setSetting('ttsPitch', pitch.toString());
+    _notify();
+  }
+
+  Future<String?> previewVoice() async {
+    if (playing) await pause();
+    while (_synthIdle != null) {
+      await _synthIdle!.future;
+    }
+    const sample = 'Xin chào! Đây là giọng đọc thử. Chúc bạn nghe truyện vui vẻ.';
+    final file = await _synth(sample, fileName: 'tts_preview.wav');
+    if (file == null) return null;
+    await _preview.stop();
+    await _preview.setFilePath(file);
+    await _preview.setSpeed(rate);
+    unawaited(_preview.play());
+    debugPrint('TTS preview playing');
+    return file;
   }
 
   static List<SpeakChunk> chunkify(ChapterContent c) {
@@ -115,6 +212,7 @@ class TtsPlayer extends ChangeNotifier {
     _chunkDone?.complete();
     _chunkDone = null;
     await _audio.stop();
+    await _preview.stop();
     chapter = c;
     chunks = chunkify(c);
     index = 0;
@@ -158,10 +256,11 @@ class TtsPlayer extends ChangeNotifier {
     }
   }
 
-  Future<String?> _synth(String text) async {
+  Future<String?> _synth(String text, {String fileName = 'tts_chunk.wav'}) async {
+    _synthIdle ??= Completer<void>();
     try {
       final dir = await getTemporaryDirectory();
-      final path = '${dir.path}/tts_chunk.wav';
+      final path = '${dir.path}/$fileName';
       // isFullPath=true: dùng overload File (fd mở phía app) để engine ghi
       // được vào cache riêng; mặc định false đi nhánh MediaStore và kẹt.
       final res = await _tts.synthesizeToFile(text, path, true);
@@ -170,6 +269,9 @@ class TtsPlayer extends ChangeNotifier {
     } catch (e) {
       debugPrint('TTS synth error: $e');
       return null;
+    } finally {
+      _synthIdle?.complete();
+      _synthIdle = null;
     }
   }
 
@@ -247,6 +349,7 @@ class TtsPlayer extends ChangeNotifier {
     _chunkDone?.complete();
     _chunkDone = null;
     await _audio.stop();
+    await _preview.stop();
     await WakelockPlus.disable();
     cancelSleepTimer();
     _notify();
@@ -272,6 +375,7 @@ class TtsPlayer extends ChangeNotifier {
     _chunkDone?.complete();
     _chunkDone = null;
     await _audio.stop();
+    await _preview.stop();
     loading = true;
     _notify();
     try {
@@ -337,6 +441,7 @@ class TtsPlayer extends ChangeNotifier {
     _signalResume();
     _chunkDone?.complete();
     _audio.dispose();
+    _preview.dispose();
     _tts.stop();
     super.dispose();
   }

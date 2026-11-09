@@ -115,11 +115,13 @@ class ReaderSettings {
   double lineHeight;
   String theme;
   double ttsRate;
+  double ttsPitch;
 
   ReaderSettings({
     this.fontSize = 20,
     this.lineHeight = 1.8,
     this.theme = 'light',
     this.ttsRate = 0.5,
+    this.ttsPitch = 1.0,
   });
 }

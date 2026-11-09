@@ -50,6 +50,7 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
     _settings.lineHeight = double.tryParse(await db.getSetting('lineHeight') ?? '') ?? 1.8;
     _settings.theme = await db.getSetting('readerTheme') ?? 'light';
     _settings.ttsRate = double.tryParse(await db.getSetting('ttsRate') ?? '') ?? 0.5;
+    _settings.ttsPitch = double.tryParse(await db.getSetting('ttsPitch') ?? '') ?? 1.0;
     if (mounted) setState(() {});
     await _load(widget.url);
   }
@@ -273,77 +274,271 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
     );
   }
 
-  void _openSettings() {
-    final db = ref.read(appDbProvider);
+  static bool _isViVoice(Map<String, String> v) =>
+      (v['locale'] ?? '').toLowerCase().startsWith('vi');
+
+  String _voiceTitle(Map<String, String> v) {
+    if (!_isViVoice(v)) return v['locale'] ?? (v['name'] ?? '');
+    final net = v['network_required'];
+    final tag = net == '1' ? ' · giọng mạng' : (net == '0' ? ' · ngoại tuyến' : '');
+    return 'Tiếng Việt (${v['locale']})$tag';
+  }
+
+  String _voiceSubtitle(Map<String, String> v) {
+    const q = {
+      'very high': 'rất cao',
+      'high': 'cao',
+      'normal': 'thường',
+      'low': 'thấp',
+      'very low': 'rất thấp',
+    };
+    final quality = q[v['quality']] ?? v['quality'] ?? '';
+    final net = v['network_required'] == '1' ? ' · cần Internet khi tạo âm thanh' : '';
+    return '${v['name']}$net${quality.isEmpty ? '' : ' · chất lượng $quality'}';
+  }
+
+  String _currentVoiceLabel() {
+    final v = _player.currentVoice;
+    return v == null ? 'Mặc định của máy' : _voiceTitle(v);
+  }
+
+  void _openVoicePicker(VoidCallback onChange) {
+    String? busy;
     showModalBottomSheet(
       context: context,
+      isScrollControlled: true,
       builder: (_) => StatefulBuilder(
-        builder: (ctx, setSheet) => Padding(
-          padding: const EdgeInsets.all(20),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text('Cỡ chữ: ${_settings.fontSize.round()}',
-                  style: Theme.of(context).textTheme.titleMedium),
-              Slider(
-                value: _settings.fontSize,
-                min: 14,
-                max: 32,
-                divisions: 18,
-                label: '${_settings.fontSize.round()}',
-                onChanged: (v) {
-                  setSheet(() {});
-                  setState(() => _settings.fontSize = v);
-                  db.setSetting('fontSize', v.toString());
-                },
-              ),
-              Text('Giãn dòng: ${_settings.lineHeight.toStringAsFixed(1)}',
-                  style: Theme.of(context).textTheme.titleMedium),
-              Slider(
-                value: _settings.lineHeight,
-                min: 1.2,
-                max: 2.4,
-                divisions: 12,
-                label: _settings.lineHeight.toStringAsFixed(1),
-                onChanged: (v) {
-                  setSheet(() {});
-                  setState(() => _settings.lineHeight = v);
-                  db.setSetting('lineHeight', v.toString());
-                },
-              ),
-              Text('Tốc độ đọc: ${_settings.ttsRate.toStringAsFixed(2)}',
-                  style: Theme.of(context).textTheme.titleMedium),
-              Slider(
-                value: _settings.ttsRate.clamp(0.3, 2.0),
-                min: 0.3,
-                max: 2.0,
-                divisions: 17,
-                label: _settings.ttsRate.toStringAsFixed(2),
-                onChanged: (v) {
-                  setSheet(() {});
-                  setState(() => _settings.ttsRate = v);
-                  _player.setRate(v);
-                },
-              ),
-              const SizedBox(height: 8),
-              SegmentedButton<String>(
-                segments: const [
-                  ButtonSegment(value: 'light', label: Text('Sáng'), icon: Icon(Icons.light_mode)),
-                  ButtonSegment(value: 'dark', label: Text('Tối'), icon: Icon(Icons.dark_mode)),
-                  ButtonSegment(value: 'sepia', label: Text('Vàng'), icon: Icon(Icons.menu_book)),
+        builder: (ctx, setV) {
+          final vi = _player.viVoices;
+          final list = vi.isNotEmpty ? vi : _player.voices;
+          bool selected(Map<String, String> v) =>
+              _player.currentVoice?['name'] == v['name'] &&
+              _player.currentVoice?['locale'] == v['locale'];
+          return ConstrainedBox(
+            constraints: BoxConstraints(maxHeight: MediaQuery.of(ctx).size.height * 0.85),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                ListTile(
+                  title: Text('Giọng đọc', style: Theme.of(ctx).textTheme.titleMedium),
+                  subtitle: Text(vi.isNotEmpty
+                      ? '${vi.length} giọng tiếng Việt trên máy'
+                      : (list.isEmpty
+                          ? 'Máy chưa trả về danh sách giọng'
+                          : 'Máy chưa có giọng tiếng Việt — tạm hiện ${list.length} giọng khác')),
+                  trailing: IconButton(
+                    icon: const Icon(Icons.refresh),
+                    tooltip: 'Tải lại danh sách',
+                    onPressed: () async {
+                      await _player.reloadVoices();
+                      setV(() {});
+                      onChange();
+                    },
+                  ),
+                ),
+                const Divider(height: 1),
+                Flexible(
+                  child: ListView(
+                    shrinkWrap: true,
+                    padding: EdgeInsets.only(bottom: 12 + MediaQuery.of(ctx).padding.bottom),
+                    children: [
+                      ListTile(
+                        leading: Icon(_player.currentVoice == null
+                            ? Icons.radio_button_checked
+                            : Icons.radio_button_off),
+                        title: const Text('Mặc định của máy'),
+                        subtitle: const Text('Máy tự chọn giọng tiếng Việt tốt nhất'),
+                        onTap: () async {
+                          await _player.useDefaultVoice();
+                          onChange();
+                          if (ctx.mounted) Navigator.pop(ctx);
+                        },
+                      ),
+                      for (final v in list)
+                        ListTile(
+                          leading: Icon(selected(v)
+                              ? Icons.radio_button_checked
+                              : Icons.radio_button_off),
+                          title: Text(_voiceTitle(v)),
+                          subtitle: Text(_voiceSubtitle(v)),
+                          trailing: busy == v['name']
+                              ? const SizedBox(
+                                  width: 20, height: 20,
+                                  child: CircularProgressIndicator(strokeWidth: 2))
+                              : const Icon(Icons.play_circle_outline),
+                          onTap: busy != null
+                              ? null
+                              : () async {
+                                  setV(() => busy = v['name']);
+                                  final ok = await _player.selectVoice(v);
+                                  onChange();
+                                  if (!ok) {
+                                    setV(() => busy = null);
+                                    if (mounted) {
+                                      ScaffoldMessenger.of(context).showSnackBar(
+                                          const SnackBar(
+                                              content: Text('Không đổi được giọng này')));
+                                    }
+                                    return;
+                                  }
+                                  final file = await _player.previewVoice();
+                                  if (!ctx.mounted) return;
+                                  setV(() => busy = null);
+                                  if (file == null && mounted) {
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                        const SnackBar(
+                                            content: Text('Không tạo được âm thanh thử')));
+                                  }
+                                },
+                        ),
+                    ],
+                  ),
+                ),
+                if (vi.length == 1)
+                  Padding(
+                    padding: EdgeInsets.fromLTRB(
+                        20, 8, 20, 12 + MediaQuery.of(ctx).padding.bottom),
+                    child: Text(
+                      'Máy chỉ có 1 giọng tiếng Việt. Dùng Cao độ (trầm ↔ cao) để đổi chất giọng, '
+                      'hoặc tải thêm giọng trong Cài đặt hệ thống → Ngôn ngữ & giọng nói → '
+                      'Chuyển văn bản thành giọng nói.',
+                      style: Theme.of(ctx).textTheme.bodySmall,
+                    ),
+                  ),
+              ],
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  void _openSettings() {
+    final db = ref.read(appDbProvider);
+    var previewing = false;
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      builder: (_) => StatefulBuilder(
+        builder: (ctx, setSheet) {
+          final titleStyle = Theme.of(ctx).textTheme.titleMedium;
+          return ConstrainedBox(
+            constraints: BoxConstraints(maxHeight: MediaQuery.of(ctx).size.height * 0.85),
+            child: SingleChildScrollView(
+              padding: EdgeInsets.fromLTRB(
+                  20, 16, 20, 20 + MediaQuery.of(ctx).padding.bottom),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    leading: const Icon(Icons.record_voice_over_outlined),
+                    title: Text('Giọng đọc: ${_currentVoiceLabel()}'),
+                    subtitle: Text(_player.viVoices.isEmpty
+                        ? 'Chưa lấy được danh sách giọng'
+                        : '${_player.viVoices.length} giọng tiếng Việt trên máy'),
+                    trailing: const Icon(Icons.chevron_right),
+                    onTap: () => _openVoicePicker(() => setSheet(() {})),
+                  ),
+                  Text(
+                      'Cao độ: ${_settings.ttsPitch.toStringAsFixed(1)} (trầm ↔ cao)',
+                      style: titleStyle),
+                  Slider(
+                    value: _settings.ttsPitch.clamp(0.5, 2.0),
+                    min: 0.5,
+                    max: 2.0,
+                    divisions: 15,
+                    label: _settings.ttsPitch.toStringAsFixed(1),
+                    onChanged: (v) {
+                      setSheet(() {});
+                      setState(() => _settings.ttsPitch = v);
+                      _player.setPitch(v);
+                    },
+                  ),
+                  Text('Tốc độ đọc: ${_settings.ttsRate.toStringAsFixed(2)}',
+                      style: titleStyle),
+                  Slider(
+                    value: _settings.ttsRate.clamp(0.3, 2.0),
+                    min: 0.3,
+                    max: 2.0,
+                    divisions: 17,
+                    label: _settings.ttsRate.toStringAsFixed(2),
+                    onChanged: (v) {
+                      setSheet(() {});
+                      setState(() => _settings.ttsRate = v);
+                      _player.setRate(v);
+                    },
+                  ),
+                  FilledButton.tonalIcon(
+                    onPressed: previewing
+                        ? null
+                        : () async {
+                            setSheet(() => previewing = true);
+                            final file = await _player.previewVoice();
+                            if (!mounted) return;
+                            setSheet(() => previewing = false);
+                            ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                                content: Text(file == null
+                                    ? 'Không tạo được âm thanh thử'
+                                    : 'Đang phát thử giọng hiện tại')));
+                          },
+                    icon: previewing
+                        ? const SizedBox(
+                            width: 16, height: 16,
+                            child: CircularProgressIndicator(strokeWidth: 2))
+                        : const Icon(Icons.volume_up),
+                    label: const Text('Nghe thử'),
+                  ),
+                  const SizedBox(height: 16),
+                  Text('Cỡ chữ: ${_settings.fontSize.round()}', style: titleStyle),
+                  Slider(
+                    value: _settings.fontSize,
+                    min: 14,
+                    max: 32,
+                    divisions: 18,
+                    label: '${_settings.fontSize.round()}',
+                    onChanged: (v) {
+                      setSheet(() {});
+                      setState(() => _settings.fontSize = v);
+                      db.setSetting('fontSize', v.toString());
+                    },
+                  ),
+                  Text('Giãn dòng: ${_settings.lineHeight.toStringAsFixed(1)}',
+                      style: titleStyle),
+                  Slider(
+                    value: _settings.lineHeight,
+                    min: 1.2,
+                    max: 2.4,
+                    divisions: 12,
+                    label: _settings.lineHeight.toStringAsFixed(1),
+                    onChanged: (v) {
+                      setSheet(() {});
+                      setState(() => _settings.lineHeight = v);
+                      db.setSetting('lineHeight', v.toString());
+                    },
+                  ),
+                  SegmentedButton<String>(
+                    segments: const [
+                      ButtonSegment(
+                          value: 'light', label: Text('Sáng'), icon: Icon(Icons.light_mode)),
+                      ButtonSegment(
+                          value: 'dark', label: Text('Tối'), icon: Icon(Icons.dark_mode)),
+                      ButtonSegment(
+                          value: 'sepia', label: Text('Vàng'), icon: Icon(Icons.menu_book)),
+                    ],
+                    selected: {_settings.theme},
+                    onSelectionChanged: (s) {
+                      setSheet(() {});
+                      setState(() => _settings.theme = s.first);
+                      db.setSetting('readerTheme', s.first);
+                    },
+                  ),
                 ],
-                selected: {_settings.theme},
-                onSelectionChanged: (s) {
-                  setSheet(() {});
-                  setState(() => _settings.theme = s.first);
-                  db.setSetting('readerTheme', s.first);
-                },
               ),
-              const SizedBox(height: 12),
-            ],
-          ),
-        ),
+            ),
+          );
+        },
       ),
     );
   }
