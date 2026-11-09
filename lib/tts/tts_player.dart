@@ -1,6 +1,8 @@
 import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_tts/flutter_tts.dart';
+import 'package:just_audio/just_audio.dart';
+import 'package:path_provider/path_provider.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
 import '../adapters/adapter_repository.dart';
 import '../core/models.dart';
@@ -15,6 +17,7 @@ class SpeakChunk {
 
 class TtsPlayer extends ChangeNotifier {
   final FlutterTts _tts = FlutterTts();
+  final AudioPlayer _audio = AudioPlayer();
   final AppDb db;
   final WebFetcher fetcher;
   final AdapterRepository adapters;
@@ -30,8 +33,20 @@ class TtsPlayer extends ChangeNotifier {
   Timer? _sleepTimer;
   DateTime? sleepAt;
   bool _disposed = false;
+  int _gen = 0;
+  Completer<void>? _resumeWait;
+  Completer<void>? _chunkDone;
 
-  TtsPlayer({required this.db, required this.fetcher, required this.adapters});
+  TtsPlayer({required this.db, required this.fetcher, required this.adapters}) {
+    // Phát trong process của app (foreground service mediaPlayback) để
+    // Android không chặn âm thanh nền như khi engine TTS tự phát.
+    _audio.processingStateStream.listen((s) {
+      if (s == ProcessingState.completed) {
+        _chunkDone?.complete();
+        _chunkDone = null;
+      }
+    });
+  }
 
   int get currentParaIndex =>
       chunks.isEmpty ? -1 : chunks[index.clamp(0, chunks.length - 1)].paraIndex;
@@ -43,7 +58,7 @@ class TtsPlayer extends ChangeNotifier {
 
   Future<void> init() async {
     final langResult = await _tts.setLanguage('vi-VN');
-    await _tts.setSpeechRate(rate);
+    await _tts.awaitSynthCompletion(true);
     await _tts.setPitch(1.0);
     await _tts.setVolume(1.0);
     try {
@@ -57,12 +72,6 @@ class TtsPlayer extends ChangeNotifier {
             'Máy chưa có giọng tiếng Việt. Vào Cài đặt > Ngôn ngữ & nhập liệu > Chuyển văn bản thành giọng nói để tải giọng Google tiếng Việt.';
       }
     } catch (_) {}
-    _tts.setCompletionHandler(_onChunkComplete);
-    _tts.setCancelHandler(() {});
-    _tts.setErrorHandler((msg) {
-      debugPrint('TTS error: $msg');
-      _onChunkComplete();
-    });
   }
 
   static List<SpeakChunk> chunkify(ChapterContent c) {
@@ -99,6 +108,12 @@ class TtsPlayer extends ChangeNotifier {
   }
 
   Future<void> start(ChapterContent c, {int paraIndex = 0}) async {
+    _gen++;
+    final gen = _gen;
+    _signalResume();
+    _chunkDone?.complete();
+    _chunkDone = null;
+    await _audio.stop();
     chapter = c;
     chunks = chunkify(c);
     index = 0;
@@ -111,23 +126,59 @@ class TtsPlayer extends ChangeNotifier {
     await WakelockPlus.enable();
     _notify();
     debugPrint('TTS start: ${c.title} (${chunks.length} chunks)');
-    await _speakCurrent();
+    unawaited(_loop(gen));
   }
 
-  Future<void> _speakCurrent() async {
-    if (!playing || _disposed) return;
-    if (index >= chunks.length) {
-      await _chapterDone();
-      return;
+  Future<void> _loop(int gen) async {
+    while (gen == _gen && playing) {
+      if (index >= chunks.length) {
+        await _chapterDone();
+        return;
+      }
+      _notify();
+      final file = await _synth(chunks[index].text);
+      if (gen != _gen) return;
+      await _waitResume(gen);
+      if (gen != _gen || !playing) return;
+      if (file == null) {
+        index++;
+        continue;
+      }
+      await _audio.setFilePath(file);
+      await _audio.setSpeed(rate);
+      if (gen != _gen || !playing) return;
+      final done = Completer<void>();
+      _chunkDone = done;
+      unawaited(_audio.play());
+      await done.future;
+      _chunkDone = null;
+      if (gen != _gen) return;
+      index++;
     }
-    _notify();
-    await _tts.speak(chunks[index].text);
   }
 
-  void _onChunkComplete() {
-    if (!playing || _disposed) return;
-    index++;
-    _speakCurrent();
+  Future<String?> _synth(String text) async {
+    try {
+      final dir = await getTemporaryDirectory();
+      final path = '${dir.path}/tts_chunk.wav';
+      final res = await _tts.synthesizeToFile(text, path);
+      return res == 1 ? path : null;
+    } catch (e) {
+      debugPrint('TTS synth error: $e');
+      return null;
+    }
+  }
+
+  Future<void> _waitResume(int gen) async {
+    while (!playing && gen == _gen) {
+      _resumeWait ??= Completer<void>();
+      await _resumeWait!.future;
+    }
+  }
+
+  void _signalResume() {
+    _resumeWait?.complete();
+    _resumeWait = null;
   }
 
   Future<void> _chapterDone() async {
@@ -168,7 +219,7 @@ class TtsPlayer extends ChangeNotifier {
   Future<void> pause() async {
     if (!playing) return;
     playing = false;
-    await _tts.pause();
+    await _audio.pause();
     await WakelockPlus.disable();
     _notify();
   }
@@ -178,13 +229,20 @@ class TtsPlayer extends ChangeNotifier {
     playing = true;
     await WakelockPlus.enable();
     _notify();
-    await _speakCurrent();
+    _signalResume();
+    if (!_audio.playing && _audio.processingState == ProcessingState.ready) {
+      await _audio.play();
+    }
   }
 
   Future<void> stop() async {
+    _gen++;
     playing = false;
     loading = false;
-    await _tts.stop();
+    _signalResume();
+    _chunkDone?.complete();
+    _chunkDone = null;
+    await _audio.stop();
     await WakelockPlus.disable();
     cancelSleepTimer();
     _notify();
@@ -204,7 +262,12 @@ class TtsPlayer extends ChangeNotifier {
 
   Future<void> _jumpTo(String url) async {
     final wasPlaying = playing;
-    await _tts.stop();
+    _gen++;
+    playing = false;
+    _signalResume();
+    _chunkDone?.complete();
+    _chunkDone = null;
+    await _audio.stop();
     loading = true;
     _notify();
     try {
@@ -234,7 +297,7 @@ class TtsPlayer extends ChangeNotifier {
 
   Future<void> setRate(double v) async {
     rate = v;
-    await _tts.setSpeechRate(v);
+    await _audio.setSpeed(v);
     await db.setSetting('ttsRate', v.toString());
     _notify();
   }
@@ -265,7 +328,11 @@ class TtsPlayer extends ChangeNotifier {
   @override
   void dispose() {
     _disposed = true;
+    _gen++;
     _sleepTimer?.cancel();
+    _signalResume();
+    _chunkDone?.complete();
+    _audio.dispose();
     _tts.stop();
     super.dispose();
   }

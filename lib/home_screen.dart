@@ -1,8 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'dart:async';
 import 'core/providers.dart';
 import 'reader/reader_screen.dart';
+import 'sources/registry.dart';
+import 'sources/sources_screen.dart';
+import 'update/app_updater.dart';
 
 class HomeScreen extends ConsumerStatefulWidget {
   const HomeScreen({super.key});
@@ -20,6 +24,31 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
   void initState() {
     super.initState();
     _loadLast();
+    unawaited(_warmRegistry());
+    unawaited(AppUpdater.showIfAny(context).catchError((_) => false));
+  }
+
+  Future<void> _manualUpdate() async {
+    try {
+      final shown = await AppUpdater.showIfAny(context);
+      if (!shown && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+            content: Text('Đang là bản mới nhất (hoặc không với tới GitHub).')));
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('Không kiểm tra được: $e')));
+      }
+    }
+  }
+
+  Future<void> _warmRegistry() async {
+    try {
+      await SourceRegistry(
+              ref.read(appDbProvider), ref.read(adapterRepoProvider))
+          .loadIndex();
+    } catch (_) {}
   }
 
   Future<void> _loadLast() async {
@@ -73,7 +102,14 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Story Reader')),
+      appBar: AppBar(title: const Text('Story Reader'), actions: [
+        IconButton(
+          tooltip: 'Nguồn truyện',
+          icon: const Icon(Icons.dns_outlined),
+          onPressed: () => Navigator.push(context,
+              MaterialPageRoute(builder: (_) => const SourcesScreen())),
+        ),
+      ]),
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
@@ -146,6 +182,12 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                 ),
               ),
           ],
+          const SizedBox(height: 24),
+          TextButton.icon(
+            onPressed: _manualUpdate,
+            icon: const Icon(Icons.system_update_alt),
+            label: const Text('Kiểm tra cập nhật'),
+          ),
         ],
       ),
     );

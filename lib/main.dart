@@ -6,6 +6,7 @@ import 'core/providers.dart';
 import 'data/app_db.dart';
 import 'fetcher/web_fetcher.dart';
 import 'home_screen.dart';
+import 'sources/registry.dart';
 import 'tts/audio_handler.dart';
 import 'tts/tts_player.dart';
 
@@ -13,6 +14,7 @@ Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   final repo = await AdapterRepository.load();
   final db = AppDb();
+  await SourceRegistry.restoreInstalled(db, repo);
   final fetcher = WebFetcher();
   final player = TtsPlayer(db: db, fetcher: fetcher, adapters: repo);
   final savedRate = double.tryParse(await db.getSetting('ttsRate') ?? '');

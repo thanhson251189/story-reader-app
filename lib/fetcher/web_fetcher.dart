@@ -22,19 +22,21 @@ class WebFetcher {
 (function(){
   const sel = $sel;
   const remove = $remove;
-  remove.forEach(s => { try { document.querySelectorAll(s).forEach(e => e.remove()); } catch(_){} });
   const abs = h => h ? new URL(h, location.href).href : null;
   const q = s => s ? document.querySelector(s) : null;
+  const n = q(sel.nextLink), p = q(sel.prevLink);
+  const t = q(sel.chapterTitle);
+  const title = t ? t.innerText.trim() : document.title.split('|')[0].trim();
+  remove.forEach(s => { try { document.querySelectorAll(s).forEach(e => e.remove()); } catch(_){} });
   const c = q(sel.content);
   let ps = [];
   if (c) {
     ps = Array.from(c.querySelectorAll('p')).map(p => p.innerText.trim()).filter(Boolean);
     if (!ps.length) ps = c.innerText.split(/\\n{2,}/).map(t => t.trim()).filter(Boolean);
   }
-  const n = q(sel.nextLink), p = q(sel.prevLink);
   return JSON.stringify({
     url: location.href,
-    title: document.title.split('|')[0].trim(),
+    title: title,
     paragraphs: ps,
     nextUrl: n ? abs(n.getAttribute('href')) : null,
     prevUrl: p ? abs(p.getAttribute('href')) : null

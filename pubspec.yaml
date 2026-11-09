@@ -41,6 +41,8 @@ dependencies:
   flutter_riverpod: ^3.5.0
   audio_service: ^0.18.19
   wakelock_plus: ^1.8.2
+  just_audio: ^0.10.5
+  path_provider: ^2.1.5
   package_info_plus: ^10.2.2
   url_launcher: ^6.3.3
   http: ^1.6.0
