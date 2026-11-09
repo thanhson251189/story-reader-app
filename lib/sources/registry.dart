@@ -38,19 +38,23 @@ class SourceRegistry {
 
   SourceRegistry(this.db, this.adapters);
 
+  static const personal = bool.fromEnvironment('PERSONAL');
+
   static const defaultIndexUrl =
       'https://raw.githubusercontent.com/thanhson251189/story-reader-sources/main/sources/index.json';
 
   Future<String> indexUrl() async =>
-      await db.getSetting('registryUrl') ?? defaultIndexUrl;
+      await db.getSetting('registryUrl') ?? (personal ? defaultIndexUrl : '');
 
   Future<void> setIndexUrl(String url) => db.setSetting('registryUrl', url);
 
   Future<List<SourceEntry>> loadIndex() async {
+    final url = await indexUrl();
+    if (url.isEmpty) return [];
     String? raw;
     try {
       final res = await http
-          .get(Uri.parse(await indexUrl()))
+          .get(Uri.parse(url))
           .timeout(const Duration(seconds: 10));
       if (res.statusCode == 200) {
         raw = res.body;

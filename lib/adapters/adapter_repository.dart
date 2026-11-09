@@ -12,6 +12,8 @@ class AdapterRepository {
   }
 
   static Future<AdapterRepository> load() async {
+    // Bản phát hành để trống; chỉ bản cá nhân (PERSONAL) cài sẵn adapter.
+    if (!const bool.fromEnvironment('PERSONAL')) return AdapterRepository([]);
     final manifest = await AssetManifest.loadFromAssetBundle(rootBundle);
     final keys = manifest
         .listAssets()
