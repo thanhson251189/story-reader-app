@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../core/models.dart';
 import '../core/providers.dart';
@@ -80,7 +81,7 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
         final ctx = _paraKeys[idx].currentContext;
         if (ctx != null) {
           Scrollable.ensureVisible(ctx,
-              duration: const Duration(milliseconds: 300), alignment: 0.25);
+              duration: const Duration(milliseconds: 300), alignment: 0.0);
         }
       });
     }
@@ -225,17 +226,40 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
     });
   }
 
+  int _visibleParaIndex() {
+    if (!_scroll.hasClients) return 0;
+    final offset = _scroll.offset;
+    for (var i = 0; i < _paraKeys.length; i++) {
+      final rb = _paraKeys[i].currentContext?.findRenderObject();
+      if (rb is! RenderBox) continue;
+      final viewport = RenderAbstractViewport.of(rb);
+      final top = viewport.getOffsetToReveal(rb, 0.0).offset;
+      if (top + rb.size.height > offset) return i;
+    }
+    return 0;
+  }
+
   void _togglePlay() {
     final c = _content;
     if (c == null) return;
-    if (_player.chapter?.url == c.url) {
-      _player.playing ? _player.pause() : _player.resume();
+    final sameChapter = _player.chapter?.url == c.url;
+    if (sameChapter && _player.playing) {
+      _player.pause();
+      return;
+    }
+    if (_player.voiceWarning != null) {
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(_player.voiceWarning!)));
+    }
+    final visible = _visibleParaIndex();
+    // Đang tạm dừng và chưa cuộn khỏi đoạn đang đọc → phát tiếp mạch cũ;
+    // đã cuộn tới chỗ khác → bắt đầu từ đoạn văn đang hiển thị trên màn hình.
+    if (sameChapter &&
+        _player.chunks.isNotEmpty &&
+        visible == _player.currentParaIndex) {
+      _player.resume();
     } else {
-      if (_player.voiceWarning != null) {
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text(_player.voiceWarning!)));
-      }
-      _player.start(c);
+      _player.start(c, paraIndex: visible);
     }
   }
 
