@@ -214,6 +214,7 @@ class TtsPlayer extends ChangeNotifier {
     _chunkDone = null;
     await _audio.stop();
     await _preview.stop();
+    await _tts.stop();
     chapter = c;
     chunks = chunkify(c);
     index = 0;
@@ -229,31 +230,51 @@ class TtsPlayer extends ChangeNotifier {
     unawaited(_loop(gen));
   }
 
+  static String _chunkFile(int i) => 'tts_chunk_${i % 2}.wav';
+
   Future<void> _loop(int gen) async {
+    if (index >= chunks.length) {
+      await _chapterDone();
+      return;
+    }
+    var file = await _synth(chunks[index].text, fileName: _chunkFile(index));
     while (gen == _gen && playing) {
+      if (file == null) {
+        index++;
+        if (index >= chunks.length) {
+          await _chapterDone();
+          return;
+        }
+        file = await _synth(chunks[index].text, fileName: _chunkFile(index));
+        continue;
+      }
+      await _waitResume(gen);
+      if (gen != _gen || !playing) return;
+      await _audio.setFilePath(file);
+      await _audio.setSpeed(rate);
+      if (gen != _gen || !playing) return;
+      _notify();
+      final done = Completer<void>();
+      _chunkDone = done;
+      debugPrint('TTS play #$index t=${DateTime.now().millisecondsSinceEpoch}');
+      unawaited(_audio.play());
+      // Synth đoạn kế trong lúc đoạn này phát (file parity khác nhau) để không hở khoảng lặng.
+      final next = index + 1;
+      final prefetch = next < chunks.length
+          ? _synth(chunks[next].text, fileName: _chunkFile(next))
+          : null;
+      await done.future;
+      _chunkDone = null;
+      debugPrint('TTS end #$index t=${DateTime.now().millisecondsSinceEpoch}');
+      if (gen != _gen) return;
+      index = next;
       if (index >= chunks.length) {
         await _chapterDone();
         return;
       }
-      _notify();
-      final file = await _synth(chunks[index].text);
-      if (gen != _gen) return;
-      await _waitResume(gen);
-      if (gen != _gen || !playing) return;
-      if (file == null) {
-        index++;
-        continue;
-      }
-      await _audio.setFilePath(file);
-      await _audio.setSpeed(rate);
-      if (gen != _gen || !playing) return;
-      final done = Completer<void>();
-      _chunkDone = done;
-      unawaited(_audio.play());
-      await done.future;
-      _chunkDone = null;
-      if (gen != _gen) return;
-      index++;
+      file = prefetch == null
+          ? await _synth(chunks[index].text, fileName: _chunkFile(index))
+          : await prefetch;
     }
   }
 
@@ -351,6 +372,7 @@ class TtsPlayer extends ChangeNotifier {
     _chunkDone = null;
     await _audio.stop();
     await _preview.stop();
+    await _tts.stop();
     await WakelockPlus.disable();
     cancelSleepTimer();
     _notify();
