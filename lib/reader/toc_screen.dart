@@ -55,10 +55,7 @@ class _TocScreenState extends ConsumerState<TocScreen> {
             coverUrl: info.coverUrl,
             lastChapterUrl: widget.currentChapterUrl);
       }
-      final cached = <String>{};
-      for (final c in chapters) {
-        if (await db.getCachedChapter(c.url) != null) cached.add(c.url);
-      }
+      final cached = await db.getCachedChapterUrls();
       if (!mounted) return;
       setState(() {
         _chapters = chapters;

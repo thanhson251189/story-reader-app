@@ -5,6 +5,6 @@ import '../fetcher/web_fetcher.dart';
 import '../tts/tts_player.dart';
 
 final adapterRepoProvider = Provider<AdapterRepository>((ref) => throw UnimplementedError());
-final appDbProvider = Provider<AppDb>((ref) => AppDb());
-final webFetcherProvider = Provider<WebFetcher>((ref) => WebFetcher());
+final appDbProvider = Provider<AppDb>((ref) => throw UnimplementedError());
+final webFetcherProvider = Provider<WebFetcher>((ref) => throw UnimplementedError());
 final ttsPlayerProvider = Provider<TtsPlayer>((ref) => throw UnimplementedError());

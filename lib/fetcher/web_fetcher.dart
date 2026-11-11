@@ -84,17 +84,23 @@ class WebFetcher {
   Future<NovelInfo> fetchStory(String url, SourceAdapter adapter) async {
     final map = await _fetch(url, storyJs(adapter));
     final info = NovelInfo.fromJson(map);
-    final chapters = [...info.chapters];
+    return NovelInfo(
+        title: info.title, coverUrl: info.coverUrl, chapters: sortChapters(info.chapters));
+  }
+
+  // Chỉ sort khi mọi URL đều có số đuôi; site không đánh số thì giữ thứ tự trang
+  // (List.sort của Dart không ổn định, comparator trả 0 sẽ xáo trộn thứ tự).
+  static List<ChapterRef> sortChapters(List<ChapterRef> chapters) {
     int? trailingNum(String u) {
       final ms = RegExp(r'\d+').allMatches(u);
       return ms.isEmpty ? null : int.tryParse(ms.last.group(0)!);
     }
-    chapters.sort((x, y) {
-      final nx = trailingNum(x.url), ny = trailingNum(y.url);
-      if (nx == null || ny == null) return 0;
-      return nx.compareTo(ny);
-    });
-    return NovelInfo(url: info.url, title: info.title, coverUrl: info.coverUrl, chapters: chapters);
+
+    final nums = chapters.map((c) => trailingNum(c.url)).toList();
+    if (nums.any((n) => n == null)) return chapters;
+    final out = [...chapters];
+    out.sort((x, y) => trailingNum(x.url)!.compareTo(trailingNum(y.url)!));
+    return out;
   }
 
   Future<Map<String, dynamic>> _fetch(String url, String js) async {

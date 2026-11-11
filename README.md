@@ -22,4 +22,17 @@ flutter doctor -v          # kiểm tra môi trường
 
 ## Cấu trúc hiện tại
 
-Mới là khung Flutter mặc định (`lib/main.dart` — app đếm số mẫu). Cấu trúc lõi theo kế hoạch (core/adapters/fetcher/reader/tts/data) sẽ dựng từ Giai đoạn 1.
+```
+lib/
+  core/       # model chung + Riverpod providers (override trong main)
+  adapters/   # AdapterRepository: domain → adapter, nạp từ registry
+  fetcher/    # HeadlessInAppWebView tải trang + inject JS bóc text; WebView fallback
+  reader/     # màn hình đọc, mục lục, cỡ chữ/nền, highlight câu đang đọc
+  tts/        # chia câu, synthesizeToFile + just_audio, foreground service (audio_service)
+  data/       # SQLite: vị trí đọc, cache chương, thư viện, mục lục, settings
+  sources/    # registry index.json ngoài GitHub, cài/cập nhật adapter
+  local/      # nhập sách EPUB/MOBI/FB2/TXT có sẵn trong máy
+  update/     # kiểm tra bản mới qua GitHub Release
+```
+
+Adapter không đóng gói trong APK; nguồn truyện cài qua màn "Nguồn truyện" (registry). Bản cá nhân build với `--dart-define=PERSONAL=true` để có sẵn link index mặc định.

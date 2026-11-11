@@ -49,8 +49,6 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
     _settings.fontSize = double.tryParse(await db.getSetting('fontSize') ?? '') ?? 20;
     _settings.lineHeight = double.tryParse(await db.getSetting('lineHeight') ?? '') ?? 1.8;
     _settings.theme = await db.getSetting('readerTheme') ?? 'light';
-    _settings.ttsRate = double.tryParse(await db.getSetting('ttsRate') ?? '') ?? 0.5;
-    _settings.ttsPitch = double.tryParse(await db.getSetting('ttsPitch') ?? '') ?? 1.0;
     if (mounted) setState(() {});
     await _load(widget.url);
   }
@@ -447,31 +445,29 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
                     onTap: () => _openVoicePicker(() => setSheet(() {})),
                   ),
                   Text(
-                      'Cao độ: ${_settings.ttsPitch.toStringAsFixed(1)} (trầm ↔ cao)',
+                      'Cao độ: ${_player.pitch.toStringAsFixed(1)} (trầm ↔ cao)',
                       style: titleStyle),
                   Slider(
-                    value: _settings.ttsPitch.clamp(0.5, 2.0),
+                    value: _player.pitch.clamp(0.5, 2.0),
                     min: 0.5,
                     max: 2.0,
                     divisions: 15,
-                    label: _settings.ttsPitch.toStringAsFixed(1),
+                    label: _player.pitch.toStringAsFixed(1),
                     onChanged: (v) {
                       setSheet(() {});
-                      setState(() => _settings.ttsPitch = v);
                       _player.setPitch(v);
                     },
                   ),
-                  Text('Tốc độ đọc: ${_settings.ttsRate.toStringAsFixed(2)}',
+                  Text('Tốc độ đọc: ${_player.rate.toStringAsFixed(2)}',
                       style: titleStyle),
                   Slider(
-                    value: _settings.ttsRate.clamp(0.3, 2.0),
+                    value: _player.rate.clamp(0.3, 2.0),
                     min: 0.3,
                     max: 2.0,
                     divisions: 17,
-                    label: _settings.ttsRate.toStringAsFixed(2),
+                    label: _player.rate.toStringAsFixed(2),
                     onChanged: (v) {
                       setSheet(() {});
-                      setState(() => _settings.ttsRate = v);
                       _player.setRate(v);
                     },
                   ),

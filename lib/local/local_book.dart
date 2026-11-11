@@ -15,15 +15,11 @@ class LocalChapter {
 
 class LocalBook {
   final String title;
-  final String? author;
-  final String format;
   final List<LocalChapter> chapters;
   final img.Image? cover;
 
   const LocalBook({
     required this.title,
-    this.author,
-    required this.format,
     required this.chapters,
     this.cover,
   });
@@ -269,8 +265,6 @@ class LocalBook {
     }
     return LocalBook(
       title: title,
-      author: (book.Author ?? '').trim(),
-      format: 'EPUB',
       chapters: chapters,
       cover: book.CoverImage,
     );
@@ -349,7 +343,6 @@ class LocalBook {
     var version = 0;
     var encoding = 0;
     var fullName = '';
-    var author = '';
     if (rec0.length >= 16 + 4 && String.fromCharCodes(rec0.sublist(16, 20)) == 'MOBI') {
       final headerLen = _u32(rec0, 20);
       encoding = _u32(rec0, 28);
@@ -368,10 +361,9 @@ class LocalBook {
           final t = _u32(rec0, p);
           final len = _u32(rec0, p + 4);
           if (len < 8 || p + len > rec0.length) break;
-          if (t == 503 || t == 100) {
+          if (t == 503) {
             final s = _decodeText(rec0.sublist(p + 8, p + len)).trim();
-            if (t == 503 && s.isNotEmpty) fullName = s;
-            if (t == 100 && s.isNotEmpty) author = s;
+            if (s.isNotEmpty) fullName = s;
           }
           p += len;
         }
@@ -408,11 +400,7 @@ class LocalBook {
         .decode(b.sublist(0, 32).takeWhile((c) => c != 0).toList(), allowMalformed: true)
         .trim();
     final name = fullName.isNotEmpty ? fullName : (pdbName.isNotEmpty ? pdbName : fileName);
-    return LocalBook(
-        title: name,
-        author: author.isEmpty ? null : author,
-        format: format,
-        chapters: chapters);
+    return LocalBook(title: name, chapters: chapters);
   }
 
   static LocalBook fb2(Uint8List bytes, String fileName) {
@@ -425,15 +413,6 @@ class LocalBook {
         .firstWhere((s) => s.isNotEmpty, orElse: () => '');
 
     final title = firstText('book-title');
-    final authors = root.findAllElements('author').map((a) {
-      final parts = ['first-name', 'middle-name', 'last-name']
-          .map((t) => a
-              .findElements(t)
-              .map((e) => e.innerText.trim())
-              .firstWhere((s) => s.isNotEmpty, orElse: () => ''))
-          .where((s) => s.isNotEmpty);
-      return parts.join(' ');
-    }).where((s) => s.isNotEmpty).toList();
 
     final chapters = <LocalChapter>[];
 
@@ -508,17 +487,13 @@ class LocalBook {
     }
 
     if (chapters.isEmpty) throw FormatException('File FB2 không có nội dung');
-    return LocalBook(
-        title: title.isEmpty ? fileName : title,
-        author: authors.isEmpty ? null : authors.join(', '),
-        format: 'FB2',
-        chapters: chapters);
+    return LocalBook(title: title.isEmpty ? fileName : title, chapters: chapters);
   }
 
   static LocalBook txt(Uint8List bytes, String fileName) {
     final text = _decodeText(bytes);
     final chapters = _chaptersFromParagraphs(_textParagraphs(text));
     if (chapters.isEmpty) throw FormatException('File TXT trống');
-    return LocalBook(title: fileName, format: 'TXT', chapters: chapters);
+    return LocalBook(title: fileName, chapters: chapters);
   }
 }

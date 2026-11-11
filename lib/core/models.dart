@@ -1,5 +1,4 @@
 class SourceAdapter {
-  final String id;
   final String domain;
   final int version;
   final Map<String, String> selectors;
@@ -7,7 +6,6 @@ class SourceAdapter {
   final List<Map<String, String>> textCleanup;
 
   SourceAdapter({
-    required this.id,
     required this.domain,
     required this.version,
     required this.selectors,
@@ -16,7 +14,6 @@ class SourceAdapter {
   });
 
   factory SourceAdapter.fromJson(Map<String, dynamic> j) => SourceAdapter(
-        id: j['id'] as String,
         domain: j['domain'] as String,
         version: (j['version'] as num?)?.toInt() ?? 1,
         selectors: Map<String, String>.from(j['selectors'] as Map? ?? {}),
@@ -65,15 +62,6 @@ class ChapterContent {
         prevUrl: j['prevUrl'] as String?,
       );
 
-  Map<String, dynamic> toJson() => {
-        'url': url,
-        'title': title,
-        'paragraphs': paragraphs,
-        'nextUrl': nextUrl,
-        'prevUrl': prevUrl,
-      };
-
-  String get fullText => paragraphs.join('\n\n');
 }
 
 class ChapterRef {
@@ -83,20 +71,16 @@ class ChapterRef {
 
   factory ChapterRef.fromJson(Map<String, dynamic> j) =>
       ChapterRef(title: j['title'] as String? ?? '', url: j['url'] as String? ?? '');
-
-  Map<String, dynamic> toJson() => {'title': title, 'url': url};
 }
 
 class NovelInfo {
-  final String url;
   final String title;
   final String? coverUrl;
   final List<ChapterRef> chapters;
 
-  NovelInfo({required this.url, required this.title, this.coverUrl, required this.chapters});
+  NovelInfo({required this.title, this.coverUrl, required this.chapters});
 
   factory NovelInfo.fromJson(Map<String, dynamic> j) => NovelInfo(
-        url: j['url'] as String? ?? '',
         title: j['title'] as String? ?? '',
         coverUrl: j['coverUrl'] as String?,
         chapters: (j['chapters'] as List? ?? [])
@@ -114,14 +98,10 @@ class ReaderSettings {
   double fontSize;
   double lineHeight;
   String theme;
-  double ttsRate;
-  double ttsPitch;
 
   ReaderSettings({
     this.fontSize = 20,
     this.lineHeight = 1.8,
     this.theme = 'light',
-    this.ttsRate = 0.5,
-    this.ttsPitch = 1.0,
   });
 }

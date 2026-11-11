@@ -13,13 +13,11 @@ import 'tts/tts_player.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  final repo = await AdapterRepository.load();
+  final repo = AdapterRepository([]);
   final db = AppDb();
   await SourceRegistry.restoreInstalled(db, repo);
   final fetcher = WebFetcher();
   final player = TtsPlayer(db: db, fetcher: fetcher, adapters: repo);
-  final savedRate = double.tryParse(await db.getSetting('ttsRate') ?? '');
-  if (savedRate != null) player.rate = savedRate;
   await player.init();
   await Permission.notification.request();
   await AudioService.init(

@@ -67,6 +67,7 @@ class TtsPlayer extends ChangeNotifier {
     final langResult = await _tts.setLanguage('vi-VN');
     await _tts.awaitSynthCompletion(true);
     await _tts.setVolume(1.0);
+    rate = double.tryParse(await db.getSetting('ttsRate') ?? '') ?? 0.5;
     pitch = double.tryParse(await db.getSetting('ttsPitch') ?? '') ?? 1.0;
     await _tts.setPitch(pitch);
     await reloadVoices();

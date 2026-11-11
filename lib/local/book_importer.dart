@@ -64,13 +64,6 @@ class BookImporter {
       coverUrl: coverPath,
       lastChapterUrl: '$storyUrl:0',
     );
-    await db.saveLocalBook(
-      id: id,
-      title: book.title,
-      author: book.author,
-      format: book.format,
-      coverPath: coverPath,
-    );
     return BookImportResult(storyUrl, book.title, book.chapters.length);
   }
 

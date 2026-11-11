@@ -1,31 +1,10 @@
-import 'dart:convert';
-import 'package:flutter/services.dart';
 import '../core/models.dart';
 
 class AdapterRepository {
   final Map<String, SourceAdapter> _byDomain = {};
 
   AdapterRepository(List<SourceAdapter> adapters) {
-    for (final a in adapters) {
-      _byDomain[a.domain] = a;
-    }
-  }
-
-  static Future<AdapterRepository> load() async {
-    // Bản phát hành để trống; chỉ bản cá nhân (PERSONAL) cài sẵn adapter.
-    if (!const bool.fromEnvironment('PERSONAL')) return AdapterRepository([]);
-    final manifest = await AssetManifest.loadFromAssetBundle(rootBundle);
-    final keys = manifest
-        .listAssets()
-        .where((k) => k.startsWith('assets/adapters/') && k.endsWith('.json'));
-    final adapters = <SourceAdapter>[];
-    for (final k in keys) {
-      try {
-        adapters.add(SourceAdapter.fromJson(
-            jsonDecode(await rootBundle.loadString(k)) as Map<String, dynamic>));
-      } catch (_) {}
-    }
-    return AdapterRepository(adapters);
+    mergeRemote(adapters);
   }
 
   void mergeRemote(List<SourceAdapter> remote) {
@@ -38,9 +17,8 @@ class AdapterRepository {
   }
 
   SourceAdapter? forUrl(String url) {
-    final host = Uri.tryParse(url)?.host ?? '';
     for (final a in _byDomain.values) {
-      if (a.matches(url) || host == a.domain) return a;
+      if (a.matches(url)) return a;
     }
     return null;
   }

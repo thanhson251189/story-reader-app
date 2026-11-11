@@ -102,7 +102,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     const supported = {'epub', 'mobi', 'azw', 'azw3', 'fb2', 'txt'};
     if (!supported.contains(ext)) {
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text('Chưa hỗ trợ .$ext — chỉ đọc được EPUB, MOBI, AZW3, FB2, TXT')));
+          content: Text('Chưa hỗ trợ .$ext — chỉ đọc được EPUB, MOBI, FB2, TXT')));
       return;
     }
     setState(() => _importing = true);
@@ -229,7 +229,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
           OutlinedButton.icon(
             onPressed: _importing ? null : _importBook,
             icon: const Icon(Icons.file_open_outlined),
-            label: Text(_importing ? 'Đang nhập sách...' : 'Đọc file trong máy (EPUB, MOBI, TXT)'),
+            label: Text(_importing ? 'Đang nhập sách...' : 'Đọc file trong máy (EPUB, MOBI, FB2, TXT)'),
           ),
           if (_importing) ...[
             const SizedBox(height: 12),
