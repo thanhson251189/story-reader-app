@@ -16,12 +16,16 @@ class CoverImage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    Widget fallback(_, _, _) => Icon(Icons.book, size: width * 0.8);
+    final icon = Icon(Icons.book, size: width * 0.8);
     final u = url;
-    if (u == null || u.isEmpty) return fallback(null, null, null);
+    if (u == null || u.isEmpty) return icon;
     final image = u.startsWith('http')
-        ? Image.network(u, fit: BoxFit.cover, errorBuilder: fallback)
-        : Image.file(File(u), fit: BoxFit.cover, errorBuilder: fallback);
+        ? Image.network(u, fit: BoxFit.cover, errorBuilder: (_, _, _) => icon)
+        : Image.file(
+            File(u),
+            fit: BoxFit.cover,
+            errorBuilder: (_, _, _) => icon,
+          );
     return SizedBox(width: width, height: height, child: image);
   }
 }

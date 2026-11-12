@@ -13,7 +13,8 @@ import 'toc_screen.dart';
 
 class ReaderScreen extends ConsumerStatefulWidget {
   final String url;
-  const ReaderScreen({super.key, required this.url});
+  final String? storyUrl;
+  const ReaderScreen({super.key, required this.url, this.storyUrl});
 
   @override
   ConsumerState<ReaderScreen> createState() => _ReaderScreenState();
@@ -26,7 +27,10 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
   bool _loading = true;
   String? _error;
   String? _failedUrl;
-  final _settings = ReaderSettings();
+  double _fontSize = 20;
+  double _lineHeight = 1.8;
+  String _theme = 'light';
+  int _prefetchCount = 3;
   List<GlobalKey> _paraKeys = [];
   int _lastSpokenPara = -1;
   String? _shownError;
@@ -49,12 +53,11 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
 
   Future<void> _init() async {
     final db = ref.read(appDbProvider);
-    _settings.fontSize =
-        double.tryParse(await db.getSetting('fontSize') ?? '') ?? 20;
-    _settings.lineHeight =
+    _fontSize = double.tryParse(await db.getSetting('fontSize') ?? '') ?? 20;
+    _lineHeight =
         double.tryParse(await db.getSetting('lineHeight') ?? '') ?? 1.8;
-    _settings.theme = await db.getSetting('readerTheme') ?? 'light';
-    _settings.prefetchCount =
+    _theme = await db.getSetting('readerTheme') ?? 'light';
+    _prefetchCount =
         (int.tryParse(await db.getSetting('prefetchCount') ?? '') ?? 3).clamp(
           1,
           5,
@@ -112,6 +115,11 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
     });
   }
 
+  // Nơi mở đã biết URL truyện (search/library/toc) thì truyền vào; trang đơn
+  // như wikisource không suy được URL truyện từ URL chương bằng cách bỏ segment.
+  String _storyUrlOf(String chapterUrl) =>
+      widget.storyUrl ?? storyUrlFromChapter(chapterUrl);
+
   Future<void> _load(String url, {bool useCache = true}) async {
     if (_content != null && _scroll.hasClients) {
       await ref.read(appDbProvider).savePosition(_content!.url, _scroll.offset);
@@ -140,7 +148,7 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
       final cc = c;
       await db.cacheChapter(cc);
       await db.setSetting('lastUrl', url);
-      await db.touchLibrary(storyUrlFromChapter(url), url);
+      await db.touchLibrary(_storyUrlOf(url), url);
       unawaited(ref.read(chapterPrefetcherProvider).prefetch(cc.nextUrl));
       final saved = await db.getPosition(url);
       if (!mounted) return;
@@ -177,7 +185,7 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
     if (c == null || _addingToLib) return;
     setState(() => _addingToLib = true);
     try {
-      final storyUrl = storyUrlFromChapter(c.url);
+      final storyUrl = _storyUrlOf(c.url);
       final adapter = ref.read(adapterRepoProvider).forUrl(storyUrl);
       if (adapter == null) throw Exception('Chưa có adapter cho trang này');
       final info = await ref
@@ -240,6 +248,7 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
     final db = ref.read(appDbProvider);
     await db.cacheChapter(cleaned);
     await db.setSetting('lastUrl', cleaned.url);
+    await db.touchLibrary(_storyUrlOf(cleaned.url), cleaned.url);
     if (!mounted) return;
     setState(() {
       _content = cleaned;
@@ -329,11 +338,8 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
     );
   }
 
-  static bool _isViVoice(Map<String, String> v) =>
-      (v['locale'] ?? '').toLowerCase().startsWith('vi');
-
   String _voiceTitle(Map<String, String> v) {
-    if (!_isViVoice(v)) return v['locale'] ?? (v['name'] ?? '');
+    if (!TtsPlayer.isViVoice(v)) return v['locale'] ?? (v['name'] ?? '');
     final net = v['network_required'];
     final tag = net == '1'
         ? ' · giọng mạng'
@@ -598,35 +604,32 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
                     label: const Text('Nghe thử'),
                   ),
                   const SizedBox(height: 16),
-                  Text(
-                    'Cỡ chữ: ${_settings.fontSize.round()}',
-                    style: titleStyle,
-                  ),
+                  Text('Cỡ chữ: ${_fontSize.round()}', style: titleStyle),
                   Slider(
-                    value: _settings.fontSize,
+                    value: _fontSize,
                     min: 14,
                     max: 32,
                     divisions: 18,
-                    label: '${_settings.fontSize.round()}',
+                    label: '${_fontSize.round()}',
                     onChanged: (v) {
                       setSheet(() {});
-                      setState(() => _settings.fontSize = v);
+                      setState(() => _fontSize = v);
                       db.setSetting('fontSize', v.toString());
                     },
                   ),
                   Text(
-                    'Giãn dòng: ${_settings.lineHeight.toStringAsFixed(1)}',
+                    'Giãn dòng: ${_lineHeight.toStringAsFixed(1)}',
                     style: titleStyle,
                   ),
                   Slider(
-                    value: _settings.lineHeight,
+                    value: _lineHeight,
                     min: 1.2,
                     max: 2.4,
                     divisions: 12,
-                    label: _settings.lineHeight.toStringAsFixed(1),
+                    label: _lineHeight.toStringAsFixed(1),
                     onChanged: (v) {
                       setSheet(() {});
-                      setState(() => _settings.lineHeight = v);
+                      setState(() => _lineHeight = v);
                       db.setSetting('lineHeight', v.toString());
                     },
                   ),
@@ -648,27 +651,27 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
                         icon: Icon(Icons.menu_book),
                       ),
                     ],
-                    selected: {_settings.theme},
+                    selected: {_theme},
                     onSelectionChanged: (s) {
                       setSheet(() {});
-                      setState(() => _settings.theme = s.first);
+                      setState(() => _theme = s.first);
                       db.setSetting('readerTheme', s.first);
                     },
                   ),
                   const SizedBox(height: 16),
                   Text(
-                    'Tải trước: ${_settings.prefetchCount} chương',
+                    'Tải trước: $_prefetchCount chương',
                     style: titleStyle,
                   ),
                   Slider(
-                    value: _settings.prefetchCount.toDouble(),
+                    value: _prefetchCount.toDouble(),
                     min: 1,
                     max: 5,
                     divisions: 4,
-                    label: '${_settings.prefetchCount}',
+                    label: '$_prefetchCount',
                     onChanged: (v) {
                       setSheet(() {});
-                      setState(() => _settings.prefetchCount = v.round());
+                      setState(() => _prefetchCount = v.round());
                       db.setSetting('prefetchCount', '${v.round()}');
                     },
                   ),
@@ -699,7 +702,7 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final (bg, fg) = _themes[_settings.theme] ?? _themes['light']!;
+    final (bg, fg) = _themes[_theme] ?? _themes['light']!;
     final c = _content;
     final isPlayingThis = _player.playing && _player.chapter?.url == c?.url;
     return Scaffold(
@@ -720,7 +723,7 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
                 context,
                 MaterialPageRoute(
                   builder: (_) => TocScreen(
-                    storyUrl: storyUrlFromChapter(c.url),
+                    storyUrl: _storyUrlOf(c.url),
                     currentChapterUrl: c.url,
                   ),
                 ),
@@ -844,8 +847,8 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
     }
     final c = _content!;
     final style = TextStyle(
-      fontSize: _settings.fontSize,
-      height: _settings.lineHeight,
+      fontSize: _fontSize,
+      height: _lineHeight,
       color: fg,
     );
     final speakingThis = _player.playing && _player.chapter?.url == c.url;
@@ -862,14 +865,14 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
             Text(
               c.title,
               style: style.copyWith(
-                fontSize: _settings.fontSize + 4,
+                fontSize: _fontSize + 4,
                 fontWeight: FontWeight.bold,
               ),
             ),
             const SizedBox(height: 16),
             for (var i = 0; i < c.paragraphs.length; i++)
               Padding(
-                padding: EdgeInsets.only(bottom: _settings.fontSize * 0.7),
+                padding: EdgeInsets.only(bottom: _fontSize * 0.7),
                 child: _paragraph(
                   i,
                   c.paragraphs[i],

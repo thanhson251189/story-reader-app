@@ -22,19 +22,21 @@ class _SourceState {
 class SearchScreen extends ConsumerStatefulWidget {
   const SearchScreen({super.key});
 
-  // Tập rỗng nghĩa là chọn tất cả; bỏ tích nguồn cuối cùng thì quay về tất cả.
-  static Set<String> toggleSource(
-    Set<String> picked,
+  // null nghĩa là chọn tất cả; tập rỗng là không chọn nguồn nào.
+  static Set<String>? toggleSource(
+    Set<String>? picked,
     String domain,
     List<String> all,
   ) {
-    final base = picked.isEmpty ? {...all} : {...picked};
+    final base = picked == null ? {...all} : {...picked};
     if (!base.remove(domain)) base.add(domain);
-    return base.length == all.length ? {} : base;
+    return base.length == all.length ? null : base;
   }
 
-  static String summary(Set<String> picked) => picked.isEmpty
+  static String summary(Set<String>? picked) => picked == null
       ? 'Tất cả nguồn'
+      : picked.isEmpty
+      ? 'Chưa chọn nguồn'
       : picked.length == 1
       ? picked.first
       : '${picked.length} nguồn đã chọn';
@@ -45,7 +47,7 @@ class SearchScreen extends ConsumerStatefulWidget {
 
 class _SearchScreenState extends ConsumerState<SearchScreen> {
   final _q = TextEditingController();
-  Set<String> _picked = {};
+  Set<String>? _picked;
   bool _pickerOpen = false;
   int _gen = 0;
   bool _searched = false;
@@ -70,14 +72,27 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
           .showSnackBar(const SnackBar(content: Text('Nhập từ khoá trước đã')));
       return;
     }
+    final picked = _picked;
     final targets = _supported
-        .where((a) => _picked.isEmpty || _picked.contains(a.domain))
+        .where((a) => picked == null || picked.contains(a.domain))
         .toList();
-    if (targets.isEmpty) return;
+    if (targets.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            _supported.isEmpty
+                ? 'Chưa có nguồn nào hỗ trợ tìm kiếm'
+                : 'Chưa chọn nguồn nào để tìm',
+          ),
+        ),
+      );
+      return;
+    }
     final gen = ++_gen;
     setState(() {
       _searched = true;
       _pickerOpen = false;
+      _states.clear();
       for (final a in targets) {
         _states[a.domain] = _SourceState();
       }
@@ -157,7 +172,9 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
       if (!mounted) return;
       await Navigator.push(
         context,
-        MaterialPageRoute(builder: (_) => ReaderScreen(url: url)),
+        MaterialPageRoute(
+          builder: (_) => ReaderScreen(url: url, storyUrl: r.url),
+        ),
       );
     } catch (e) {
       if (mounted) {
@@ -235,16 +252,16 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
                       CheckboxListTile(
                         dense: true,
                         title: const Text('Tất cả nguồn'),
-                        value: _picked.isEmpty,
-                        onChanged: (v) {
-                          if (v == true) setState(() => _picked = {});
-                        },
+                        value: _picked == null,
+                        onChanged: (v) => setState(
+                          () => _picked = v == true ? null : <String>{},
+                        ),
                       ),
                       for (final a in _supported)
                         CheckboxListTile(
                           dense: true,
                           title: Text(a.domain),
-                          value: _picked.isEmpty || _picked.contains(a.domain),
+                          value: _picked == null || _picked!.contains(a.domain),
                           onChanged: (_) => setState(() {
                             _picked = SearchScreen.toggleSource(
                               _picked,

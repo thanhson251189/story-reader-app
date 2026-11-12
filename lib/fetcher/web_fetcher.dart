@@ -178,13 +178,7 @@ class WebFetcher {
     String js, {
     bool Function(Map<String, dynamic>)? ok,
   }) async {
-    final accept =
-        ok ??
-        (m) {
-          final ps = m['paragraphs'] as List?;
-          final ch = m['chapters'] as List?;
-          return (ps != null && ps.isNotEmpty) || (ch != null && ch.isNotEmpty);
-        };
+    final accept = ok ?? (m) => (m['paragraphs'] as List? ?? []).isNotEmpty;
     final completer = Completer<Map<String, dynamic>>();
     var done = false;
     Timer? timeout;

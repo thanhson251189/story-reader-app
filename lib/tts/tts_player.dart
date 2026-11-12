@@ -30,7 +30,7 @@ class TtsPlayer extends ChangeNotifier {
   final ChapterPrefetcher prefetcher;
 
   List<SpeakChunk> chunks = [];
-  int index = 0;
+  int _index = 0;
   ChapterContent? chapter;
   bool playing = false;
   bool loading = false;
@@ -64,10 +64,11 @@ class TtsPlayer extends ChangeNotifier {
     });
   }
 
-  int get currentParaIndex =>
-      chunks.isEmpty ? -1 : chunks[index.clamp(0, chunks.length - 1)].paraIndex;
+  int get currentParaIndex => chunks.isEmpty
+      ? -1
+      : chunks[_index.clamp(0, chunks.length - 1)].paraIndex;
   SpeakChunk? get currentChunk =>
-      chunks.isEmpty ? null : chunks[index.clamp(0, chunks.length - 1)];
+      chunks.isEmpty ? null : chunks[_index.clamp(0, chunks.length - 1)];
   int get remainingSleepMinutes =>
       sleepAt == null ? 0 : sleepAt!.difference(DateTime.now()).inMinutes + 1;
 
@@ -85,10 +86,10 @@ class TtsPlayer extends ChangeNotifier {
     }
   }
 
-  static bool _isVi(Map<String, String> v) =>
+  static bool isViVoice(Map<String, String> v) =>
       (v['locale'] ?? '').toLowerCase().startsWith('vi');
 
-  List<Map<String, String>> get viVoices => voices.where(_isVi).toList();
+  List<Map<String, String>> get viVoices => voices.where(isViVoice).toList();
 
   Future<void> reloadVoices() async {
     try {
@@ -101,15 +102,14 @@ class TtsPlayer extends ChangeNotifier {
                   'name': '${m['name'] ?? ''}',
                   'locale': '${m['locale'] ?? ''}',
                   'quality': '${m['quality'] ?? ''}',
-                  'latency': '${m['latency'] ?? ''}',
                   'network_required': '${m['network_required'] ?? '0'}',
                 },
               )
               .where((m) => m['name']!.isNotEmpty)
               .toList()
             ..sort((a, b) {
-              final av = _isVi(a) ? 0 : 1;
-              final bv = _isVi(b) ? 0 : 1;
+              final av = isViVoice(a) ? 0 : 1;
+              final bv = isViVoice(b) ? 0 : 1;
               if (av != bv) return av - bv;
               return a['locale']!.compareTo(b['locale']!);
             });
@@ -231,10 +231,10 @@ class TtsPlayer extends ChangeNotifier {
     await _tts.stop();
     chapter = c;
     chunks = chunkify(c);
-    index = 0;
+    _index = 0;
     if (paraIndex > 0) {
       final i = chunks.indexWhere((ch) => ch.paraIndex >= paraIndex);
-      if (i > 0) index = i;
+      if (i > 0) _index = i;
     }
     lastError = null;
     playing = true;
@@ -247,19 +247,19 @@ class TtsPlayer extends ChangeNotifier {
   static String _chunkFile(int i) => 'tts_chunk_${i % 2}.wav';
 
   Future<void> _loop(int gen) async {
-    if (index >= chunks.length) {
+    if (_index >= chunks.length) {
       await _chapterDone();
       return;
     }
-    var file = await _synth(chunks[index].text, fileName: _chunkFile(index));
+    var file = await _synth(chunks[_index].text, fileName: _chunkFile(_index));
     while (gen == _gen && playing) {
       if (file == null) {
-        index++;
-        if (index >= chunks.length) {
+        _index++;
+        if (_index >= chunks.length) {
           await _chapterDone();
           return;
         }
-        file = await _synth(chunks[index].text, fileName: _chunkFile(index));
+        file = await _synth(chunks[_index].text, fileName: _chunkFile(_index));
         continue;
       }
       await _waitResume(gen);
@@ -270,32 +270,31 @@ class TtsPlayer extends ChangeNotifier {
       _notify();
       final done = Completer<void>();
       _chunkDone = done;
-      debugPrint('TTS play #$index t=${DateTime.now().millisecondsSinceEpoch}');
+      debugPrint(
+        'TTS play #$_index t=${DateTime.now().millisecondsSinceEpoch}',
+      );
       unawaited(_audio.play());
       // Synth đoạn kế trong lúc đoạn này phát (file parity khác nhau) để không hở khoảng lặng.
-      final next = index + 1;
+      final next = _index + 1;
       final prefetch = next < chunks.length
           ? _synth(chunks[next].text, fileName: _chunkFile(next))
           : null;
       await done.future;
       _chunkDone = null;
-      debugPrint('TTS end #$index t=${DateTime.now().millisecondsSinceEpoch}');
+      debugPrint('TTS end #$_index t=${DateTime.now().millisecondsSinceEpoch}');
       if (gen != _gen) return;
-      index = next;
-      if (index >= chunks.length) {
+      _index = next;
+      if (_index >= chunks.length) {
         await _chapterDone();
         return;
       }
       file = prefetch == null
-          ? await _synth(chunks[index].text, fileName: _chunkFile(index))
+          ? await _synth(chunks[_index].text, fileName: _chunkFile(_index))
           : await prefetch;
     }
   }
 
-  Future<String?> _synth(
-    String text, {
-    String fileName = 'tts_chunk.wav',
-  }) async {
+  Future<String?> _synth(String text, {required String fileName}) async {
     _synthIdle ??= Completer<void>();
     try {
       final dir = await getTemporaryDirectory();
@@ -434,7 +433,7 @@ class TtsPlayer extends ChangeNotifier {
       } else {
         chapter = c;
         chunks = chunkify(c);
-        index = 0;
+        _index = 0;
         _notify();
       }
     } catch (e) {

@@ -46,7 +46,10 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
         (item['last_chapter_url'] as String?) ?? item['story_url'] as String;
     Navigator.push(
       context,
-      MaterialPageRoute(builder: (_) => ReaderScreen(url: url)),
+      MaterialPageRoute(
+        builder: (_) =>
+            ReaderScreen(url: url, storyUrl: item['story_url'] as String),
+      ),
     ).then((_) => _load());
   }
 

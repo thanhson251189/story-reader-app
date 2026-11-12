@@ -114,20 +114,26 @@ void main() {
 
   test('toggleSource bỏ tích một nguồn khi đang chọn tất cả', () {
     final all = ['a.com', 'b.com', 'c.com'];
-    final rest = SearchScreen.toggleSource({}, 'b.com', all);
+    final rest = SearchScreen.toggleSource(null, 'b.com', all);
     expect(rest, {'a.com', 'c.com'});
-    expect(SearchScreen.toggleSource(rest, 'b.com', all), isEmpty);
+    expect(SearchScreen.toggleSource(rest, 'b.com', all), isNull);
   });
 
-  test('toggleSource bỏ tích nguồn cuối thì quay về tất cả', () {
+  test('toggleSource bỏ tích nguồn cuối thì không còn nguồn nào', () {
     final all = ['a.com', 'b.com'];
-    final one = SearchScreen.toggleSource({}, 'a.com', all);
+    final one = SearchScreen.toggleSource(null, 'a.com', all);
     expect(one, {'b.com'});
     expect(SearchScreen.toggleSource(one, 'b.com', all), isEmpty);
   });
 
+  test('toggleSource từ trạng thái không chọn nguồn nào', () {
+    final all = ['a.com', 'b.com'];
+    expect(SearchScreen.toggleSource({}, 'a.com', all), {'a.com'});
+  });
+
   test('summary tóm tắt lựa chọn nguồn', () {
-    expect(SearchScreen.summary({}), 'Tất cả nguồn');
+    expect(SearchScreen.summary(null), 'Tất cả nguồn');
+    expect(SearchScreen.summary({}), 'Chưa chọn nguồn');
     expect(SearchScreen.summary({'a.com'}), 'a.com');
     expect(SearchScreen.summary({'a.com', 'b.com'}), '2 nguồn đã chọn');
   });

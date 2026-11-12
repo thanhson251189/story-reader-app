@@ -120,17 +120,3 @@ class ChallengeException implements Exception {
   @override
   String toString() => 'Trang đang chặn bot, cần mở WebView để vượt kiểm tra';
 }
-
-class ReaderSettings {
-  double fontSize;
-  double lineHeight;
-  String theme;
-  int prefetchCount;
-
-  ReaderSettings({
-    this.fontSize = 20,
-    this.lineHeight = 1.8,
-    this.theme = 'light',
-    this.prefetchCount = 3,
-  });
-}

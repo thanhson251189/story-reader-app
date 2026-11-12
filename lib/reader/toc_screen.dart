@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+
 import '../core/models.dart';
 import '../core/providers.dart';
 import 'reader_screen.dart';
@@ -45,15 +46,18 @@ class _TocScreenState extends ConsumerState<TocScreen> {
       if (chapters.isEmpty) {
         final adapter = ref.read(adapterRepoProvider).forUrl(widget.storyUrl);
         if (adapter == null) throw Exception('Chưa có adapter cho trang này');
-        final info = await ref.read(webFetcherProvider).fetchStory(widget.storyUrl, adapter);
+        final info = await ref
+            .read(webFetcherProvider)
+            .fetchStory(widget.storyUrl, adapter);
         chapters = info.chapters;
         _title = info.title;
         await db.saveToc(widget.storyUrl, chapters);
         await db.upsertLibrary(
-            storyUrl: widget.storyUrl,
-            title: info.title,
-            coverUrl: info.coverUrl,
-            lastChapterUrl: widget.currentChapterUrl);
+          storyUrl: widget.storyUrl,
+          title: info.title,
+          coverUrl: info.coverUrl,
+          lastChapterUrl: widget.currentChapterUrl,
+        );
       }
       final cached = await db.getCachedChapterUrls();
       if (!mounted) return;
@@ -109,13 +113,20 @@ class _TocScreenState extends ConsumerState<TocScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: Text(_title ?? 'Mục lục', maxLines: 1, overflow: TextOverflow.ellipsis),
+        title: Text(
+          _title ?? 'Mục lục',
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+        ),
         actions: [
           if (!widget.storyUrl.startsWith('book:'))
             IconButton(
               icon: _downloading
                   ? const SizedBox(
-                      width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2))
+                      width: 20,
+                      height: 20,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
                   : const Icon(Icons.download),
               tooltip: 'Tải trước 5 chương',
               onPressed: _downloading ? null : _downloadAhead,
@@ -125,44 +136,57 @@ class _TocScreenState extends ConsumerState<TocScreen> {
       body: _loading
           ? const Center(child: CircularProgressIndicator())
           : _error != null
-              ? Center(
-                  child: Padding(
-                    padding: const EdgeInsets.all(24),
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Text(_error!, textAlign: TextAlign.center),
-                        const SizedBox(height: 12),
-                        FilledButton.tonal(onPressed: _load, child: const Text('Thử lại')),
-                      ],
+          ? Center(
+              child: Padding(
+                padding: const EdgeInsets.all(24),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(_error!, textAlign: TextAlign.center),
+                    const SizedBox(height: 12),
+                    FilledButton.tonal(
+                      onPressed: _load,
+                      child: const Text('Thử lại'),
+                    ),
+                  ],
+                ),
+              ),
+            )
+          : ListView.builder(
+              itemCount: _chapters.length,
+              itemBuilder: (_, i) {
+                final c = _chapters[i];
+                final isCurrent = c.url == widget.currentChapterUrl;
+                return ListTile(
+                  dense: true,
+                  title: Text(
+                    c.title.isEmpty ? 'Chương ${i + 1}' : c.title,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: isCurrent
+                        ? TextStyle(
+                            color: Theme.of(context).colorScheme.primary,
+                            fontWeight: FontWeight.bold,
+                          )
+                        : null,
+                  ),
+                  trailing: _cached.contains(c.url)
+                      ? const Icon(
+                          Icons.offline_pin,
+                          size: 18,
+                          color: Colors.green,
+                        )
+                      : null,
+                  onTap: () => Navigator.pushReplacement(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) =>
+                          ReaderScreen(url: c.url, storyUrl: widget.storyUrl),
                     ),
                   ),
-                )
-              : ListView.builder(
-                  itemCount: _chapters.length,
-                  itemBuilder: (_, i) {
-                    final c = _chapters[i];
-                    final isCurrent = c.url == widget.currentChapterUrl;
-                    return ListTile(
-                      dense: true,
-                      title: Text(c.title.isEmpty ? 'Chương ${i + 1}' : c.title,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: isCurrent
-                              ? TextStyle(
-                                  color: Theme.of(context).colorScheme.primary,
-                                  fontWeight: FontWeight.bold)
-                              : null),
-                      trailing: _cached.contains(c.url)
-                          ? const Icon(Icons.offline_pin, size: 18, color: Colors.green)
-                          : null,
-                      onTap: () => Navigator.pushReplacement(
-                        context,
-                        MaterialPageRoute(builder: (_) => ReaderScreen(url: c.url)),
-                      ),
-                    );
-                  },
-                ),
+                );
+              },
+            ),
     );
   }
 }
