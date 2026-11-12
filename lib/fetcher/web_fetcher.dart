@@ -1,6 +1,8 @@
 import 'dart:async';
 import 'dart:convert';
+
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
+
 import '../core/models.dart';
 
 class WebFetcher {
@@ -8,12 +10,12 @@ class WebFetcher {
       'Mozilla/5.0 (Linux; Android 13; CPH2629) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36';
 
   static InAppWebViewSettings get settings => InAppWebViewSettings(
-        javaScriptEnabled: true,
-        domStorageEnabled: true,
-        databaseEnabled: true,
-        cacheEnabled: true,
-        userAgent: _ua,
-      );
+    javaScriptEnabled: true,
+    domStorageEnabled: true,
+    databaseEnabled: true,
+    cacheEnabled: true,
+    userAgent: _ua,
+  );
 
   static String chapterJs(SourceAdapter a) {
     final sel = jsonEncode(a.selectors);
@@ -58,16 +60,67 @@ class WebFetcher {
     const u = abs(a.getAttribute('href'));
     if (u && !seen[u]) { seen[u] = 1; chapters.push({title: a.innerText.trim(), url: u}); }
   });
-  const t = q(sel.storyTitle), cov = q(sel.cover);
+  const t = q(sel.storyTitle), cov = q(sel.cover), c = q(sel.content);
   return JSON.stringify({
     url: location.href,
     title: t ? t.innerText.trim() : document.title.split('|')[0].trim(),
     coverUrl: cov ? abs(cov.getAttribute('src')) : null,
+    hasContent: !!(c && c.innerText.trim()),
     chapters: chapters
   });
 })()
 ''';
   }
+
+  static String searchUrlFor(SourceAdapter a, String query) =>
+      a.searchUrl!.replaceAll('{query}', Uri.encodeComponent(query));
+
+  static String searchJs(SourceAdapter a) {
+    final sel = jsonEncode(a.selectors);
+    return '''
+(function(){
+  const sel = $sel;
+  const abs = h => h ? new URL(h, location.href).href : null;
+  const seen = {};
+  const results = [];
+  document.querySelectorAll(sel.searchList || 'a').forEach(el => {
+    const link = el.tagName === 'A' ? el : el.querySelector('a');
+    if (!link) return;
+    const u = abs(link.getAttribute('href'));
+    if (!u || seen[u]) return;
+    seen[u] = 1;
+    const t = el.querySelector(sel.searchTitle || 'h3') || link;
+    const img = el.querySelector('img');
+    results.push({
+      title: t.innerText.trim(),
+      url: u,
+      coverUrl: img ? abs(img.getAttribute('src')) : null
+    });
+  });
+  return JSON.stringify({results: results});
+})()
+''';
+  }
+
+  Future<List<SearchResult>> searchStories(
+    String query,
+    SourceAdapter a,
+  ) async {
+    final map = await _fetch(
+      searchUrlFor(a, query),
+      searchJs(a),
+      ok: (m) => m.containsKey('results'),
+    );
+    return parseSearch(map);
+  }
+
+  static List<SearchResult> parseSearch(Map<String, dynamic> map) =>
+      (map['results'] as List? ?? [])
+          .map(
+            (e) => SearchResult.fromJson(Map<String, dynamic>.from(e as Map)),
+          )
+          .where((r) => r.title.isNotEmpty && r.url.isNotEmpty)
+          .toList();
 
   Future<ChapterContent> fetchChapter(String url, SourceAdapter adapter) async {
     final map = await _fetch(url, chapterJs(adapter));
@@ -75,17 +128,34 @@ class WebFetcher {
     return ChapterContent(
       url: c.url,
       title: c.title,
-      paragraphs: c.paragraphs.map(adapter.clean).where((p) => p.isNotEmpty).toList(),
+      paragraphs: c.paragraphs
+          .map(adapter.clean)
+          .where((p) => p.isNotEmpty)
+          .toList(),
       nextUrl: c.nextUrl,
       prevUrl: c.prevUrl,
     );
   }
 
   Future<NovelInfo> fetchStory(String url, SourceAdapter adapter) async {
-    final map = await _fetch(url, storyJs(adapter));
+    final map = await _fetch(
+      url,
+      storyJs(adapter),
+      // Trang đơn (wikisource) không có danh sách chương nhưng vẫn có nội dung;
+      // chỉ coi là chặn bot khi cả chương lẫn nội dung đều trống.
+      ok: (m) =>
+          (m['chapters'] as List? ?? []).isNotEmpty || m['hasContent'] == true,
+    );
+    return parseStory(map);
+  }
+
+  static NovelInfo parseStory(Map<String, dynamic> map) {
     final info = NovelInfo.fromJson(map);
     return NovelInfo(
-        title: info.title, coverUrl: info.coverUrl, chapters: sortChapters(info.chapters));
+      title: info.title,
+      coverUrl: info.coverUrl,
+      chapters: sortChapters(info.chapters),
+    );
   }
 
   // Chỉ sort khi mọi URL đều có số đuôi; site không đánh số thì giữ thứ tự trang
@@ -103,7 +173,18 @@ class WebFetcher {
     return out;
   }
 
-  Future<Map<String, dynamic>> _fetch(String url, String js) async {
+  Future<Map<String, dynamic>> _fetch(
+    String url,
+    String js, {
+    bool Function(Map<String, dynamic>)? ok,
+  }) async {
+    final accept =
+        ok ??
+        (m) {
+          final ps = m['paragraphs'] as List?;
+          final ch = m['chapters'] as List?;
+          return (ps != null && ps.isNotEmpty) || (ch != null && ch.isNotEmpty);
+        };
     final completer = Completer<Map<String, dynamic>>();
     var done = false;
     Timer? timeout;
@@ -132,9 +213,7 @@ class WebFetcher {
             final r = await controller.evaluateJavascript(source: js);
             if (r is String && r.isNotEmpty) {
               final map = jsonDecode(r) as Map<String, dynamic>;
-              final ps = map['paragraphs'] as List?;
-              final ch = map['chapters'] as List?;
-              if ((ps != null && ps.isNotEmpty) || (ch != null && ch.isNotEmpty)) {
+              if (accept(map)) {
                 finish(map);
                 break;
               }
@@ -149,8 +228,10 @@ class WebFetcher {
         }
       },
     );
-    timeout = Timer(const Duration(seconds: 45),
-        () => finish(null, TimeoutException('Quá thời gian tải trang')));
+    timeout = Timer(
+      const Duration(seconds: 45),
+      () => finish(null, TimeoutException('Quá thời gian tải trang')),
+    );
     await wv.run();
     try {
       return await completer.future;

@@ -2,9 +2,11 @@ import 'package:audio_service/audio_service.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:permission_handler/permission_handler.dart';
+
 import 'adapters/adapter_repository.dart';
 import 'core/providers.dart';
 import 'data/app_db.dart';
+import 'fetcher/chapter_prefetcher.dart';
 import 'fetcher/web_fetcher.dart';
 import 'home_screen.dart';
 import 'sources/registry.dart';
@@ -17,7 +19,17 @@ Future<void> main() async {
   final db = AppDb();
   await SourceRegistry.restoreInstalled(db, repo);
   final fetcher = WebFetcher();
-  final player = TtsPlayer(db: db, fetcher: fetcher, adapters: repo);
+  final prefetcher = ChapterPrefetcher(
+    db: db,
+    fetcher: fetcher,
+    adapters: repo,
+  );
+  final player = TtsPlayer(
+    db: db,
+    fetcher: fetcher,
+    adapters: repo,
+    prefetcher: prefetcher,
+  );
   await player.init();
   await Permission.notification.request();
   await AudioService.init(
@@ -30,15 +42,18 @@ Future<void> main() async {
       androidNotificationIcon: 'mipmap/ic_launcher',
     ),
   );
-  runApp(ProviderScope(
-    overrides: [
-      adapterRepoProvider.overrideWithValue(repo),
-      appDbProvider.overrideWithValue(db),
-      webFetcherProvider.overrideWithValue(fetcher),
-      ttsPlayerProvider.overrideWithValue(player),
-    ],
-    child: const StoryReaderApp(),
-  ));
+  runApp(
+    ProviderScope(
+      overrides: [
+        adapterRepoProvider.overrideWithValue(repo),
+        appDbProvider.overrideWithValue(db),
+        webFetcherProvider.overrideWithValue(fetcher),
+        chapterPrefetcherProvider.overrideWithValue(prefetcher),
+        ttsPlayerProvider.overrideWithValue(player),
+      ],
+      child: const StoryReaderApp(),
+    ),
+  );
 }
 
 class StoryReaderApp extends StatelessWidget {

@@ -1,7 +1,9 @@
 import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+
 import '../core/models.dart';
 import '../core/providers.dart';
 import '../fetcher/web_fetcher.dart';
@@ -47,9 +49,16 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
 
   Future<void> _init() async {
     final db = ref.read(appDbProvider);
-    _settings.fontSize = double.tryParse(await db.getSetting('fontSize') ?? '') ?? 20;
-    _settings.lineHeight = double.tryParse(await db.getSetting('lineHeight') ?? '') ?? 1.8;
+    _settings.fontSize =
+        double.tryParse(await db.getSetting('fontSize') ?? '') ?? 20;
+    _settings.lineHeight =
+        double.tryParse(await db.getSetting('lineHeight') ?? '') ?? 1.8;
     _settings.theme = await db.getSetting('readerTheme') ?? 'light';
+    _settings.prefetchCount =
+        (int.tryParse(await db.getSetting('prefetchCount') ?? '') ?? 3).clamp(
+          1,
+          5,
+        );
     if (mounted) setState(() {});
     await _load(widget.url);
   }
@@ -75,13 +84,19 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
     }
     setState(() {});
     final idx = _player.currentParaIndex;
-    if (_player.playing && idx >= 0 && idx != _lastSpokenPara && idx < _paraKeys.length) {
+    if (_player.playing &&
+        idx >= 0 &&
+        idx != _lastSpokenPara &&
+        idx < _paraKeys.length) {
       _lastSpokenPara = idx;
       WidgetsBinding.instance.addPostFrameCallback((_) {
         final ctx = _paraKeys[idx].currentContext;
         if (ctx != null) {
-          Scrollable.ensureVisible(ctx,
-              duration: const Duration(milliseconds: 300), alignment: 0.0);
+          Scrollable.ensureVisible(
+            ctx,
+            duration: const Duration(milliseconds: 300),
+            alignment: 0.0,
+          );
         }
       });
     }
@@ -116,7 +131,9 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
         }
         final adapter = ref.read(adapterRepoProvider).forUrl(url);
         if (adapter == null) {
-          throw Exception('Chưa có adapter cho trang này. Vào Nguồn để thêm registry.');
+          throw Exception(
+            'Chưa có adapter cho trang này. Vào Nguồn để thêm registry.',
+          );
         }
         c = await ref.read(webFetcherProvider).fetchChapter(url, adapter);
       }
@@ -124,7 +141,7 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
       await db.cacheChapter(cc);
       await db.setSetting('lastUrl', url);
       await db.touchLibrary(storyUrlFromChapter(url), url);
-      unawaited(_prefetchNext(cc.nextUrl));
+      unawaited(ref.read(chapterPrefetcherProvider).prefetch(cc.nextUrl));
       final saved = await db.getPosition(url);
       if (!mounted) return;
       setState(() {
@@ -135,7 +152,10 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (_scroll.hasClients) {
           _scroll.jumpTo(
-              (saved ?? 0).clamp(0.0, _scroll.position.maxScrollExtent).toDouble());
+            (saved ?? 0)
+                .clamp(0.0, _scroll.position.maxScrollExtent)
+                .toDouble(),
+          );
         }
       });
       if (_player.playing) await _player.start(c);
@@ -143,21 +163,11 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
       if (!mounted) return;
       setState(() {
         _loading = false;
-        _error = e is ChallengeException ? e.toString() : e.toString().replaceFirst('Exception: ', '');
+        _error = e is ChallengeException
+            ? e.toString()
+            : e.toString().replaceFirst('Exception: ', '');
       });
     }
-  }
-
-  Future<void> _prefetchNext(String? url) async {
-    if (url == null || url.startsWith('book:')) return;
-    try {
-      final db = ref.read(appDbProvider);
-      if (await db.getCachedChapter(url) != null) return;
-      final adapter = ref.read(adapterRepoProvider).forUrl(url);
-      if (adapter == null) return;
-      final c = await ref.read(webFetcherProvider).fetchChapter(url, adapter);
-      await db.cacheChapter(c);
-    } catch (_) {}
   }
 
   bool _addingToLib = false;
@@ -170,21 +180,25 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
       final storyUrl = storyUrlFromChapter(c.url);
       final adapter = ref.read(adapterRepoProvider).forUrl(storyUrl);
       if (adapter == null) throw Exception('Chưa có adapter cho trang này');
-      final info = await ref.read(webFetcherProvider).fetchStory(storyUrl, adapter);
+      final info = await ref
+          .read(webFetcherProvider)
+          .fetchStory(storyUrl, adapter);
       final db = ref.read(appDbProvider);
       await db.upsertLibrary(
-          storyUrl: storyUrl,
-          title: info.title,
-          coverUrl: info.coverUrl,
-          lastChapterUrl: c.url);
+        storyUrl: storyUrl,
+        title: info.title,
+        coverUrl: info.coverUrl,
+        lastChapterUrl: c.url,
+      );
       await db.saveToc(storyUrl, info.chapters);
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Đã thêm "${info.title}" vào thư viện')));
+        SnackBar(content: Text('Đã thêm "${info.title}" vào thư viện')),
+      );
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Lỗi: $e')));
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text('Lỗi: $e')));
     } finally {
       if (mounted) setState(() => _addingToLib = false);
     }
@@ -198,7 +212,10 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
     final map = await Navigator.push<Map<String, dynamic>>(
       context,
       MaterialPageRoute(
-        builder: (_) => WebViewFallbackScreen(url: url, extractJs: WebFetcher.chapterJs(adapter)),
+        builder: (_) => WebViewFallbackScreen(
+          url: url,
+          extractJs: WebFetcher.chapterJs(adapter),
+        ),
       ),
     );
     if (map == null || !mounted) return;
@@ -206,12 +223,18 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
     final cleaned = ChapterContent(
       url: c.url,
       title: c.title,
-      paragraphs: c.paragraphs.map(adapter.clean).where((p) => p.isNotEmpty).toList(),
+      paragraphs: c.paragraphs
+          .map(adapter.clean)
+          .where((p) => p.isNotEmpty)
+          .toList(),
       nextUrl: c.nextUrl,
       prevUrl: c.prevUrl,
     );
     if (cleaned.paragraphs.isEmpty) {
-      setState(() => _error = 'WebView chưa lấy được nội dung, thử lại sau khi trang tải xong');
+      setState(
+        () => _error =
+            'WebView chưa lấy được nội dung, thử lại sau khi trang tải xong',
+      );
       return;
     }
     final db = ref.read(appDbProvider);
@@ -272,8 +295,10 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
           children: [
             Padding(
               padding: const EdgeInsets.all(16),
-              child: Text('Hẹn giờ tắt tiếng đọc',
-                  style: Theme.of(context).textTheme.titleMedium),
+              child: Text(
+                'Hẹn giờ tắt tiếng đọc',
+                style: Theme.of(context).textTheme.titleMedium,
+              ),
             ),
             for (final m in [15, 30, 60])
               ListTile(
@@ -283,13 +308,16 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
                   _player.setSleepTimer(m);
                   Navigator.pop(context);
                   ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(content: Text('Sẽ tạm dừng sau $m phút')));
+                    SnackBar(content: Text('Sẽ tạm dừng sau $m phút')),
+                  );
                 },
               ),
             if (_player.sleepAt != null)
               ListTile(
                 leading: const Icon(Icons.timer_off),
-                title: Text('Huỷ hẹn giờ (còn ${_player.remainingSleepMinutes} phút)'),
+                title: Text(
+                  'Huỷ hẹn giờ (còn ${_player.remainingSleepMinutes} phút)',
+                ),
                 onTap: () {
                   _player.cancelSleepTimer();
                   Navigator.pop(context);
@@ -307,7 +335,9 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
   String _voiceTitle(Map<String, String> v) {
     if (!_isViVoice(v)) return v['locale'] ?? (v['name'] ?? '');
     final net = v['network_required'];
-    final tag = net == '1' ? ' · giọng mạng' : (net == '0' ? ' · ngoại tuyến' : '');
+    final tag = net == '1'
+        ? ' · giọng mạng'
+        : (net == '0' ? ' · ngoại tuyến' : '');
     return 'Tiếng Việt (${v['locale']})$tag';
   }
 
@@ -320,7 +350,9 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
       'very low': 'rất thấp',
     };
     final quality = q[v['quality']] ?? v['quality'] ?? '';
-    final net = v['network_required'] == '1' ? ' · cần Internet khi tạo âm thanh' : '';
+    final net = v['network_required'] == '1'
+        ? ' · cần Internet khi tạo âm thanh'
+        : '';
     return '${v['name']}$net${quality.isEmpty ? '' : ' · chất lượng $quality'}';
   }
 
@@ -342,17 +374,24 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
               _player.currentVoice?['name'] == v['name'] &&
               _player.currentVoice?['locale'] == v['locale'];
           return ConstrainedBox(
-            constraints: BoxConstraints(maxHeight: MediaQuery.of(ctx).size.height * 0.85),
+            constraints: BoxConstraints(
+              maxHeight: MediaQuery.of(ctx).size.height * 0.85,
+            ),
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
                 ListTile(
-                  title: Text('Giọng đọc', style: Theme.of(ctx).textTheme.titleMedium),
-                  subtitle: Text(vi.isNotEmpty
-                      ? '${vi.length} giọng tiếng Việt trên máy'
-                      : (list.isEmpty
-                          ? 'Máy chưa trả về danh sách giọng'
-                          : 'Máy chưa có giọng tiếng Việt — tạm hiện ${list.length} giọng khác')),
+                  title: Text(
+                    'Giọng đọc',
+                    style: Theme.of(ctx).textTheme.titleMedium,
+                  ),
+                  subtitle: Text(
+                    vi.isNotEmpty
+                        ? '${vi.length} giọng tiếng Việt trên máy'
+                        : (list.isEmpty
+                              ? 'Máy chưa trả về danh sách giọng'
+                              : 'Máy chưa có giọng tiếng Việt — tạm hiện ${list.length} giọng khác'),
+                  ),
                   trailing: IconButton(
                     icon: const Icon(Icons.refresh),
                     tooltip: 'Tải lại danh sách',
@@ -367,14 +406,20 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
                 Flexible(
                   child: ListView(
                     shrinkWrap: true,
-                    padding: EdgeInsets.only(bottom: 12 + MediaQuery.of(ctx).padding.bottom),
+                    padding: EdgeInsets.only(
+                      bottom: 12 + MediaQuery.of(ctx).padding.bottom,
+                    ),
                     children: [
                       ListTile(
-                        leading: Icon(_player.currentVoice == null
-                            ? Icons.radio_button_checked
-                            : Icons.radio_button_off),
+                        leading: Icon(
+                          _player.currentVoice == null
+                              ? Icons.radio_button_checked
+                              : Icons.radio_button_off,
+                        ),
                         title: const Text('Mặc định của máy'),
-                        subtitle: const Text('Máy tự chọn giọng tiếng Việt tốt nhất'),
+                        subtitle: const Text(
+                          'Máy tự chọn giọng tiếng Việt tốt nhất',
+                        ),
                         onTap: () async {
                           await _player.useDefaultVoice();
                           onChange();
@@ -383,15 +428,21 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
                       ),
                       for (final v in list)
                         ListTile(
-                          leading: Icon(selected(v)
-                              ? Icons.radio_button_checked
-                              : Icons.radio_button_off),
+                          leading: Icon(
+                            selected(v)
+                                ? Icons.radio_button_checked
+                                : Icons.radio_button_off,
+                          ),
                           title: Text(_voiceTitle(v)),
                           subtitle: Text(_voiceSubtitle(v)),
                           trailing: busy == v['name']
                               ? const SizedBox(
-                                  width: 20, height: 20,
-                                  child: CircularProgressIndicator(strokeWidth: 2))
+                                  width: 20,
+                                  height: 20,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                  ),
+                                )
                               : const Icon(Icons.play_circle_outline),
                           onTap: busy != null
                               ? null
@@ -402,9 +453,14 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
                                   if (!ok) {
                                     setV(() => busy = null);
                                     if (mounted) {
-                                      ScaffoldMessenger.of(context).showSnackBar(
-                                          const SnackBar(
-                                              content: Text('Không đổi được giọng này')));
+                                      ScaffoldMessenger.of(context)
+                                          .showSnackBar(
+                                            const SnackBar(
+                                              content: Text(
+                                                'Không đổi được giọng này',
+                                              ),
+                                            ),
+                                          );
                                     }
                                     return;
                                   }
@@ -413,8 +469,12 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
                                   setV(() => busy = null);
                                   if (file == null && mounted) {
                                     ScaffoldMessenger.of(context).showSnackBar(
-                                        const SnackBar(
-                                            content: Text('Không tạo được âm thanh thử')));
+                                      const SnackBar(
+                                        content: Text(
+                                          'Không tạo được âm thanh thử',
+                                        ),
+                                      ),
+                                    );
                                   }
                                 },
                         ),
@@ -424,7 +484,11 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
                 if (vi.length == 1)
                   Padding(
                     padding: EdgeInsets.fromLTRB(
-                        20, 8, 20, 12 + MediaQuery.of(ctx).padding.bottom),
+                      20,
+                      8,
+                      20,
+                      12 + MediaQuery.of(ctx).padding.bottom,
+                    ),
                     child: Text(
                       'Máy chỉ có 1 giọng tiếng Việt. Dùng Cao độ (trầm ↔ cao) để đổi chất giọng, '
                       'hoặc tải thêm giọng trong Cài đặt hệ thống → Ngôn ngữ & giọng nói → '
@@ -450,10 +514,16 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
         builder: (ctx, setSheet) {
           final titleStyle = Theme.of(ctx).textTheme.titleMedium;
           return ConstrainedBox(
-            constraints: BoxConstraints(maxHeight: MediaQuery.of(ctx).size.height * 0.85),
+            constraints: BoxConstraints(
+              maxHeight: MediaQuery.of(ctx).size.height * 0.85,
+            ),
             child: SingleChildScrollView(
               padding: EdgeInsets.fromLTRB(
-                  20, 16, 20, 20 + MediaQuery.of(ctx).padding.bottom),
+                20,
+                16,
+                20,
+                20 + MediaQuery.of(ctx).padding.bottom,
+              ),
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -462,15 +532,18 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
                     contentPadding: EdgeInsets.zero,
                     leading: const Icon(Icons.record_voice_over_outlined),
                     title: Text('Giọng đọc: ${_currentVoiceLabel()}'),
-                    subtitle: Text(_player.viVoices.isEmpty
-                        ? 'Chưa lấy được danh sách giọng'
-                        : '${_player.viVoices.length} giọng tiếng Việt trên máy'),
+                    subtitle: Text(
+                      _player.viVoices.isEmpty
+                          ? 'Chưa lấy được danh sách giọng'
+                          : '${_player.viVoices.length} giọng tiếng Việt trên máy',
+                    ),
                     trailing: const Icon(Icons.chevron_right),
                     onTap: () => _openVoicePicker(() => setSheet(() {})),
                   ),
                   Text(
-                      'Cao độ: ${_player.pitch.toStringAsFixed(1)} (trầm ↔ cao)',
-                      style: titleStyle),
+                    'Cao độ: ${_player.pitch.toStringAsFixed(1)} (trầm ↔ cao)',
+                    style: titleStyle,
+                  ),
                   Slider(
                     value: _player.pitch.clamp(0.5, 2.0),
                     min: 0.5,
@@ -482,8 +555,10 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
                       _player.setPitch(v);
                     },
                   ),
-                  Text('Tốc độ đọc: ${_player.rate.toStringAsFixed(2)}',
-                      style: titleStyle),
+                  Text(
+                    'Tốc độ đọc: ${_player.rate.toStringAsFixed(2)}',
+                    style: titleStyle,
+                  ),
                   Slider(
                     value: _player.rate.clamp(0.3, 2.0),
                     min: 0.3,
@@ -503,20 +578,30 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
                             final file = await _player.previewVoice();
                             if (!mounted) return;
                             setSheet(() => previewing = false);
-                            ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-                                content: Text(file == null
-                                    ? 'Không tạo được âm thanh thử'
-                                    : 'Đang phát thử giọng hiện tại')));
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(
+                                content: Text(
+                                  file == null
+                                      ? 'Không tạo được âm thanh thử'
+                                      : 'Đang phát thử giọng hiện tại',
+                                ),
+                              ),
+                            );
                           },
                     icon: previewing
                         ? const SizedBox(
-                            width: 16, height: 16,
-                            child: CircularProgressIndicator(strokeWidth: 2))
+                            width: 16,
+                            height: 16,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
                         : const Icon(Icons.volume_up),
                     label: const Text('Nghe thử'),
                   ),
                   const SizedBox(height: 16),
-                  Text('Cỡ chữ: ${_settings.fontSize.round()}', style: titleStyle),
+                  Text(
+                    'Cỡ chữ: ${_settings.fontSize.round()}',
+                    style: titleStyle,
+                  ),
                   Slider(
                     value: _settings.fontSize,
                     min: 14,
@@ -529,8 +614,10 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
                       db.setSetting('fontSize', v.toString());
                     },
                   ),
-                  Text('Giãn dòng: ${_settings.lineHeight.toStringAsFixed(1)}',
-                      style: titleStyle),
+                  Text(
+                    'Giãn dòng: ${_settings.lineHeight.toStringAsFixed(1)}',
+                    style: titleStyle,
+                  ),
                   Slider(
                     value: _settings.lineHeight,
                     min: 1.2,
@@ -546,11 +633,20 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
                   SegmentedButton<String>(
                     segments: const [
                       ButtonSegment(
-                          value: 'light', label: Text('Sáng'), icon: Icon(Icons.light_mode)),
+                        value: 'light',
+                        label: Text('Sáng'),
+                        icon: Icon(Icons.light_mode),
+                      ),
                       ButtonSegment(
-                          value: 'dark', label: Text('Tối'), icon: Icon(Icons.dark_mode)),
+                        value: 'dark',
+                        label: Text('Tối'),
+                        icon: Icon(Icons.dark_mode),
+                      ),
                       ButtonSegment(
-                          value: 'sepia', label: Text('Vàng'), icon: Icon(Icons.menu_book)),
+                        value: 'sepia',
+                        label: Text('Vàng'),
+                        icon: Icon(Icons.menu_book),
+                      ),
                     ],
                     selected: {_settings.theme},
                     onSelectionChanged: (s) {
@@ -558,6 +654,27 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
                       setState(() => _settings.theme = s.first);
                       db.setSetting('readerTheme', s.first);
                     },
+                  ),
+                  const SizedBox(height: 16),
+                  Text(
+                    'Tải trước: ${_settings.prefetchCount} chương',
+                    style: titleStyle,
+                  ),
+                  Slider(
+                    value: _settings.prefetchCount.toDouble(),
+                    min: 1,
+                    max: 5,
+                    divisions: 4,
+                    label: '${_settings.prefetchCount}',
+                    onChanged: (v) {
+                      setSheet(() {});
+                      setState(() => _settings.prefetchCount = v.round());
+                      db.setSetting('prefetchCount', '${v.round()}');
+                    },
+                  ),
+                  Text(
+                    'Tải nền chương kế để đọc/nghe liền mạch. Nghỉ 5s giữa các lần tải để tránh bị chặn.',
+                    style: Theme.of(ctx).textTheme.bodySmall,
                   ),
                 ],
               ),
@@ -590,7 +707,11 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
       appBar: AppBar(
         backgroundColor: bg,
         foregroundColor: fg,
-        title: Text(c?.title ?? 'Đang tải...', maxLines: 1, overflow: TextOverflow.ellipsis),
+        title: Text(
+          c?.title ?? 'Đang tải...',
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+        ),
         actions: [
           if (c != null)
             IconButton(
@@ -599,7 +720,9 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
                 context,
                 MaterialPageRoute(
                   builder: (_) => TocScreen(
-                      storyUrl: storyUrlFromChapter(c.url), currentChapterUrl: c.url),
+                    storyUrl: storyUrlFromChapter(c.url),
+                    currentChapterUrl: c.url,
+                  ),
                 ),
               ),
               tooltip: 'Mục lục',
@@ -608,13 +731,18 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
             IconButton(
               icon: _addingToLib
                   ? const SizedBox(
-                      width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2))
+                      width: 20,
+                      height: 20,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
                   : const Icon(Icons.bookmark_add_outlined),
               onPressed: _addingToLib ? null : _addToLibrary,
               tooltip: 'Thêm vào thư viện',
             ),
           IconButton(
-            icon: Icon(_player.sleepAt != null ? Icons.timer : Icons.timer_outlined),
+            icon: Icon(
+              _player.sleepAt != null ? Icons.timer : Icons.timer_outlined,
+            ),
             onPressed: _sleepTimerMenu,
             tooltip: 'Hẹn giờ tắt',
           ),
@@ -637,28 +765,36 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
                       icon: const Icon(Icons.chevron_left),
                       color: fg,
                       iconSize: 32,
-                      onPressed: c.prevUrl == null || _loading ? null : () => _load(c.prevUrl!),
+                      onPressed: c.prevUrl == null || _loading
+                          ? null
+                          : () => _load(c.prevUrl!),
                       tooltip: 'Chương trước',
                     ),
                     IconButton(
-                      icon: Icon(isPlayingThis ? Icons.pause_circle : Icons.play_circle),
+                      icon: Icon(
+                        isPlayingThis ? Icons.pause_circle : Icons.play_circle,
+                      ),
                       color: fg,
                       iconSize: 40,
                       onPressed: _loading ? null : _togglePlay,
                       tooltip: isPlayingThis ? 'Tạm dừng đọc' : 'Nghe đọc',
                     ),
                     Expanded(
-                      child: Text(c.title,
-                          textAlign: TextAlign.center,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(color: fg)),
+                      child: Text(
+                        c.title,
+                        textAlign: TextAlign.center,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(color: fg),
+                      ),
                     ),
                     IconButton(
                       icon: const Icon(Icons.chevron_right),
                       color: fg,
                       iconSize: 32,
-                      onPressed: c.nextUrl == null || _loading ? null : () => _load(c.nextUrl!),
+                      onPressed: c.nextUrl == null || _loading
+                          ? null
+                          : () => _load(c.nextUrl!),
                       tooltip: 'Chương sau',
                     ),
                   ],
@@ -681,13 +817,18 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
             children: [
               Icon(Icons.error_outline, size: 48, color: fg),
               const SizedBox(height: 12),
-              Text(_error!, textAlign: TextAlign.center, style: TextStyle(color: fg)),
+              Text(
+                _error!,
+                textAlign: TextAlign.center,
+                style: TextStyle(color: fg),
+              ),
               const SizedBox(height: 16),
               Wrap(
                 spacing: 12,
                 children: [
                   FilledButton.tonal(
-                    onPressed: () => _load(_failedUrl ?? widget.url, useCache: false),
+                    onPressed: () =>
+                        _load(_failedUrl ?? widget.url, useCache: false),
                     child: const Text('Thử lại'),
                   ),
                   FilledButton.tonal(
@@ -718,13 +859,24 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(c.title,
-                style: style.copyWith(fontSize: _settings.fontSize + 4, fontWeight: FontWeight.bold)),
+            Text(
+              c.title,
+              style: style.copyWith(
+                fontSize: _settings.fontSize + 4,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
             const SizedBox(height: 16),
             for (var i = 0; i < c.paragraphs.length; i++)
               Padding(
                 padding: EdgeInsets.only(bottom: _settings.fontSize * 0.7),
-                child: _paragraph(i, c.paragraphs[i], style, activePara == i, chunkText),
+                child: _paragraph(
+                  i,
+                  c.paragraphs[i],
+                  style,
+                  activePara == i,
+                  chunkText,
+                ),
               ),
             if (c.nextUrl != null)
               Center(
@@ -743,7 +895,13 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
     );
   }
 
-  Widget _paragraph(int i, String p, TextStyle style, bool active, String chunkText) {
+  Widget _paragraph(
+    int i,
+    String p,
+    TextStyle style,
+    bool active,
+    String chunkText,
+  ) {
     final key = i < _paraKeys.length ? _paraKeys[i] : null;
     if (!active || chunkText.isEmpty) {
       return Text(p, key: key, style: style);

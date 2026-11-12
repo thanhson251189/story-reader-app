@@ -1,14 +1,17 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter_tts/flutter_tts.dart';
 import 'package:just_audio/just_audio.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
+
 import '../adapters/adapter_repository.dart';
 import '../core/models.dart';
 import '../data/app_db.dart';
+import '../fetcher/chapter_prefetcher.dart';
 import '../fetcher/web_fetcher.dart';
 
 class SpeakChunk {
@@ -24,6 +27,7 @@ class TtsPlayer extends ChangeNotifier {
   final AppDb db;
   final WebFetcher fetcher;
   final AdapterRepository adapters;
+  final ChapterPrefetcher prefetcher;
 
   List<SpeakChunk> chunks = [];
   int index = 0;
@@ -44,7 +48,12 @@ class TtsPlayer extends ChangeNotifier {
   Completer<void>? _chunkDone;
   Completer<void>? _synthIdle;
 
-  TtsPlayer({required this.db, required this.fetcher, required this.adapters}) {
+  TtsPlayer({
+    required this.db,
+    required this.fetcher,
+    required this.adapters,
+    required this.prefetcher,
+  }) {
     // Phát trong process của app (foreground service mediaPlayback) để
     // Android không chặn âm thanh nền như khi engine TTS tự phát.
     _audio.processingStateStream.listen((s) {
@@ -59,9 +68,8 @@ class TtsPlayer extends ChangeNotifier {
       chunks.isEmpty ? -1 : chunks[index.clamp(0, chunks.length - 1)].paraIndex;
   SpeakChunk? get currentChunk =>
       chunks.isEmpty ? null : chunks[index.clamp(0, chunks.length - 1)];
-  int get remainingSleepMinutes => sleepAt == null
-      ? 0
-      : sleepAt!.difference(DateTime.now()).inMinutes + 1;
+  int get remainingSleepMinutes =>
+      sleepAt == null ? 0 : sleepAt!.difference(DateTime.now()).inMinutes + 1;
 
   Future<void> init() async {
     final langResult = await _tts.setLanguage('vi-VN');
@@ -73,8 +81,7 @@ class TtsPlayer extends ChangeNotifier {
     await reloadVoices();
     await _restoreVoice();
     if (langResult != 1 && viVoices.isEmpty) {
-      voiceWarning =
-          'Máy chưa có giọng tiếng Việt. Vào Cài đặt > Ngôn ngữ & nhập liệu > Chuyển văn bản thành giọng nói để tải giọng Google tiếng Việt.';
+      voiceWarning = 'Máy chưa có giọng tiếng Việt. Vào Cài đặt > Ngôn ngữ & nhập liệu > Chuyển văn bản thành giọng nói để tải giọng Google tiếng Việt.';
     }
   }
 
@@ -86,23 +93,26 @@ class TtsPlayer extends ChangeNotifier {
   Future<void> reloadVoices() async {
     try {
       final raw = await _tts.getVoices as List?;
-      voices = (raw ?? [])
-          .whereType<Map>()
-          .map((m) => {
-                'name': '${m['name'] ?? ''}',
-                'locale': '${m['locale'] ?? ''}',
-                'quality': '${m['quality'] ?? ''}',
-                'latency': '${m['latency'] ?? ''}',
-                'network_required': '${m['network_required'] ?? '0'}',
-              })
-          .where((m) => m['name']!.isNotEmpty)
-          .toList()
-        ..sort((a, b) {
-          final av = _isVi(a) ? 0 : 1;
-          final bv = _isVi(b) ? 0 : 1;
-          if (av != bv) return av - bv;
-          return a['locale']!.compareTo(b['locale']!);
-        });
+      voices =
+          (raw ?? [])
+              .whereType<Map>()
+              .map(
+                (m) => {
+                  'name': '${m['name'] ?? ''}',
+                  'locale': '${m['locale'] ?? ''}',
+                  'quality': '${m['quality'] ?? ''}',
+                  'latency': '${m['latency'] ?? ''}',
+                  'network_required': '${m['network_required'] ?? '0'}',
+                },
+              )
+              .where((m) => m['name']!.isNotEmpty)
+              .toList()
+            ..sort((a, b) {
+              final av = _isVi(a) ? 0 : 1;
+              final bv = _isVi(b) ? 0 : 1;
+              if (av != bv) return av - bv;
+              return a['locale']!.compareTo(b['locale']!);
+            });
       debugPrint('TTS voices loaded: ${voices.length}, vi=${viVoices.length}');
       _notify();
     } catch (e) {
@@ -137,7 +147,10 @@ class TtsPlayer extends ChangeNotifier {
     final res = await _tts.setVoice({'name': name, 'locale': locale});
     if (res != 1) return false;
     currentVoice = Map<String, String>.from(v);
-    await db.setSetting('ttsVoice', jsonEncode({'name': name, 'locale': locale}));
+    await db.setSetting(
+      'ttsVoice',
+      jsonEncode({'name': name, 'locale': locale}),
+    );
     _notify();
     return true;
   }
@@ -162,7 +175,8 @@ class TtsPlayer extends ChangeNotifier {
     while (_synthIdle != null) {
       await _synthIdle!.future;
     }
-    const sample = 'Xin chào! Đây là giọng đọc thử. Chúc bạn nghe truyện vui vẻ.';
+    const sample =
+        'Xin chào! Đây là giọng đọc thử. Chúc bạn nghe truyện vui vẻ.';
     final file = await _synth(sample, fileName: 'tts_preview.wav');
     if (file == null) return null;
     await _preview.stop();
@@ -278,7 +292,10 @@ class TtsPlayer extends ChangeNotifier {
     }
   }
 
-  Future<String?> _synth(String text, {String fileName = 'tts_chunk.wav'}) async {
+  Future<String?> _synth(
+    String text, {
+    String fileName = 'tts_chunk.wav',
+  }) async {
     _synthIdle ??= Completer<void>();
     try {
       final dir = await getTemporaryDirectory();
@@ -334,13 +351,15 @@ class TtsPlayer extends ChangeNotifier {
   }
 
   Future<ChapterContent?> _loadChapter(String url) async {
-    final cached = await db.getCachedChapter(url);
-    if (cached != null) return cached;
-    final adapter = adapters.forUrl(url);
-    if (adapter == null) return null;
-    final c = await fetcher.fetchChapter(url, adapter);
-    await db.cacheChapter(c);
-    await db.setSetting('lastUrl', url);
+    var c = await db.getCachedChapter(url);
+    if (c == null) {
+      final adapter = adapters.forUrl(url);
+      if (adapter == null) return null;
+      c = await fetcher.fetchChapter(url, adapter);
+      await db.cacheChapter(c);
+      await db.setSetting('lastUrl', url);
+    }
+    unawaited(prefetcher.prefetch(c.nextUrl));
     return c;
   }
 

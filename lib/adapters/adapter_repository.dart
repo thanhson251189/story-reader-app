@@ -16,6 +16,8 @@ class AdapterRepository {
     }
   }
 
+  void remove(String domain) => _byDomain.remove(domain);
+
   SourceAdapter? forUrl(String url) {
     for (final a in _byDomain.values) {
       if (a.matches(url)) return a;

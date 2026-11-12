@@ -4,6 +4,7 @@ class SourceAdapter {
   final Map<String, String> selectors;
   final List<String> removeSelectors;
   final List<Map<String, String>> textCleanup;
+  final String? searchUrl;
 
   SourceAdapter({
     required this.domain,
@@ -11,16 +12,28 @@ class SourceAdapter {
     required this.selectors,
     required this.removeSelectors,
     required this.textCleanup,
+    this.searchUrl,
   });
 
   factory SourceAdapter.fromJson(Map<String, dynamic> j) => SourceAdapter(
-        domain: j['domain'] as String,
-        version: (j['version'] as num?)?.toInt() ?? 1,
-        selectors: Map<String, String>.from(j['selectors'] as Map? ?? {}),
-        removeSelectors: List<String>.from(j['removeSelectors'] as List? ?? []),
-        textCleanup: (j['textCleanup'] as List? ?? [])
-            .map((e) => Map<String, String>.from(e as Map))
-            .toList(),
+    domain: j['domain'] as String,
+    version: (j['version'] as num?)?.toInt() ?? 1,
+    selectors: Map<String, String>.from(j['selectors'] as Map? ?? {}),
+    removeSelectors: List<String>.from(j['removeSelectors'] as List? ?? []),
+    textCleanup: (j['textCleanup'] as List? ?? [])
+        .map((e) => Map<String, String>.from(e as Map))
+        .toList(),
+    searchUrl: j['searchUrl'] as String?,
+  );
+
+  SourceAdapter withSearch(String url, Map<String, String> extraSelectors) =>
+      SourceAdapter(
+        domain: domain,
+        version: version,
+        selectors: {...selectors, ...extraSelectors},
+        removeSelectors: removeSelectors,
+        textCleanup: textCleanup,
+        searchUrl: url,
       );
 
   bool matches(String url) {
@@ -55,13 +68,12 @@ class ChapterContent {
   });
 
   factory ChapterContent.fromJson(Map<String, dynamic> j) => ChapterContent(
-        url: j['url'] as String? ?? '',
-        title: j['title'] as String? ?? '',
-        paragraphs: List<String>.from(j['paragraphs'] as List? ?? []),
-        nextUrl: j['nextUrl'] as String?,
-        prevUrl: j['prevUrl'] as String?,
-      );
-
+    url: j['url'] as String? ?? '',
+    title: j['title'] as String? ?? '',
+    paragraphs: List<String>.from(j['paragraphs'] as List? ?? []),
+    nextUrl: j['nextUrl'] as String?,
+    prevUrl: j['prevUrl'] as String?,
+  );
 }
 
 class ChapterRef {
@@ -69,8 +81,10 @@ class ChapterRef {
   final String url;
   ChapterRef({required this.title, required this.url});
 
-  factory ChapterRef.fromJson(Map<String, dynamic> j) =>
-      ChapterRef(title: j['title'] as String? ?? '', url: j['url'] as String? ?? '');
+  factory ChapterRef.fromJson(Map<String, dynamic> j) => ChapterRef(
+    title: j['title'] as String? ?? '',
+    url: j['url'] as String? ?? '',
+  );
 }
 
 class NovelInfo {
@@ -81,12 +95,25 @@ class NovelInfo {
   NovelInfo({required this.title, this.coverUrl, required this.chapters});
 
   factory NovelInfo.fromJson(Map<String, dynamic> j) => NovelInfo(
-        title: j['title'] as String? ?? '',
-        coverUrl: j['coverUrl'] as String?,
-        chapters: (j['chapters'] as List? ?? [])
-            .map((e) => ChapterRef.fromJson(Map<String, dynamic>.from(e as Map)))
-            .toList(),
-      );
+    title: j['title'] as String? ?? '',
+    coverUrl: j['coverUrl'] as String?,
+    chapters: (j['chapters'] as List? ?? [])
+        .map((e) => ChapterRef.fromJson(Map<String, dynamic>.from(e as Map)))
+        .toList(),
+  );
+}
+
+class SearchResult {
+  final String title;
+  final String url;
+  final String? coverUrl;
+  SearchResult({required this.title, required this.url, this.coverUrl});
+
+  factory SearchResult.fromJson(Map<String, dynamic> j) => SearchResult(
+    title: j['title'] as String? ?? '',
+    url: j['url'] as String? ?? '',
+    coverUrl: j['coverUrl'] as String?,
+  );
 }
 
 class ChallengeException implements Exception {
@@ -98,10 +125,12 @@ class ReaderSettings {
   double fontSize;
   double lineHeight;
   String theme;
+  int prefetchCount;
 
   ReaderSettings({
     this.fontSize = 20,
     this.lineHeight = 1.8,
     this.theme = 'light',
+    this.prefetchCount = 3,
   });
 }
