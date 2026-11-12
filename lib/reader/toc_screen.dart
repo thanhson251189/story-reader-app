@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../core/models.dart';
 import '../core/providers.dart';
+import '../fetcher/web_fetcher.dart';
 import 'reader_screen.dart';
 
 String storyUrlFromChapter(String url) {
@@ -21,22 +22,64 @@ class TocScreen extends ConsumerStatefulWidget {
   final String? currentChapterUrl;
   const TocScreen({super.key, required this.storyUrl, this.currentChapterUrl});
 
+  static String chapterLabel(String title, int number) {
+    final t = title.trim();
+    if (RegExp(r'^(chương|chapter)\b', caseSensitive: false).hasMatch(t)) {
+      return t;
+    }
+    final rest = t.replaceFirst(RegExp(r'^\d+(?:\s*[:.,\-–]|\s*\n)\s*'), '');
+    return rest.isEmpty ? 'Chương $number' : 'Chương $number: $rest';
+  }
+
+  static final Map<String, String> _foldMap = () {
+    const from =
+        'àáảãạăắằẳẵặâấầẩẫậèéẻẽẹêếềểễệìíỉĩịòóỏõọôốồổỗộơớờởỡợùúủũụưứừửữựỳýỷỹỵđ';
+    const to =
+        'aaaaaaaaaaaaaaaaaeeeeeeeeeeeiiiiiooooooooooooooooouuuuuuuuuuuyyyyyd';
+    return {for (var i = 0; i < from.length; i++) from[i]: to[i]};
+  }();
+
+  static String fold(String s) {
+    final b = StringBuffer();
+    for (final r in s.toLowerCase().runes) {
+      final c = String.fromCharCode(r);
+      b.write(_foldMap[c] ?? c);
+    }
+    return b.toString();
+  }
+
   @override
   ConsumerState<TocScreen> createState() => _TocScreenState();
 }
 
 class _TocScreenState extends ConsumerState<TocScreen> {
+  static const _row = 48.0;
+
   List<ChapterRef> _chapters = [];
+  List<int> _numbers = [];
+  Map<String, int> _indexByUrl = {};
+  List<int> _view = [];
   Set<String> _cached = {};
   bool _loading = true;
   String? _error;
   String? _title;
   bool _downloading = false;
+  bool _desc = false;
+  String _query = '';
+  final ScrollController _scroll = ScrollController();
+  final TextEditingController _filterCtrl = TextEditingController();
 
   @override
   void initState() {
     super.initState();
     _load();
+  }
+
+  @override
+  void dispose() {
+    _scroll.dispose();
+    _filterCtrl.dispose();
+    super.dispose();
   }
 
   Future<void> _load({bool force = false}) async {
@@ -71,6 +114,17 @@ class _TocScreenState extends ConsumerState<TocScreen> {
         _chapters = chapters;
         _cached = cached;
         _loading = false;
+        _numbers = [
+          for (var i = 0; i < chapters.length; i++)
+            WebFetcher.trailingNumber(chapters[i].url) ?? i + 1,
+        ];
+        _indexByUrl = {
+          for (var i = 0; i < chapters.length; i++) chapters[i].url: i,
+        };
+        _rebuildView();
+      });
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _jumpToCurrent();
       });
     } catch (e) {
       if (!mounted) return;
@@ -115,6 +169,58 @@ class _TocScreenState extends ConsumerState<TocScreen> {
         .showSnackBar(SnackBar(content: Text('Đã tải trước $ok chương')));
   }
 
+  String _label(int i) =>
+      TocScreen.chapterLabel(_chapters[i].title, _numbers[i]);
+
+  void _rebuildView() {
+    var idx = List<int>.generate(_chapters.length, (i) => i);
+    if (_desc) idx = idx.reversed.toList();
+    final q = _query.trim();
+    if (q.isNotEmpty) {
+      final f = TocScreen.fold(q);
+      idx = idx
+          .where(
+            (i) =>
+                '${_numbers[i]}'.contains(q) ||
+                TocScreen.fold(_label(i)).contains(f),
+          )
+          .toList();
+    }
+    _view = idx;
+  }
+
+  void _jumpToCurrent() {
+    final url = widget.currentChapterUrl;
+    if (url == null || !_scroll.hasClients) return;
+    final ci = _indexByUrl[url];
+    if (ci == null) return;
+    final vi = _view.indexOf(ci);
+    if (vi < 0) return;
+    _scroll.jumpTo(
+      (vi * _row - 2 * _row).clamp(0.0, _scroll.position.maxScrollExtent),
+    );
+  }
+
+  void _toggleSort() {
+    final top = _view.isEmpty
+        ? null
+        : _view[(_scroll.hasClients ? _scroll.offset / _row : 0)
+              .floor()
+              .clamp(0, _view.length - 1)];
+    setState(() {
+      _desc = !_desc;
+      _rebuildView();
+    });
+    if (top == null) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !_scroll.hasClients) return;
+      final vi = _view.indexOf(top);
+      if (vi >= 0) {
+        _scroll.jumpTo((vi * _row).clamp(0.0, _scroll.position.maxScrollExtent));
+      }
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -125,6 +231,11 @@ class _TocScreenState extends ConsumerState<TocScreen> {
           overflow: TextOverflow.ellipsis,
         ),
         actions: [
+          IconButton(
+            icon: Icon(_desc ? Icons.arrow_downward : Icons.arrow_upward),
+            tooltip: 'Đảo thứ tự chương',
+            onPressed: _chapters.isEmpty ? null : _toggleSort,
+          ),
           if (!widget.storyUrl.startsWith('book:')) ...[
             IconButton(
               icon: const Icon(Icons.refresh),
@@ -166,40 +277,93 @@ class _TocScreenState extends ConsumerState<TocScreen> {
                 ),
               ),
             )
-          : ListView.builder(
-              itemCount: _chapters.length,
-              itemBuilder: (_, i) {
-                final c = _chapters[i];
-                final isCurrent = c.url == widget.currentChapterUrl;
-                return ListTile(
-                  dense: true,
-                  title: Text(
-                    c.title.isEmpty ? 'Chương ${i + 1}' : c.title,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: isCurrent
-                        ? TextStyle(
-                            color: Theme.of(context).colorScheme.primary,
-                            fontWeight: FontWeight.bold,
-                          )
-                        : null,
-                  ),
-                  trailing: _cached.contains(c.url)
-                      ? const Icon(
-                          Icons.offline_pin,
-                          size: 18,
-                          color: Colors.green,
-                        )
-                      : null,
-                  onTap: () => Navigator.pushReplacement(
-                    context,
-                    MaterialPageRoute(
-                      builder: (_) =>
-                          ReaderScreen(url: c.url, storyUrl: widget.storyUrl),
+          : Column(
+              children: [
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(12, 8, 12, 4),
+                  child: TextField(
+                    controller: _filterCtrl,
+                    onChanged: (v) => setState(() {
+                      _query = v;
+                      _rebuildView();
+                    }),
+                    decoration: InputDecoration(
+                      isDense: true,
+                      prefixIcon: const Icon(Icons.search, size: 20),
+                      prefixIconConstraints: const BoxConstraints(
+                        minWidth: 36,
+                        minHeight: 36,
+                      ),
+                      hintText: 'Lọc theo số hoặc tên chương',
+                      suffixIcon: _query.isEmpty
+                          ? null
+                          : IconButton(
+                              icon: const Icon(Icons.close, size: 18),
+                              tooltip: 'Xóa bộ lọc',
+                              onPressed: () => setState(() {
+                                _filterCtrl.clear();
+                                _query = '';
+                                _rebuildView();
+                              }),
+                            ),
                     ),
                   ),
-                );
-              },
+                ),
+                Expanded(
+                  child: _view.isEmpty
+                      ? const Center(child: Text('Không có chương khớp bộ lọc'))
+                      : Scrollbar(
+                          controller: _scroll,
+                          thumbVisibility: true,
+                          interactive: true,
+                          thickness: 6,
+                          radius: const Radius.circular(3),
+                          child: ListView.builder(
+                            controller: _scroll,
+                            itemExtent: _row,
+                            itemCount: _view.length,
+                            itemBuilder: (_, vi) {
+                              final i = _view[vi];
+                              final c = _chapters[i];
+                              final isCurrent =
+                                  c.url == widget.currentChapterUrl;
+                              return ListTile(
+                                dense: true,
+                                title: Text(
+                                  _label(i),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: isCurrent
+                                      ? TextStyle(
+                                          color: Theme.of(
+                                            context,
+                                          ).colorScheme.primary,
+                                          fontWeight: FontWeight.bold,
+                                        )
+                                      : null,
+                                ),
+                                trailing: _cached.contains(c.url)
+                                    ? const Icon(
+                                        Icons.offline_pin,
+                                        size: 18,
+                                        color: Colors.green,
+                                      )
+                                    : null,
+                                onTap: () => Navigator.pushReplacement(
+                                  context,
+                                  MaterialPageRoute(
+                                    builder: (_) => ReaderScreen(
+                                      url: c.url,
+                                      storyUrl: widget.storyUrl,
+                                    ),
+                                  ),
+                                ),
+                              );
+                            },
+                          ),
+                        ),
+                ),
+              ],
             ),
     );
   }

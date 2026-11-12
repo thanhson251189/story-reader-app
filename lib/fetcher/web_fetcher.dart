@@ -258,16 +258,18 @@ class WebFetcher {
   // Chỉ sort khi mọi URL đều có số đuôi; site không đánh số thì giữ thứ tự trang
   // (List.sort của Dart không ổn định, comparator trả 0 sẽ xáo trộn thứ tự).
   static List<ChapterRef> sortChapters(List<ChapterRef> chapters) {
-    int? trailingNum(String u) {
-      final ms = RegExp(r'\d+').allMatches(u);
-      return ms.isEmpty ? null : int.tryParse(ms.last.group(0)!);
-    }
-
-    final nums = chapters.map((c) => trailingNum(c.url)).toList();
+    final nums = chapters.map((c) => trailingNumber(c.url)).toList();
     if (nums.any((n) => n == null)) return chapters;
     final out = [...chapters];
-    out.sort((x, y) => trailingNum(x.url)!.compareTo(trailingNum(y.url)!));
+    out.sort(
+      (x, y) => trailingNumber(x.url)!.compareTo(trailingNumber(y.url)!),
+    );
     return out;
+  }
+
+  static int? trailingNumber(String url) {
+    final ms = RegExp(r'\d+').allMatches(url);
+    return ms.isEmpty ? null : int.tryParse(ms.last.group(0)!);
   }
 
   Future<Map<String, dynamic>> _fetch(
