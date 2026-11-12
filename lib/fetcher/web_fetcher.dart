@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
+import 'package:http/http.dart' as http;
 
 import '../core/models.dart';
 
@@ -138,6 +139,15 @@ class WebFetcher {
   }
 
   Future<NovelInfo> fetchStory(String url, SourceAdapter adapter) async {
+    final api = adapter.tocApi;
+    if (api != null) {
+      try {
+        final info = await _fetchStoryApi(url, api);
+        if (info != null) return info;
+      } catch (_) {
+        // API hỏng/chặn bot: rơi về quét DOM như cũ.
+      }
+    }
     final map = await _fetch(
       url,
       storyJs(adapter),
@@ -147,6 +157,93 @@ class WebFetcher {
           (m['chapters'] as List? ?? []).isNotEmpty || m['hasContent'] == true,
     );
     return parseStory(map);
+  }
+
+  static String slugOf(String url) {
+    final segs = Uri.parse(url).pathSegments.where((s) => s.isNotEmpty);
+    return segs.isEmpty ? '' : segs.last;
+  }
+
+  static String fillUrl(String tpl, Map<String, String> vars) {
+    var out = tpl;
+    vars.forEach((k, v) => out = out.replaceAll('{$k}', v));
+    return out;
+  }
+
+  Future<Map<String, dynamic>> _getJson(String url) async {
+    final res = await http
+        .get(Uri.parse(url), headers: {'User-Agent': _ua})
+        .timeout(const Duration(seconds: 15));
+    if (res.statusCode != 200) throw Exception('HTTP ${res.statusCode}');
+    return jsonDecode(res.body) as Map<String, dynamic>;
+  }
+
+  Future<NovelInfo?> _fetchStoryApi(String url, TocApi api) async {
+    final slug = slugOf(url);
+    if (slug.isEmpty) return null;
+    final vars = {'slug': slug};
+    final novel = await _getJson(fillUrl(api.novelUrl, vars));
+    final pages = <Map<String, dynamic>>[];
+    var page = 1;
+    var total = 0;
+    var got = 0;
+    do {
+      final m = await _getJson(
+        fillUrl(api.listUrl, {...vars, 'page': '$page'}),
+      );
+      pages.add(m);
+      total = (m['total'] as num?)?.toInt() ?? 0;
+      final n = (m['items'] as List? ?? []).length;
+      got += n;
+      if (n == 0) break;
+      page++;
+    } while (got < total && page <= 500);
+    final chapters = chaptersFromApi(pages, api.chapterUrl, slug);
+    if (chapters.isEmpty) return null;
+    return novelFromApi(
+      novel,
+      chapters,
+      Uri.parse(fillUrl(api.novelUrl, vars)),
+    );
+  }
+
+  static List<ChapterRef> chaptersFromApi(
+    List<Map<String, dynamic>> pages,
+    String chapterUrlTpl,
+    String slug,
+  ) {
+    final byNumber = <int, ChapterRef>{};
+    for (final m in pages) {
+      for (final e in (m['items'] as List? ?? [])) {
+        final item = Map<String, dynamic>.from(e as Map);
+        final n = (item['chapter_number'] as num?)?.toInt();
+        if (n == null || byNumber.containsKey(n)) continue;
+        final title = (item['title'] as String? ?? '').trim();
+        byNumber[n] = ChapterRef(
+          title: title.isEmpty ? 'Chương $n' : title,
+          url: fillUrl(chapterUrlTpl, {'slug': slug, 'number': '$n'}),
+        );
+      }
+    }
+    final nums = byNumber.keys.toList()..sort();
+    return [for (final n in nums) byNumber[n]!];
+  }
+
+  static NovelInfo? novelFromApi(
+    Map<String, dynamic> novel,
+    List<ChapterRef> chapters,
+    Uri base,
+  ) {
+    final title = (novel['title'] as String? ?? '').trim();
+    if (title.isEmpty) return null;
+    final cover = novel['image_url'] as String?;
+    return NovelInfo(
+      title: title,
+      coverUrl: cover == null || cover.isEmpty
+          ? null
+          : base.resolve(cover).toString(),
+      chapters: chapters,
+    );
   }
 
   static NovelInfo parseStory(Map<String, dynamic> map) {

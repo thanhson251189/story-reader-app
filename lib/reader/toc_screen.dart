@@ -39,9 +39,15 @@ class _TocScreenState extends ConsumerState<TocScreen> {
     _load();
   }
 
-  Future<void> _load() async {
+  Future<void> _load({bool force = false}) async {
+    if (force) {
+      setState(() {
+        _loading = true;
+        _error = null;
+      });
+    }
     final db = ref.read(appDbProvider);
-    var chapters = await db.getToc(widget.storyUrl);
+    var chapters = force ? <ChapterRef>[] : await db.getToc(widget.storyUrl);
     try {
       if (chapters.isEmpty) {
         final adapter = ref.read(adapterRepoProvider).forUrl(widget.storyUrl);
@@ -119,7 +125,14 @@ class _TocScreenState extends ConsumerState<TocScreen> {
           overflow: TextOverflow.ellipsis,
         ),
         actions: [
-          if (!widget.storyUrl.startsWith('book:'))
+          if (!widget.storyUrl.startsWith('book:')) ...[
+            IconButton(
+              icon: const Icon(Icons.refresh),
+              tooltip: 'Làm mới mục lục',
+              onPressed: _loading || _downloading
+                  ? null
+                  : () => _load(force: true),
+            ),
             IconButton(
               icon: _downloading
                   ? const SizedBox(
@@ -131,6 +144,7 @@ class _TocScreenState extends ConsumerState<TocScreen> {
               tooltip: 'Tải trước 5 chương',
               onPressed: _downloading ? null : _downloadAhead,
             ),
+          ],
         ],
       ),
       body: _loading

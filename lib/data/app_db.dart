@@ -136,14 +136,19 @@ class AppDb {
 
   Future<void> saveToc(String storyUrl, List<ChapterRef> chapters) async {
     final db = await database;
-    final batch = db.batch();
-    for (var i = 0; i < chapters.length; i++) {
-      batch.insert(
-          'toc',
-          {'story_url': storyUrl, 'chapter_url': chapters[i].url, 'title': chapters[i].title, 'idx': i},
-          conflictAlgorithm: ConflictAlgorithm.replace);
-    }
-    await batch.commit(noResult: true);
+    await db.transaction((txn) async {
+      await txn.delete('toc', where: 'story_url = ?', whereArgs: [storyUrl]);
+      final batch = txn.batch();
+      for (var i = 0; i < chapters.length; i++) {
+        batch.insert('toc', {
+          'story_url': storyUrl,
+          'chapter_url': chapters[i].url,
+          'title': chapters[i].title,
+          'idx': i,
+        });
+      }
+      await batch.commit(noResult: true);
+    });
   }
 
   Future<List<ChapterRef>> getToc(String storyUrl) async {

@@ -1,3 +1,21 @@
+class TocApi {
+  final String novelUrl;
+  final String listUrl;
+  final String chapterUrl;
+
+  TocApi({
+    required this.novelUrl,
+    required this.listUrl,
+    required this.chapterUrl,
+  });
+
+  factory TocApi.fromJson(Map<String, dynamic> j) => TocApi(
+    novelUrl: j['novelUrl'] as String,
+    listUrl: j['listUrl'] as String,
+    chapterUrl: j['chapterUrl'] as String,
+  );
+}
+
 class SourceAdapter {
   final String domain;
   final int version;
@@ -5,6 +23,7 @@ class SourceAdapter {
   final List<String> removeSelectors;
   final List<Map<String, String>> textCleanup;
   final String? searchUrl;
+  final TocApi? tocApi;
 
   SourceAdapter({
     required this.domain,
@@ -13,6 +32,7 @@ class SourceAdapter {
     required this.removeSelectors,
     required this.textCleanup,
     this.searchUrl,
+    this.tocApi,
   });
 
   factory SourceAdapter.fromJson(Map<String, dynamic> j) => SourceAdapter(
@@ -24,6 +44,9 @@ class SourceAdapter {
         .map((e) => Map<String, String>.from(e as Map))
         .toList(),
     searchUrl: j['searchUrl'] as String?,
+    tocApi: j['tocApi'] == null
+        ? null
+        : TocApi.fromJson(Map<String, dynamic>.from(j['tocApi'] as Map)),
   );
 
   SourceAdapter withSearch(String url, Map<String, String> extraSelectors) =>
@@ -34,6 +57,7 @@ class SourceAdapter {
         removeSelectors: removeSelectors,
         textCleanup: textCleanup,
         searchUrl: url,
+        tocApi: tocApi,
       );
 
   bool matches(String url) {
