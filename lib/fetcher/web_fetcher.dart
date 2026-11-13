@@ -2,6 +2,8 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
+import 'package:html/dom.dart' as html_dom;
+import 'package:html/parser.dart' as html_parser;
 import 'package:http/http.dart' as http;
 
 import '../core/models.dart';
@@ -148,6 +150,14 @@ class WebFetcher {
         // API hỏng/chặn bot: rơi về quét DOM như cũ.
       }
     }
+    if (adapter.tocPageUrl != null) {
+      try {
+        final info = await _fetchStoryHtmlPages(url, adapter);
+        if (info != null) return info;
+      } catch (_) {
+        // Phân trang HTML hỏng: rơi về quét DOM WebView như cũ.
+      }
+    }
     final map = await _fetch(
       url,
       storyJs(adapter),
@@ -244,6 +254,128 @@ class WebFetcher {
           : base.resolve(cover).toString(),
       chapters: chapters,
     );
+  }
+
+  Future<html_dom.Document> _getHtml(String url) async {
+    final res = await http
+        .get(Uri.parse(url), headers: {'User-Agent': _ua})
+        .timeout(const Duration(seconds: 20));
+    if (res.statusCode != 200) throw Exception('HTTP ${res.statusCode}');
+    return html_parser.parse(res.body);
+  }
+
+  // Mục lục phân trang HTML (SSR): tải song song qua HTTP, không cần WebView.
+  Future<NovelInfo?> _fetchStoryHtmlPages(String url, SourceAdapter a) async {
+    final tpl = a.tocPageUrl!;
+    final slug = slugOf(url);
+    final listSel = a.selectors['chapterList'];
+    if (slug.isEmpty || listSel == null) return null;
+    final base = Uri.parse(url);
+    final doc = await _getHtml(url);
+    final chapters = _chaptersFromDoc(doc, listSel, base);
+    if (chapters.isEmpty) return null;
+    final titleSel = a.selectors['storyTitle'];
+    final titleEl = titleSel == null ? null : doc.querySelector(titleSel);
+    final titleText = titleEl?.text.trim() ?? '';
+    final title = titleText.isNotEmpty
+        ? titleText
+        : (doc.querySelector('title')?.text.split('|').first.trim() ?? slug);
+    final coverSel = a.selectors['cover'];
+    final coverEl = coverSel == null ? null : doc.querySelector(coverSel);
+    final coverSrc = coverEl?.attributes['src'];
+    final cover = coverSrc == null || coverSrc.isEmpty
+        ? null
+        : base.resolve(coverSrc).toString();
+    final maxPage = _maxTocPage(doc, tpl, slug, base);
+    final all = <ChapterRef>[...chapters];
+    if (maxPage > 1) {
+      const concurrency = 6;
+      final pages = [for (var p = 2; p <= maxPage; p++) p];
+      for (var i = 0; i < pages.length; i += concurrency) {
+        final batch = pages.skip(i).take(concurrency).toList();
+        final results = await Future.wait(
+          batch.map(
+            (p) => _pageChapters(
+              fillUrl(tpl, {'slug': slug, 'page': '$p'}),
+              listSel,
+              base,
+            ),
+          ),
+        );
+        for (final r in results) {
+          all.addAll(r);
+        }
+      }
+    }
+    final seen = <String>{};
+    final unique = <ChapterRef>[];
+    for (final c in all) {
+      if (seen.add(c.url)) unique.add(c);
+    }
+    return NovelInfo(
+      title: title,
+      coverUrl: cover,
+      chapters: sortChapters(unique),
+    );
+  }
+
+  Future<List<ChapterRef>> _pageChapters(
+    String url,
+    String sel,
+    Uri base,
+  ) async {
+    try {
+      return _chaptersFromDoc(await _getHtml(url), sel, base);
+    } catch (_) {
+      try {
+        return _chaptersFromDoc(await _getHtml(url), sel, base);
+      } catch (_) {
+        return [];
+      }
+    }
+  }
+
+  static List<ChapterRef> _chaptersFromDoc(
+    html_dom.Document doc,
+    String sel,
+    Uri base,
+  ) {
+    final out = <ChapterRef>[];
+    final seen = <String>{};
+    for (final el in doc.querySelectorAll(sel)) {
+      final href = el.attributes['href'];
+      if (href == null || href.isEmpty) continue;
+      final u = base.resolve(href).toString();
+      if (!seen.add(u)) continue;
+      final title = el.text.trim().replaceAll(RegExp(r'\s+'), ' ');
+      out.add(ChapterRef(title: title, url: u));
+    }
+    return out;
+  }
+
+  // Số trang cuối = số lớn nhất trong các link phân trang khớp template.
+  static int _maxTocPage(
+    html_dom.Document doc,
+    String tpl,
+    String slug,
+    Uri base,
+  ) {
+    final parts = tpl.split('{page}');
+    final prefix = parts.first.replaceAll('{slug}', slug);
+    final suffix = parts.length > 1 ? parts.last : '';
+    var max = 1;
+    for (final el in doc.querySelectorAll('a[href]')) {
+      final href = el.attributes['href'];
+      if (href == null) continue;
+      final abs = base.resolve(href).toString();
+      if (!abs.startsWith(prefix) || !abs.endsWith(suffix)) continue;
+      if (abs.length <= prefix.length + suffix.length) continue;
+      final n = int.tryParse(
+        abs.substring(prefix.length, abs.length - suffix.length),
+      );
+      if (n != null && n > max) max = n;
+    }
+    return max > 500 ? 500 : max;
   }
 
   static NovelInfo parseStory(Map<String, dynamic> map) {

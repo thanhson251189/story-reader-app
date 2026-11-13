@@ -24,6 +24,8 @@ class SourceAdapter {
   final List<Map<String, String>> textCleanup;
   final String? searchUrl;
   final TocApi? tocApi;
+  // Mục lục phân trang HTML (site không có JSON API): template chứa {slug} và {page}.
+  final String? tocPageUrl;
 
   SourceAdapter({
     required this.domain,
@@ -33,6 +35,7 @@ class SourceAdapter {
     required this.textCleanup,
     this.searchUrl,
     this.tocApi,
+    this.tocPageUrl,
   });
 
   factory SourceAdapter.fromJson(Map<String, dynamic> j) => SourceAdapter(
@@ -47,6 +50,7 @@ class SourceAdapter {
     tocApi: j['tocApi'] == null
         ? null
         : TocApi.fromJson(Map<String, dynamic>.from(j['tocApi'] as Map)),
+    tocPageUrl: j['tocPageUrl'] as String?,
   );
 
   SourceAdapter withSearch(String url, Map<String, String> extraSelectors) =>
@@ -58,6 +62,7 @@ class SourceAdapter {
         textCleanup: textCleanup,
         searchUrl: url,
         tocApi: tocApi,
+        tocPageUrl: tocPageUrl,
       );
 
   bool matches(String url) {
