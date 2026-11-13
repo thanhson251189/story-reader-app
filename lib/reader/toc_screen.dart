@@ -64,6 +64,10 @@ class _TocScreenState extends ConsumerState<TocScreen> {
   String? _error;
   String? _title;
   bool _downloading = false;
+  bool _dlCancel = false;
+  int _dlDone = 0;
+  int _dlTotal = 0;
+  String? _dlResult;
   bool _desc = false;
   String _query = '';
   final ScrollController _scroll = ScrollController();
@@ -135,9 +139,15 @@ class _TocScreenState extends ConsumerState<TocScreen> {
     }
   }
 
-  Future<void> _downloadAhead() async {
+  Future<void> _downloadAhead(int count) async {
     if (_downloading || _chapters.isEmpty) return;
-    setState(() => _downloading = true);
+    setState(() {
+      _downloading = true;
+      _dlCancel = false;
+      _dlDone = 0;
+      _dlTotal = count;
+      _dlResult = null;
+    });
     final db = ref.read(appDbProvider);
     final fetcher = ref.read(webFetcherProvider);
     var start = 0;
@@ -146,10 +156,16 @@ class _TocScreenState extends ConsumerState<TocScreen> {
       if (i >= 0) start = i;
     }
     var ok = 0;
-    for (var i = start; i < _chapters.length && ok < 5; i++) {
+    var fail = 0;
+    var streak = 0;
+    var challenges = 0;
+    var pace = 5;
+    String? lastErr;
+    var i = start;
+    while (i < _chapters.length && ok < count && !_dlCancel) {
       final url = _chapters[i].url;
-      if (await db.getCachedChapter(url) != null) {
-        if (mounted) setState(() => _cached.add(url));
+      if (_cached.contains(url)) {
+        i++;
         continue;
       }
       final adapter = ref.read(adapterRepoProvider).forUrl(url);
@@ -158,15 +174,46 @@ class _TocScreenState extends ConsumerState<TocScreen> {
         final c = await fetcher.fetchChapter(url, adapter);
         await db.cacheChapter(c);
         ok++;
-        if (mounted) setState(() => _cached.add(url));
-      } catch (_) {
-        break;
+        streak = 0;
+        i++;
+        if (mounted) {
+          setState(() {
+            _cached.add(url);
+            _dlDone = ok;
+          });
+        }
+      } on ChallengeException {
+        fail++;
+        challenges++;
+        lastErr = 'trang chặn bot';
+        if (challenges >= 8) break;
+        // Nguồn chặn bot theo số lượt tải: nghỉ dài rồi thử lại đúng chương.
+        pace = (pace + 2).clamp(5, 15);
+        for (var s = 0; s < 60 && !_dlCancel; s++) {
+          await Future.delayed(const Duration(seconds: 1));
+        }
+        continue;
+      } catch (e) {
+        fail++;
+        lastErr = e.toString().replaceFirst('Exception: ', '');
+        // 3 lần hỏng liên tiếp thường là bị chặn — dừng để khỏi đập tiếp.
+        if (++streak >= 3) break;
+        i++;
+        await Future.delayed(const Duration(seconds: 5));
+      }
+      // Nhịp tối thiểu bằng prefetcher (5s) để tránh bị chặn.
+      if (!_dlCancel && ok < count) {
+        await Future.delayed(Duration(seconds: pace));
       }
     }
     if (!mounted) return;
-    setState(() => _downloading = false);
-    ScaffoldMessenger.of(context)
-        .showSnackBar(SnackBar(content: Text('Đã tải trước $ok chương')));
+    setState(() {
+      _downloading = false;
+      _dlResult =
+          'Đã tải $ok chương'
+          '${fail > 0 ? ', $fail lỗi: $lastErr' : ''}'
+          '${_dlCancel ? ' (đã huỷ)' : ''}';
+    });
   }
 
   String _label(int i) =>
@@ -204,9 +251,10 @@ class _TocScreenState extends ConsumerState<TocScreen> {
   void _toggleSort() {
     final top = _view.isEmpty
         ? null
-        : _view[(_scroll.hasClients ? _scroll.offset / _row : 0)
-              .floor()
-              .clamp(0, _view.length - 1)];
+        : _view[(_scroll.hasClients ? _scroll.offset / _row : 0).floor().clamp(
+            0,
+            _view.length - 1,
+          )];
     setState(() {
       _desc = !_desc;
       _rebuildView();
@@ -216,7 +264,9 @@ class _TocScreenState extends ConsumerState<TocScreen> {
       if (!mounted || !_scroll.hasClients) return;
       final vi = _view.indexOf(top);
       if (vi >= 0) {
-        _scroll.jumpTo((vi * _row).clamp(0.0, _scroll.position.maxScrollExtent));
+        _scroll.jumpTo(
+          (vi * _row).clamp(0.0, _scroll.position.maxScrollExtent),
+        );
       }
     });
   }
@@ -244,7 +294,7 @@ class _TocScreenState extends ConsumerState<TocScreen> {
                   ? null
                   : () => _load(force: true),
             ),
-            IconButton(
+            PopupMenuButton<int>(
               icon: _downloading
                   ? const SizedBox(
                       width: 20,
@@ -252,8 +302,14 @@ class _TocScreenState extends ConsumerState<TocScreen> {
                       child: CircularProgressIndicator(strokeWidth: 2),
                     )
                   : const Icon(Icons.download),
-              tooltip: 'Tải trước 5 chương',
-              onPressed: _downloading ? null : _downloadAhead,
+              tooltip: 'Tải trước chương',
+              enabled: !_downloading,
+              onSelected: _downloadAhead,
+              itemBuilder: (_) => const [
+                PopupMenuItem(value: 5, child: Text('Tải 5 chương tiếp')),
+                PopupMenuItem(value: 50, child: Text('Tải 50 chương tiếp')),
+                PopupMenuItem(value: 100, child: Text('Tải 100 chương tiếp')),
+              ],
             ),
           ],
         ],
@@ -279,6 +335,44 @@ class _TocScreenState extends ConsumerState<TocScreen> {
             )
           : Column(
               children: [
+                if (_downloading)
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: LinearProgressIndicator(
+                            value: _dlTotal == 0 ? null : _dlDone / _dlTotal,
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Text('$_dlDone/$_dlTotal'),
+                        TextButton(
+                          onPressed: () => setState(() => _dlCancel = true),
+                          child: const Text('Huỷ'),
+                        ),
+                      ],
+                    ),
+                  ),
+                if (_dlResult != null)
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            _dlResult!,
+                            style: Theme.of(context).textTheme.bodySmall,
+                          ),
+                        ),
+                        IconButton(
+                          icon: const Icon(Icons.close, size: 18),
+                          tooltip: 'Ẩn kết quả tải',
+                          onPressed: () => setState(() => _dlResult = null),
+                        ),
+                      ],
+                    ),
+                  ),
                 Padding(
                   padding: const EdgeInsets.fromLTRB(12, 8, 12, 4),
                   child: TextField(
@@ -335,9 +429,9 @@ class _TocScreenState extends ConsumerState<TocScreen> {
                                   overflow: TextOverflow.ellipsis,
                                   style: isCurrent
                                       ? TextStyle(
-                                          color: Theme.of(
-                                            context,
-                                          ).colorScheme.primary,
+                                          color: Theme.of(context)
+                                              .colorScheme
+                                              .primary,
                                           fontWeight: FontWeight.bold,
                                         )
                                       : null,

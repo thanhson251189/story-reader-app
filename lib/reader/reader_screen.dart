@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../core/models.dart';
@@ -20,7 +21,7 @@ class ReaderScreen extends ConsumerStatefulWidget {
   ConsumerState<ReaderScreen> createState() => _ReaderScreenState();
 }
 
-class _ReaderScreenState extends ConsumerState<ReaderScreen> {
+class _ReaderScreenState extends ConsumerState<ReaderScreen> with RouteAware {
   final _scroll = ScrollController();
   Timer? _saveTimer;
   ChapterContent? _content;
@@ -31,6 +32,10 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
   double _lineHeight = 1.8;
   String _theme = 'light';
   int _prefetchCount = 3;
+  bool _volPage = true;
+  static const _volChannel = MethodChannel('story_reader/volume_keys');
+  bool _volKeysEnabled = false;
+  bool _isTopRoute = true;
   List<GlobalKey> _paraKeys = [];
   int _lastSpokenPara = -1;
   String? _shownError;
@@ -48,6 +53,7 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
     _player = ref.read(ttsPlayerProvider);
     _player.addListener(_onPlayer);
     _scroll.addListener(_onScroll);
+    _volChannel.setMethodCallHandler(_onNativeKey);
     _init();
   }
 
@@ -62,12 +68,62 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
           1,
           5,
         );
+    _volPage = (await db.getSetting('volPageTurn') ?? '1') == '1';
     if (mounted) setState(() {});
+    _syncVolKeys();
     await _load(widget.url);
+  }
+
+  void _syncVolKeys() {
+    final on = _isTopRoute && _volPage && !_player.playing;
+    if (on != _volKeysEnabled) {
+      _volKeysEnabled = on;
+      _volChannel.invokeMethod('setEnabled', on);
+    }
+  }
+
+  Future<dynamic> _onNativeKey(MethodCall call) async {
+    if (call.method == 'volumeKey') {
+      _scrollPage(call.arguments == 'down');
+    }
+    return null;
+  }
+
+  void _scrollPage(bool down) {
+    if (_content == null || !_scroll.hasClients) return;
+    final page = _scroll.position.viewportDimension * 0.9;
+    _scroll.animateTo(
+      (_scroll.offset + (down ? page : -page)).clamp(
+        0.0,
+        _scroll.position.maxScrollExtent,
+      ),
+      duration: const Duration(milliseconds: 250),
+      curve: Curves.easeOut,
+    );
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    routeObserver.subscribe(this, ModalRoute.of(context)!);
+    _syncVolKeys();
+  }
+
+  @override
+  void didPushNext() {
+    _isTopRoute = false;
+    _syncVolKeys();
+  }
+
+  @override
+  void didPopNext() {
+    _isTopRoute = true;
+    _syncVolKeys();
   }
 
   void _onPlayer() {
     if (!mounted) return;
+    _syncVolKeys();
     final err = _player.lastError;
     if (err != null && err != _shownError) {
       _shownError = err;
@@ -659,10 +715,7 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
                     },
                   ),
                   const SizedBox(height: 16),
-                  Text(
-                    'Tải trước: $_prefetchCount chương',
-                    style: titleStyle,
-                  ),
+                  Text('Tải trước: $_prefetchCount chương', style: titleStyle),
                   Slider(
                     value: _prefetchCount.toDouble(),
                     min: 1,
@@ -679,6 +732,21 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
                     'Tải nền chương kế để đọc/nghe liền mạch. Nghỉ 5s giữa các lần tải để tránh bị chặn.',
                     style: Theme.of(ctx).textTheme.bodySmall,
                   ),
+                  SwitchListTile(
+                    contentPadding: EdgeInsets.zero,
+                    secondary: const Icon(Icons.swap_vert),
+                    title: const Text('Phím âm lượng lật trang'),
+                    subtitle: const Text(
+                      'Đang nghe đọc thì phím âm lượng chỉnh tiếng như thường.',
+                    ),
+                    value: _volPage,
+                    onChanged: (v) {
+                      setSheet(() {});
+                      setState(() => _volPage = v);
+                      db.setSetting('volPageTurn', v ? '1' : '0');
+                      _syncVolKeys();
+                    },
+                  ),
                 ],
               ),
             ),
@@ -690,6 +758,9 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
 
   @override
   void dispose() {
+    routeObserver.unsubscribe(this);
+    _volChannel.setMethodCallHandler(null);
+    _volChannel.invokeMethod('setEnabled', false);
     _player.removeListener(_onPlayer);
     _saveTimer?.cancel();
     final c = _content;

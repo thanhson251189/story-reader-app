@@ -1,3 +1,4 @@
+import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../adapters/adapter_repository.dart';
@@ -19,3 +20,5 @@ final chapterPrefetcherProvider = Provider<ChapterPrefetcher>(
 final ttsPlayerProvider = Provider<TtsPlayer>(
   (ref) => throw UnimplementedError(),
 );
+
+final routeObserver = RouteObserver<ModalRoute<void>>();

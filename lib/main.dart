@@ -69,6 +69,7 @@ class StoryReaderApp extends StatelessWidget {
         colorSchemeSeed: Colors.brown,
         brightness: Brightness.light,
       ),
+      navigatorObservers: [routeObserver],
       home: const HomeScreen(),
     );
   }
