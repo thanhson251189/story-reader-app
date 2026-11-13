@@ -252,7 +252,10 @@ class TtsPlayer extends ChangeNotifier {
       return;
     }
     var file = await _synth(chunks[_index].text, fileName: _chunkFile(_index));
-    while (gen == _gen && playing) {
+    // Chỉ thoát khi đổi gen (start/stop/jump) hoặc hết chương. Lúc tạm dừng phải
+    // chờ trong _waitResume chứ không thoát vòng lặp, để resume() đánh thức lại
+    // được; nếu thoát ở đây thì resume() không có cách nào phát tiếp (câm).
+    while (gen == _gen) {
       if (file == null) {
         _index++;
         if (_index >= chunks.length) {
@@ -263,10 +266,11 @@ class TtsPlayer extends ChangeNotifier {
         continue;
       }
       await _waitResume(gen);
-      if (gen != _gen || !playing) return;
+      if (gen != _gen) return;
       await _audio.setFilePath(file);
       await _audio.setSpeed(rate);
-      if (gen != _gen || !playing) return;
+      await _waitResume(gen);
+      if (gen != _gen) return;
       _notify();
       final done = Completer<void>();
       _chunkDone = done;
