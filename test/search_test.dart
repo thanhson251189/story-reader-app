@@ -8,8 +8,8 @@ void main() {
   test('SearchResult fromJson defaults', () {
     final r = SearchResult.fromJson({
       'title': 'Kiếm Đế',
-      'url': 'https://truyendich.space/doc-truyen/kiem-de',
-      'coverUrl': 'https://truyendich.space/anh-bia/kiem-de.webp',
+      'url': 'https://truyendich.us/doc-truyen/kiem-de',
+      'coverUrl': 'https://truyendich.us/anh-bia/kiem-de.webp',
     });
     expect(r.title, 'Kiếm Đế');
     expect(r.coverUrl, contains('kiem-de'));
@@ -40,7 +40,7 @@ void main() {
 
   test('withBuiltinSearch seed nguồn chính thức, remote thắng', () {
     final old = SourceAdapter.fromJson({
-      'domain': 'truyendich.space',
+      'domain': 'truyendich.us',
       'selectors': {'content': '#c'},
     });
     final seeded = SourceRegistry.withBuiltinSearch(old);
@@ -48,12 +48,12 @@ void main() {
     expect(seeded.selectors['searchList'], "a[href^='/doc-truyen/']");
 
     final remote = SourceAdapter.fromJson({
-      'domain': 'truyendich.space',
-      'searchUrl': 'https://truyendich.space/tim?q={query}',
+      'domain': 'truyendich.us',
+      'searchUrl': 'https://truyendich.us/tim?q={query}',
       'selectors': {'searchList': '.result'},
     });
     final kept = SourceRegistry.withBuiltinSearch(remote);
-    expect(kept.searchUrl, 'https://truyendich.space/tim?q={query}');
+    expect(kept.searchUrl, 'https://truyendich.us/tim?q={query}');
     expect(kept.selectors['searchList'], '.result');
 
     final other = SourceAdapter.fromJson({'domain': 'khac.com'});
@@ -62,12 +62,12 @@ void main() {
 
   test('searchUrlFor mã hoá từ khoá tiếng Việt', () {
     final a = SourceAdapter.fromJson({
-      'domain': 'truyendich.space',
-      'searchUrl': 'https://truyendich.space/tim-kiem?q={query}',
+      'domain': 'truyendich.us',
+      'searchUrl': 'https://truyendich.us/tim-kiem?q={query}',
     });
     expect(
       WebFetcher.searchUrlFor(a, 'kiếm đế'),
-      'https://truyendich.space/tim-kiem?q=ki%E1%BA%BFm%20%C4%91%E1%BA%BF',
+      'https://truyendich.us/tim-kiem?q=ki%E1%BA%BFm%20%C4%91%E1%BA%BF',
     );
   });
 

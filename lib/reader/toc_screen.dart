@@ -11,10 +11,12 @@ String storyUrlFromChapter(String url) {
     final parts = url.split(':');
     return parts.length >= 2 ? '${parts[0]}:${parts[1]}' : url;
   }
-  final uri = Uri.parse(url);
-  final segs = [...uri.pathSegments];
+  final uri = Uri.parse(url).removeFragment();
+  // Bỏ segment rỗng do dấu '/' cuối để không cắt nhầm vào tên chương.
+  final segs = uri.pathSegments.where((s) => s.isNotEmpty).toList();
   if (segs.isNotEmpty) segs.removeLast();
-  return uri.replace(path: '/${segs.join('/')}').toString();
+  final slash = url.endsWith('/') ? '/' : '';
+  return uri.replace(path: '/${segs.join('/')}$slash').toString();
 }
 
 class TocScreen extends ConsumerStatefulWidget {
@@ -46,6 +48,20 @@ class TocScreen extends ConsumerStatefulWidget {
       b.write(_foldMap[c] ?? c);
     }
     return b.toString();
+  }
+
+  // So khớp chương đang đọc với mục lục: bỏ qua khác biệt vô hại giữa URL
+  // trang chương (location.href) và href trong mục lục — fragment '#',
+  // dấu '/' cuối, http/https, hoa thường host.
+  static String normUrl(String url) {
+    final u = Uri.tryParse(url.trim());
+    if (u == null || u.host.isEmpty) return url.trim();
+    var path = u.path;
+    while (path.length > 1 && path.endsWith('/')) {
+      path = path.substring(0, path.length - 1);
+    }
+    final q = u.query.isEmpty ? '' : '?${u.query}';
+    return '${u.host.toLowerCase()}$path$q';
   }
 
   @override
@@ -123,7 +139,8 @@ class _TocScreenState extends ConsumerState<TocScreen> {
             WebFetcher.trailingNumber(chapters[i].url) ?? i + 1,
         ];
         _indexByUrl = {
-          for (var i = 0; i < chapters.length; i++) chapters[i].url: i,
+          for (var i = 0; i < chapters.length; i++)
+            TocScreen.normUrl(chapters[i].url): i,
         };
         _rebuildView();
       });
@@ -152,7 +169,8 @@ class _TocScreenState extends ConsumerState<TocScreen> {
     final fetcher = ref.read(webFetcherProvider);
     var start = 0;
     if (widget.currentChapterUrl != null) {
-      final i = _chapters.indexWhere((c) => c.url == widget.currentChapterUrl);
+      final cur = TocScreen.normUrl(widget.currentChapterUrl!);
+      final i = _chapters.indexWhere((c) => TocScreen.normUrl(c.url) == cur);
       if (i >= 0) start = i;
     }
     var ok = 0;
@@ -239,7 +257,7 @@ class _TocScreenState extends ConsumerState<TocScreen> {
   void _jumpToCurrent() {
     final url = widget.currentChapterUrl;
     if (url == null || !_scroll.hasClients) return;
-    final ci = _indexByUrl[url];
+    final ci = _indexByUrl[TocScreen.normUrl(url)];
     if (ci == null) return;
     final vi = _view.indexOf(ci);
     if (vi < 0) return;
@@ -273,6 +291,9 @@ class _TocScreenState extends ConsumerState<TocScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final currentNorm = widget.currentChapterUrl == null
+        ? null
+        : TocScreen.normUrl(widget.currentChapterUrl!);
     return Scaffold(
       appBar: AppBar(
         title: Text(
@@ -419,8 +440,8 @@ class _TocScreenState extends ConsumerState<TocScreen> {
                             itemBuilder: (_, vi) {
                               final i = _view[vi];
                               final c = _chapters[i];
-                              final isCurrent =
-                                  c.url == widget.currentChapterUrl;
+                              final isCurrent = currentNorm != null &&
+                                  TocScreen.normUrl(c.url) == currentNorm;
                               return ListTile(
                                 dense: true,
                                 title: Text(

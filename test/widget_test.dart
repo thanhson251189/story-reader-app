@@ -105,5 +105,10 @@ void main() {
   test('storyUrlFromChapter', () {
     expect(storyUrlFromChapter('book:abc123:4'), 'book:abc123');
     expect(storyUrlFromChapter('https://x.com/truyen/chuong-1'), 'https://x.com/truyen');
+    expect(
+      storyUrlFromChapter('https://truyendich.vn/slug/chuong-1-hai-so-phan/'),
+      'https://truyendich.vn/slug/',
+    );
+    expect(storyUrlFromChapter('https://x.com/truyen/chuong-1#top'), 'https://x.com/truyen');
   });
 }

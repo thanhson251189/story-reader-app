@@ -27,7 +27,7 @@ class WebFetcher {
 (function(){
   const sel = $sel;
   const remove = $remove;
-  const abs = h => h ? new URL(h, location.href).href : null;
+  const abs = h => (h && h !== '#') ? new URL(h, location.href).href : null;
   const q = s => s ? document.querySelector(s) : null;
   const n = q(sel.nextLink), p = q(sel.prevLink);
   const t = q(sel.chapterTitle);

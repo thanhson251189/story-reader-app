@@ -130,7 +130,14 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> with RouteAware {
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(err)));
     }
     final pc = _player.chapter;
-    if (pc != null && pc.url != _content?.url && !_loading) {
+    // Chỉ đi theo chương TTS khi đang phát; lúc pause, chapter cũ còn giữ lại
+    // và mọi notify (hẹn giờ tắt, đổi giọng...) không được kéo reader lùi chương.
+    if (_player.playing && pc != null && pc.url != _content?.url && !_loading) {
+      final old = _content;
+      _saveTimer?.cancel();
+      if (old != null && _scroll.hasClients) {
+        ref.read(appDbProvider).savePosition(old.url, _scroll.offset);
+      }
       setState(() {
         _content = pc;
         _paraKeys = List.generate(pc.paragraphs.length, (_) => GlobalKey());
