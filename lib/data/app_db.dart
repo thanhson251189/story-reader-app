@@ -10,7 +10,7 @@ class AppDb {
 
   Future<Database> get database async => _db ??= await openDatabase(
     p.join(await getDatabasesPath(), 'story_reader.db'),
-    version: 4,
+    version: 5,
     onCreate: (db, v) async {
       await db.execute(
         'CREATE TABLE positions(url TEXT PRIMARY KEY, offset REAL NOT NULL, updated_at INTEGER NOT NULL)',
@@ -36,6 +36,28 @@ class AppDb {
         );
         await db.execute(
           'ALTER TABLE library ADD COLUMN latest_chapter_title TEXT',
+        );
+      }
+      if (from < 5) {
+        // Nguồn đổi tên miền: viết lại mọi URL cũ để sách cũ + vị trí đọc
+        // + cache + TOC + adapter đã cài tiếp tục khớp domain mới.
+        const old = 'truyendich.space';
+        const neu = 'truyendich.us';
+        final like = '%$old%';
+        await db.execute(
+          "UPDATE OR REPLACE positions SET url = replace(url, '$old', '$neu') WHERE url LIKE '$like'",
+        );
+        await db.execute(
+          "UPDATE OR REPLACE chapter_cache SET url = replace(url, '$old', '$neu'), next_url = replace(next_url, '$old', '$neu'), prev_url = replace(prev_url, '$old', '$neu') WHERE url LIKE '$like' OR next_url LIKE '$like' OR prev_url LIKE '$like'",
+        );
+        await db.execute(
+          "UPDATE OR REPLACE library SET story_url = replace(story_url, '$old', '$neu'), cover_url = replace(cover_url, '$old', '$neu'), last_chapter_url = replace(last_chapter_url, '$old', '$neu'), latest_chapter_url = replace(latest_chapter_url, '$old', '$neu') WHERE story_url LIKE '$like' OR cover_url LIKE '$like' OR last_chapter_url LIKE '$like' OR latest_chapter_url LIKE '$like'",
+        );
+        await db.execute(
+          "UPDATE OR REPLACE toc SET story_url = replace(story_url, '$old', '$neu'), chapter_url = replace(chapter_url, '$old', '$neu') WHERE story_url LIKE '$like' OR chapter_url LIKE '$like'",
+        );
+        await db.execute(
+          "UPDATE settings SET value = replace(value, '$old', '$neu') WHERE key IN ('installedAdapters', 'adapterNames') AND value LIKE '$like'",
         );
       }
     },

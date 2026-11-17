@@ -46,8 +46,8 @@ class SourceRegistry {
   // cho nguồn chính thức để bản cập nhật app là tìm được ngay, không bắt
   // người dùng cài lại nguồn. Adapter remote định nghĩa searchUrl sẽ thắng.
   static const _builtinSearch = <String, Map<String, dynamic>>{
-    'truyendich.space': {
-      'searchUrl': 'https://truyendich.space/tim-kiem?q={query}',
+    'truyendich.us': {
+      'searchUrl': 'https://truyendich.us/tim-kiem?q={query}',
       'selectors': {
         'searchList': "a[href^='/doc-truyen/']",
         'searchTitle': 'h3',
