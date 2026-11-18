@@ -252,9 +252,8 @@ class TtsPlayer extends ChangeNotifier {
       return;
     }
     var file = await _synth(chunks[_index].text, fileName: _chunkFile(_index));
-    // Chỉ thoát khi đổi gen (start/stop/jump) hoặc hết chương. Lúc tạm dừng phải
-    // chờ trong _waitResume chứ không thoát vòng lặp, để resume() đánh thức lại
-    // được; nếu thoát ở đây thì resume() không có cách nào phát tiếp (câm).
+    // Chỉ thoát khi đổi gen (start/stop/jump) hoặc hết chương. Lúc pause loop
+    // chờ ở đây; resume() gọi start() với gen mới, đánh thức loop cũ thoát.
     while (gen == _gen) {
       if (file == null) {
         _index++;
@@ -376,13 +375,11 @@ class TtsPlayer extends ChangeNotifier {
 
   Future<void> resume() async {
     if (playing || chunks.isEmpty) return;
-    playing = true;
-    await WakelockPlus.enable();
-    _notify();
-    _signalResume();
-    if (!_audio.playing && _audio.processingState == ProcessingState.ready) {
-      await _audio.play();
-    }
+    final c = chapter;
+    if (c == null) return;
+    // Phát lại từ đầu đoạn văn đang nghe dở thay vì nối giữa chunk:
+    // đường nối cũ bị câm sau pause, còn start() luôn synth + play lại đúng.
+    await start(c, paraIndex: currentParaIndex);
   }
 
   Future<void> stop() async {

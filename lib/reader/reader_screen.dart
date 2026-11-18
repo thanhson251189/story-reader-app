@@ -337,8 +337,7 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> with RouteAware {
   void _togglePlay() {
     final c = _content;
     if (c == null) return;
-    final sameChapter = _player.chapter?.url == c.url;
-    if (sameChapter && _player.playing) {
+    if (_player.chapter?.url == c.url && _player.playing) {
       _player.pause();
       return;
     }
@@ -346,16 +345,9 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> with RouteAware {
       ScaffoldMessenger.of(context)
           .showSnackBar(SnackBar(content: Text(_player.voiceWarning!)));
     }
-    final visible = _visibleParaIndex();
-    // Đang tạm dừng và chưa cuộn khỏi đoạn đang đọc → phát tiếp mạch cũ;
-    // đã cuộn tới chỗ khác → bắt đầu từ đoạn văn đang hiển thị trên màn hình.
-    if (sameChapter &&
-        _player.chunks.isNotEmpty &&
-        visible == _player.currentParaIndex) {
-      _player.resume();
-    } else {
-      _player.start(c, paraIndex: visible);
-    }
+    // Luôn phát từ đầu đoạn văn đang hiển thị; nghe dở rồi dừng thì đọc lại
+    // từ đầu đoạn đó (resume() cũng theo semantics này cho nút media/headset).
+    _player.start(c, paraIndex: _visibleParaIndex());
   }
 
   void _sleepTimerMenu() {

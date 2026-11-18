@@ -1,0 +1,258 @@
+import 'dart:async';
+import 'dart:io';
+
+import 'package:flutter/services.dart';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:just_audio_platform_interface/just_audio_platform_interface.dart';
+import 'package:story_reader/adapters/adapter_repository.dart';
+import 'package:story_reader/core/models.dart';
+import 'package:story_reader/data/app_db.dart';
+import 'package:story_reader/fetcher/chapter_prefetcher.dart';
+import 'package:story_reader/fetcher/web_fetcher.dart';
+import 'package:story_reader/tts/tts_player.dart';
+import 'package:wakelock_plus_platform_interface/wakelock_plus_platform_interface.dart';
+
+class FakeWakelock extends WakelockPlusPlatformInterface {
+  @override
+  Future<void> toggle({required bool enable}) async {}
+
+  @override
+  Future<bool> get enabled async => false;
+}
+
+class FakeAudioPlayer extends AudioPlayerPlatform {
+  FakeAudioPlayer(super.id);
+
+  // sync: event tới just_audio ngay khi add, không bị phát lại trạng thái cũ
+  // khi play() broadcast tiếp (gây completed giả cho chunk kế).
+  final events = StreamController<PlaybackEventMessage>.broadcast(sync: true);
+  final calls = <String>[];
+  bool _playing = false;
+
+  @override
+  Stream<PlaybackEventMessage> get playbackEventMessageStream => events.stream;
+
+  @override
+  Future<LoadResponse> load(LoadRequest request) async {
+    calls.add('load');
+    // just_audio đánh dấu event đầu tiên sau load là loading; event thứ hai
+    // mới thành ready thật, nếu không trạng thái cũ (completed) bị phát lại.
+    emit(ProcessingStateMessage.ready);
+    emit(ProcessingStateMessage.ready);
+    // Giống Android: load nguồn mới khi đang playing thì tự phát tiếp.
+    if (_playing) calls.add('play');
+    return LoadResponse(duration: const Duration(seconds: 1));
+  }
+
+  @override
+  Future<PlayResponse> play(PlayRequest request) async {
+    calls.add('play');
+    _playing = true;
+    return PlayResponse();
+  }
+
+  @override
+  Future<PauseResponse> pause(PauseRequest request) async {
+    calls.add('pause');
+    _playing = false;
+    return PauseResponse();
+  }
+
+  @override
+  Future<SetSpeedResponse> setSpeed(SetSpeedRequest request) async =>
+      SetSpeedResponse();
+
+  @override
+  Future<SetVolumeResponse> setVolume(SetVolumeRequest request) async =>
+      SetVolumeResponse();
+
+  @override
+  Future<SetLoopModeResponse> setLoopMode(SetLoopModeRequest request) async =>
+      SetLoopModeResponse();
+
+  @override
+  Future<SetShuffleModeResponse> setShuffleMode(
+    SetShuffleModeRequest request,
+  ) async => SetShuffleModeResponse();
+
+  @override
+  Future<SeekResponse> seek(SeekRequest request) async => SeekResponse();
+
+  @override
+  Future<DisposeResponse> dispose(DisposeRequest request) async {
+    calls.add('dispose');
+    _playing = false;
+    return DisposeResponse();
+  }
+
+  void emit(ProcessingStateMessage state) {
+    events.add(
+      PlaybackEventMessage(
+        processingState: state,
+        updateTime: DateTime.now(),
+        updatePosition: Duration.zero,
+        bufferedPosition: Duration.zero,
+        duration: const Duration(seconds: 1),
+        icyMetadata: null,
+        currentIndex: 0,
+        androidAudioSessionId: null,
+      ),
+    );
+  }
+
+  void complete() => emit(ProcessingStateMessage.completed);
+}
+
+class FakeJustAudio extends JustAudioPlatform {
+  final players = <FakeAudioPlayer>[];
+
+  @override
+  Future<AudioPlayerPlatform> init(InitRequest request) async {
+    final p = FakeAudioPlayer(request.id);
+    players.add(p);
+    return p;
+  }
+
+  @override
+  Future<DisposePlayerResponse> disposePlayer(
+    DisposePlayerRequest request,
+  ) async => DisposePlayerResponse();
+
+  FakeAudioPlayer get playing =>
+      players.lastWhere((p) => p.calls.contains('play'));
+
+  // stop() rồi phát lại tạo platform player mới, phải đếm mọi player.
+  int playCount() => players.fold(
+    0,
+    (n, p) => n + p.calls.where((x) => x == 'play').length,
+  );
+}
+
+class FakeAppDb extends AppDb {
+  final settings = <String, String>{};
+
+  @override
+  Future<String?> getSetting(String key) async => settings[key];
+
+  @override
+  Future<void> setSetting(String key, String value) async {
+    settings[key] = value;
+  }
+}
+
+Future<void> waitUntil(bool Function() cond) async {
+  for (var i = 0; i < 400 && !cond(); i++) {
+    await Future<void>.delayed(const Duration(milliseconds: 5));
+  }
+  expect(cond(), isTrue, reason: 'hết thời gian chờ điều kiện');
+}
+
+void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+
+  late FakeJustAudio ja;
+  late List<String> synthTexts;
+  late TtsPlayer player;
+
+  setUp(() {
+    ja = FakeJustAudio();
+    JustAudioPlatform.instance = ja;
+    WakelockPlusPlatformInterface.instance = FakeWakelock();
+    synthTexts = [];
+    final messenger =
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+    messenger.setMockMethodCallHandler(const MethodChannel('flutter_tts'), (
+      call,
+    ) async {
+      if (call.method == 'synthesizeToFile') {
+        synthTexts.add((call.arguments as Map)['text'] as String);
+      }
+      if (call.method == 'getVoices') return <Map<String, String>>[];
+      return 1;
+    });
+    messenger.setMockMethodCallHandler(
+      const MethodChannel('plugins.flutter.io/path_provider'),
+      (call) async => Directory.systemTemp.path,
+    );
+    final db = FakeAppDb();
+    final fetcher = WebFetcher();
+    final adapters = AdapterRepository([]);
+    player = TtsPlayer(
+      db: db,
+      fetcher: fetcher,
+      adapters: adapters,
+      prefetcher: ChapterPrefetcher(
+        db: db,
+        fetcher: fetcher,
+        adapters: adapters,
+      ),
+    );
+  });
+
+  tearDown(() async {
+    player.dispose();
+    await Future<void>.delayed(const Duration(milliseconds: 10));
+  });
+
+  // Đoạn văn dài bị chunkify tách làm 2 chunk (>800 ký tự mỗi câu).
+  final s1 = 'A${'a' * 899}.';
+  final s2 = 'B${'b' * 899}.';
+  ChapterContent chapter() => ChapterContent(
+    url: 'https://x.com/chuong-1',
+    title: 'Chương 1',
+    paragraphs: ['$s1 $s2', 'Đoạn hai.'],
+  );
+
+  test('pause giữa đoạn văn rồi resume phải đọc lại từ đầu đoạn đó', () async {
+    final c = chapter();
+    expect(TtsPlayer.chunkify(c).length, 3);
+
+    await player.start(c);
+    await waitUntil(() => synthTexts.isNotEmpty);
+    expect(synthTexts.first, s1);
+    await waitUntil(() => ja.players.any((p) => p.calls.contains('play')));
+
+    // Nghe hết chunk đầu, sang chunk thứ hai vẫn cùng đoạn văn 0.
+    ja.playing.complete();
+    await waitUntil(() => ja.playCount() >= 2);
+    expect(player.currentParaIndex, 0);
+
+    await player.pause();
+    expect(
+      ja.players.any((p) => p.calls.contains('pause')),
+      isTrue,
+    );
+    final synthBefore = synthTexts.length;
+    final playBefore = ja.playCount();
+
+    await player.resume();
+    await waitUntil(() => synthTexts.length > synthBefore);
+    // Phải synth lại chunk ĐẦU của đoạn văn, không phải chunk đang nghe dở.
+    expect(synthTexts[synthBefore], s1);
+    await waitUntil(() => ja.playCount() > playBefore);
+    expect(player.playing, isTrue);
+    expect(player.currentChunk!.text, s1);
+  });
+
+  test('resume sau pause ở đoạn khác vẫn bắt đầu từ đầu đoạn đó', () async {
+    final c = chapter();
+    await player.start(c, paraIndex: 1);
+    await waitUntil(() => synthTexts.isNotEmpty);
+    expect(synthTexts.first, 'Đoạn hai.');
+    await waitUntil(() => ja.players.any((p) => p.calls.contains('play')));
+
+    await player.pause();
+    final synthBefore = synthTexts.length;
+    await player.resume();
+    await waitUntil(() => synthTexts.length > synthBefore);
+    expect(synthTexts[synthBefore], 'Đoạn hai.');
+    expect(player.playing, isTrue);
+    expect(player.currentParaIndex, 1);
+  });
+
+  test('resume khi chưa phát gì thì không làm gì', () async {
+    await player.resume();
+    expect(synthTexts, isEmpty);
+    expect(player.playing, isFalse);
+  });
+}
