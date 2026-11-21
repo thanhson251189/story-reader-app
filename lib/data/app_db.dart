@@ -8,6 +8,11 @@ import '../core/models.dart';
 class AppDb {
   Database? _db;
 
+  // Tên file DB: mặc định của app; test truyền tên riêng để các file test
+  // chạy song song trong isolate khác nhau không xoá/lẫn DB của nhau.
+  final String fileName;
+  AppDb({this.fileName = 'story_reader.db'});
+
   // Giàn giáo cache chỉ giữ chương mới nhất: cũ hơn bị xóa bớt để dữ liệu
   // không phình to vô hạn. Chương sách trong máy (book:) và chương người dùng
   // tải trước (pinned) không bao giờ bị dọn.
@@ -18,7 +23,7 @@ class AppDb {
   static const staleCacheDays = 7;
 
   Future<Database> get database async => _db ??= await openDatabase(
-    p.join(await getDatabasesPath(), 'story_reader.db'),
+    p.join(await getDatabasesPath(), fileName),
     version: 6,
     onCreate: (db, v) async {
       await db.execute(
@@ -438,5 +443,63 @@ class AppDb {
         lastChapterUrl: lastChapterUrl,
       );
     }
+  }
+
+  // ---- Từ/cụm từ sửa lỗi người dùng dạy ----
+
+  /// Key settings chứa danh sách [["cụm từ sai", "thay bằng"], ...]. Để trong
+  /// bảng settings (không tạo bảng riêng) thì sao lưu/phục hồi tự mang theo
+  /// và không cần nâng schema DB.
+  static const wordFixesKey = 'wordReplacements';
+
+  /// Danh sách từ sửa lỗi, giữ thứ tự người dùng nhập. Bỏ qua phần tử hỏng
+  /// (key rỗng, sai cấu trúc, file settings bị dính tay) thay vì crash.
+  Future<List<(String, String)>> getWordFixes() async {
+    final raw = await getSetting(wordFixesKey);
+    if (raw == null || raw.isEmpty) return const [];
+    try {
+      final list = jsonDecode(raw) as List;
+      return [
+        for (final e in list)
+          if (e is List &&
+              e.length == 2 &&
+              e[0] is String &&
+              e[1] is String &&
+              (e[0] as String).isNotEmpty)
+            (e[0] as String, e[1] as String),
+      ];
+    } catch (_) {
+      return const [];
+    }
+  }
+
+  Future<void> setWordFixes(List<(String, String)> fixes) =>
+      setSetting(
+        wordFixesKey,
+        jsonEncode([for (final (from, to) in fixes) [from, to]]),
+      );
+
+  /// Áp danh sách từ sửa lỗi vào tiêu đề + từng đoạn của nội dung chương.
+  /// Khớp nguyên văn (phân biệt hoa thường), áp theo thứ tự trong danh sách.
+  /// CHỈ gọi ở đường hiển thị/phát (màn đọc, nghe đọc) — không sửa trước khi
+  /// ghi cache: cache giữ bản gốc thì xoá/sửa một cụm từ trong danh sách có
+  /// tác dụng ngược ngay trên cả chương đã tải sẵn, không kẹt lỗi sai cũ.
+  Future<ChapterContent> fixWords(ChapterContent c) async {
+    final fixes = await getWordFixes();
+    if (fixes.isEmpty) return c;
+    String fix(String s) {
+      for (final (from, to) in fixes) {
+        s = s.replaceAll(from, to);
+      }
+      return s;
+    }
+
+    return ChapterContent(
+      url: c.url,
+      title: fix(c.title),
+      paragraphs: [for (final pa in c.paragraphs) fix(pa)],
+      nextUrl: c.nextUrl,
+      prevUrl: c.prevUrl,
+    );
   }
 }

@@ -16,7 +16,7 @@ void main() {
   setUpAll(() async {
     sqfliteFfiInit();
     databaseFactory = databaseFactoryFfi;
-    final path = p.join(await getDatabasesPath(), 'story_reader.db');
+    final path = p.join(await getDatabasesPath(), 'test_settings_screen.db');
     if (await databaseFactory.databaseExists(path)) {
       await databaseFactory.deleteDatabase(path);
     }
@@ -35,20 +35,28 @@ void main() {
         'installerStore': null,
       };
     });
-    final db = AppDb();
-    await tester.runAsync(() async {
-      await tester.pumpWidget(
-        ProviderScope(
-          overrides: [appDbProvider.overrideWithValue(db)],
-          child: const MaterialApp(home: SettingsScreen()),
-        ),
-      );
-      // Chờ thật cho _load (version + setting) hoàn tất rồi mới bơm frame
-      // setState — pumpAndSettle một mình thoát ngay vì chưa có frame nào.
-      await Future<void>.delayed(const Duration(milliseconds: 200));
-      await tester.pumpAndSettle();
-    });
-    return db;
+    final db = AppDb(fileName: 'test_settings_screen.db');
+    // Chờ thật cho _load (version + setting) hoàn tất rồi mới bơm frame
+    // setState — pumpAndSettle một mình thoát ngay vì chưa có frame nào;
+    // POLL theo điều kiện thay vì chờ cố định (thời gian mở DB lạnh thay
+    // đổi, chờ cứng thỉnh thoảng không đủ).
+    for (var i = 0; i < 40; i++) {
+      await tester.runAsync(() async {
+        if (i == 0) {
+          await tester.pumpWidget(
+            ProviderScope(
+              overrides: [appDbProvider.overrideWithValue(db)],
+              child: const MaterialApp(home: SettingsScreen()),
+            ),
+          );
+        }
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+        await tester.pumpAndSettle();
+      });
+      // Placeholder '…' biến mất = version + setting nạp xong.
+      if (find.text('…').evaluate().isEmpty) return db;
+    }
+    fail('Màn Cài đặt không nạp xong');
   }
 
   testWidgets('Màn Cài đặt hiện phiên bản app và các mục cài đặt', (
@@ -73,21 +81,30 @@ void main() {
       '1',
     );
 
-    // Mặc định bật: gạt tắt thì DB ghi '0', gạt lại thì về '1'. Sau mỗi lần
-    // gạt phải chờ thật cho setSetting ghi DB xong rồi mới bơm frame setState.
-    Future<void> toggle() => tester.runAsync(() async {
-      await tester.tap(find.byType(Switch));
-      await Future<void>.delayed(const Duration(milliseconds: 100));
-      await tester.pumpAndSettle();
-    });
+    // Mặc định bật: gạt tắt thì DB ghi '0', gạt lại thì về '1'. Gạt ĐÚNG MỘT
+    // LẦN rồi poll chờ setSetting ghi DB xong + frame setState đổi công tắc —
+    // gạt lại trong lúc write chưa xong là gạt ngược về giá trị cũ.
+    Future<void> toggleTo(bool value) async {
+      await tester.runAsync(() => tester.tap(find.byType(Switch)));
+      for (var i = 0; i < 40; i++) {
+        await tester.runAsync(() async {
+          await Future<void>.delayed(const Duration(milliseconds: 50));
+          await tester.pumpAndSettle();
+        });
+        if (tester.widget<Switch>(find.byType(Switch)).value == value) {
+          return;
+        }
+      }
+      fail('Công tắc không đổi sang $value');
+    }
 
-    await toggle();
+    await toggleTo(false);
     expect(
       await tester.runAsync(() => db.getSetting('autoCheckNew')),
       '0',
     );
 
-    await toggle();
+    await toggleTo(true);
     expect(
       await tester.runAsync(() => db.getSetting('autoCheckNew')),
       '1',

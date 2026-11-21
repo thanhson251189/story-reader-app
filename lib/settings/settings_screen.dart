@@ -14,6 +14,7 @@ import '../data/backup.dart';
 import '../sources/registry.dart';
 import '../sources/sources_screen.dart';
 import '../update/app_updater.dart';
+import 'word_fix_screen.dart';
 
 /// Tab Cài đặt: thông tin app (phiên bản đang chạy, kiểm tra bản mới) và các
 /// tuỳ chọn chung — chuyển từ menu "Tuỳ chọn thư viện" của màn Thư viện sang
@@ -33,6 +34,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   bool _autoCheck = true;
   bool _checkingUpdate = false;
   bool _busy = false; // đang sao lưu / phục hồi
+  int _wordFixCount = 0; // số cụm từ sửa lỗi người dùng đã dạy
 
   @override
   void initState() {
@@ -51,11 +53,13 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     final auto = (await ref.read(appDbProvider).getSetting('autoCheckNew') ??
             '1') ==
         '1';
+    final fixes = await ref.read(appDbProvider).getWordFixes();
     if (mounted) {
       setState(() {
         _version = version;
         _build = build;
         _autoCheck = auto;
+        _wordFixCount = fixes.length;
       });
     }
   }
@@ -254,6 +258,28 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                             builder: (_) => const SourcesScreen(),
                           ),
                         ),
+                ),
+                ListTile(
+                  leading: const Icon(Icons.spellcheck_outlined),
+                  title: const Text('Sửa lỗi từ truyện'),
+                  subtitle: Text(
+                    _wordFixCount == 0
+                        ? 'Dạy app thay cụm từ sai ("gi ết" → "giết")'
+                        : '$_wordFixCount cụm từ đang tự thay khi đọc/nghe',
+                  ),
+                  trailing: const Icon(Icons.arrow_forward),
+                  onTap: _busy
+                      ? null
+                      : () async {
+                          await Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (_) => const WordFixScreen(),
+                            ),
+                          );
+                          // Quay lại từ màn quản lý thì đếm có thể đã đổi.
+                          await _load();
+                        },
                 ),
               ],
             ),

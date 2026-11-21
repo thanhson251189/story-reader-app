@@ -449,7 +449,8 @@ class TtsPlayer extends ChangeNotifier {
     await db.setSetting('lastUrl', url);
     await db.touchLibrary(storyUrlFromChapter(url), url);
     unawaited(prefetcher.prefetch(c.nextUrl));
-    return c;
+    // Nghe cũng đọc bản đã sửa từ (cache giữ bản gốc — xem AppDb.fixWords).
+    return db.fixWords(c);
   }
 
   Future<void> pause() async {

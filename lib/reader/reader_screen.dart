@@ -256,14 +256,17 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> with RouteAware {
       }
       final cc = await db.fillNav(c);
       await db.cacheChapter(cc);
+      // Sửa từ người dùng dạy cho phần HIỂN THỊ; cache giữ bản gốc (cache
+      // bản đã sửa thì xoá cụm từ trong danh sách không khôi phục được).
+      final fixed = await db.fixWords(cc);
       await db.setSetting('lastUrl', url);
       await db.touchLibrary(_storyUrlOf(url), url);
       unawaited(ref.read(chapterPrefetcherProvider).prefetch(cc.nextUrl));
       final saved = await db.getPosition(url);
       if (!mounted) return;
       setState(() {
-        _content = cc;
-        _paraKeys = List.generate(cc.paragraphs.length, (_) => GlobalKey());
+        _content = fixed;
+        _paraKeys = List.generate(fixed.paragraphs.length, (_) => GlobalKey());
         _flashPara = -1;
         _loading = false;
       });
@@ -364,6 +367,8 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> with RouteAware {
     final db = ref.read(appDbProvider);
     final filled = await db.fillNav(cleaned);
     await db.cacheChapter(filled);
+    // Hiển thị bản đã sửa từ (cache giữ bản gốc — xem đường _load).
+    final shown = await db.fixWords(filled);
     await db.setSetting('lastUrl', filled.url);
     await db.touchLibrary(_storyUrlOf(filled.url), filled.url);
     // Mở chương khác qua WebView khi đang nghe cũng dừng nghe như đường
@@ -373,8 +378,8 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> with RouteAware {
     }
     if (!mounted) return;
     setState(() {
-      _content = filled;
-      _paraKeys = List.generate(filled.paragraphs.length, (_) => GlobalKey());
+      _content = shown;
+      _paraKeys = List.generate(shown.paragraphs.length, (_) => GlobalKey());
       _flashPara = -1;
       _error = null;
       _loading = false;
