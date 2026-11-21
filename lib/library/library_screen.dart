@@ -1,20 +1,14 @@
-import 'dart:convert';
 import 'dart:io';
 
-import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:path/path.dart' as p;
 
 import '../core/cover_image.dart';
-import '../core/errors.dart';
 import '../core/models.dart';
 import '../core/providers.dart';
-import '../data/backup.dart';
 import '../fetcher/web_fetcher.dart';
 import '../reader/reader_screen.dart';
 import '../reader/toc_screen.dart';
-import '../sources/registry.dart';
 import 'library_checker.dart';
 
 class LibraryScreen extends ConsumerStatefulWidget {
@@ -60,8 +54,6 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
   List<Map<String, dynamic>> _library = [];
   bool _loaded = false;
   bool _checking = false;
-  bool _busy = false;
-  bool _autoCheck = true;
   String? _checkProgress;
   // storyUrl → số chương trong mục lục đã lưu, để hiện "Chương x/y".
   Map<String, int> _tocCounts = {};
@@ -142,13 +134,11 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
         if (toc.isNotEmpty) counts[url] = toc.length;
       } catch (_) {}
     }
-    final auto = (await db.getSetting('autoCheckNew') ?? '1') == '1';
     final sort = await db.getSetting('librarySort') ?? 'recent';
     if (mounted) {
       setState(() {
         _library = lib;
         _tocCounts = counts;
-        _autoCheck = auto;
         _sort = sort;
         _loaded = true;
       });
@@ -182,7 +172,7 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
   }
 
   Future<void> _checkNew() async {
-    if (_checking || _busy) return;
+    if (_checking) return;
     if (LibraryChecker.running) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Đang kiểm tra chương mới, chờ chút nhé')),
@@ -224,105 +214,6 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
         ),
       ),
     );
-  }
-
-  Future<void> _toggleAutoCheck() async {
-    final v = !_autoCheck;
-    await ref.read(appDbProvider).setSetting('autoCheckNew', v ? '1' : '0');
-    if (mounted) setState(() => _autoCheck = v);
-  }
-
-  Future<void> _backup() async {
-    if (_busy) return;
-    setState(() => _busy = true);
-    try {
-      final dirPath = await FilePicker.getDirectoryPath();
-      if (!mounted) return;
-      if (dirPath == null) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('Đang đóng gói dữ liệu...')));
-      final data = await DataBackup(ref.read(appDbProvider)).export();
-      final stamp = DateTime.now();
-      String two(int n) => n.toString().padLeft(2, '0');
-      final name =
-          'story_reader_backup_${stamp.year}${two(stamp.month)}${two(stamp.day)}'
-          '_${two(stamp.hour)}${two(stamp.minute)}.json';
-      await File(p.join(dirPath, name)).writeAsString(jsonEncode(data));
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            'Đã lưu "$name" — gồm thư viện, vị trí đọc và sách đã nhập.',
-          ),
-        ),
-      );
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Sao lưu lỗi: ${friendlyError(e)}')),
-        );
-      }
-    } finally {
-      if (mounted) setState(() => _busy = false);
-    }
-  }
-
-  Future<void> _restore() async {
-    if (_busy) return;
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Phục hồi từ file sao lưu?'),
-        content: const Text(
-          'Dữ liệu trong file sẽ được ghép vào dữ liệu hiện có, không xoá gì. '
-          'Truyện, vị trí đọc và sách đã nhập sẽ trở lại như lúc sao lưu.',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('Huỷ'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('Phục hồi'),
-          ),
-        ],
-      ),
-    );
-    if (ok != true || !mounted) return;
-    setState(() => _busy = true);
-    try {
-      final picked = await FilePicker.pickFile(type: FileType.any);
-      final path = picked?.path;
-      if (!mounted) return;
-      if (path == null) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Đang khôi phục dữ liệu...')),
-      );
-      final db = ref.read(appDbProvider);
-      final data =
-          jsonDecode(await File(path).readAsString()) as Map<String, dynamic>;
-      await DataBackup(db).import(data);
-      // Bản nguồn truyện đã cài nằm trong settings khôi phục; nạp luôn để
-      // không phải mở lại app.
-      await SourceRegistry.restoreInstalled(
-        db,
-        ref.read(adapterRepoProvider),
-      );
-      await _load();
-      if (!mounted) return;
-      ScaffoldMessenger.of(context)
-          .showSnackBar(const SnackBar(content: Text('Đã khôi phục xong.')));
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Phục hồi lỗi: ${friendlyError(e)}')),
-        );
-      }
-    } finally {
-      if (mounted) setState(() => _busy = false);
-    }
   }
 
   Future<void> _remove(Map<String, dynamic> item) async {
@@ -380,7 +271,7 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
                   )
                 : const Icon(Icons.new_releases_outlined),
             tooltip: 'Check chương mới',
-            onPressed: _checking || _busy ? null : _checkNew,
+            onPressed: _checking ? null : _checkNew,
           ),
           PopupMenuButton<String>(
             icon: const Icon(Icons.sort),
@@ -403,53 +294,6 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
                     ],
                   ),
                 ),
-            ],
-          ),
-          PopupMenuButton<String>(
-            tooltip: 'Tuỳ chọn thư viện',
-            onSelected: (v) {
-              if (v == 'backup') _backup();
-              if (v == 'restore') _restore();
-              if (v == 'auto') _toggleAutoCheck();
-            },
-            itemBuilder: (_) => [
-              PopupMenuItem(
-                value: 'auto',
-                child: Row(
-                  children: [
-                    Icon(
-                      _autoCheck
-                          ? Icons.check_box
-                          : Icons.check_box_outline_blank,
-                      size: 18,
-                    ),
-                    const SizedBox(width: 12),
-                    const Expanded(
-                      child: Text('Tự kiểm tra chương mới khi mở app'),
-                    ),
-                  ],
-                ),
-              ),
-              const PopupMenuItem(
-                value: 'backup',
-                child: Row(
-                  children: [
-                    Icon(Icons.save_outlined, size: 18),
-                    SizedBox(width: 12),
-                    Expanded(child: Text('Sao lưu dữ liệu')),
-                  ],
-                ),
-              ),
-              const PopupMenuItem(
-                value: 'restore',
-                child: Row(
-                  children: [
-                    Icon(Icons.restore_outlined, size: 18),
-                    SizedBox(width: 12),
-                    Expanded(child: Text('Phục hồi từ file sao lưu')),
-                  ],
-                ),
-              ),
             ],
           ),
         ],

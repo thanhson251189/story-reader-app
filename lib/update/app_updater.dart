@@ -129,11 +129,22 @@ class AppUpdater {
       return false;
     }
     if (!context.mounted) return false;
-    await showDialog<void>(
+    await showUpdateDialog(context, db: db, update: update);
+    return true;
+  }
+
+  /// Hộp thoại cập nhật cho bản đã tra sẵn. Nút "Kiểm tra cập nhật" ở tab
+  /// Cài đặt dùng hàm này thay vì showIfAny: người dùng chủ động hỏi thì
+  /// phải hiện hộp thoại kể cả khi đã từng nhắc bản đó rồi.
+  static Future<void> showUpdateDialog(
+    BuildContext context, {
+    required AppDb db,
+    required UpdateInfo update,
+  }) {
+    return showDialog<void>(
       context: context,
       builder: (_) => _UpdateDialog(update: update, db: db),
     );
-    return true;
   }
 }
 

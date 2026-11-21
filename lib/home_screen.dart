@@ -8,6 +8,7 @@ import 'home/read_tab.dart';
 import 'library/library_checker.dart';
 import 'library/library_screen.dart';
 import 'search/search_screen.dart';
+import 'settings/settings_screen.dart';
 import 'sources/registry.dart';
 import 'update/app_updater.dart';
 
@@ -72,6 +73,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
           LibraryScreen(active: _tab == 0),
           const SearchScreen(),
           ReadTab(active: _tab == 2),
+          const SettingsScreen(),
         ],
       ),
       bottomNavigationBar: NavigationBar(
@@ -92,6 +94,11 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
             icon: Icon(Icons.auto_stories_outlined),
             selectedIcon: Icon(Icons.auto_stories),
             label: 'Đọc',
+          ),
+          NavigationDestination(
+            icon: Icon(Icons.settings_outlined),
+            selectedIcon: Icon(Icons.settings),
+            label: 'Cài đặt',
           ),
         ],
       ),
