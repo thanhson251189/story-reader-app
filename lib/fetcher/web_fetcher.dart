@@ -36,7 +36,11 @@ class WebFetcher {
   const c = q(sel.content);
   let ps = [];
   if (c) {
-    ps = Array.from(c.querySelectorAll('p')).map(p => p.innerText.trim()).filter(Boolean);
+    // Nhiều site nhét cả chương vào một <p> dài ngăn cách bằng <br>: nội dung
+    // innerText lúc đó xuống từng dòng, tách theo dòng mới thành các đoạn.
+    ps = Array.from(c.querySelectorAll('p')).map(p => p.innerText.trim())
+      .flatMap(t => t.split(/\\n+/))
+      .map(t => t.trim()).filter(Boolean);
     if (!ps.length) ps = c.innerText.split(/\\n{2,}/).map(t => t.trim()).filter(Boolean);
   }
   return JSON.stringify({

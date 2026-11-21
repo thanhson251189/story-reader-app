@@ -112,6 +112,16 @@ void main() {
     expect(WebFetcher.storyJs(a), contains('hasContent'));
   });
 
+  test('chapterJs tách đoạn theo dòng trong <p> (site dùng <br>)', () {
+    final a = SourceAdapter.fromJson({
+      'domain': 'x.com',
+      'selectors': {'content': '.reading-content'},
+    });
+    final js = WebFetcher.chapterJs(a);
+    expect(js, contains("flatMap(t => t.split(/\\n+/))"),
+        reason: 'một số site nhét cả chương vào một <p> dài với <br>');
+  });
+
   test('toggleSource bỏ tích một nguồn khi đang chọn tất cả', () {
     final all = ['a.com', 'b.com', 'c.com'];
     final rest = SearchScreen.toggleSource(null, 'b.com', all);
