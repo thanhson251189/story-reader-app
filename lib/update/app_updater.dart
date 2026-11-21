@@ -140,6 +140,9 @@ class _UpdateDialogState extends State<_UpdateDialog> {
   bool _downloading = false;
   bool _downloaded = false;
   bool _cancelled = false;
+  // Đã bấm "Cài đặt" (mở trình cài hệ thống hoặc mở trang tải): nếu cài không
+  // xong thì lần mở app sau PHẢI hỏi lại — không ghi nhớ bản đã hỏi.
+  bool _installAttempted = false;
   int _received = 0;
   int? _total;
   String? _apkPath;
@@ -207,6 +210,7 @@ class _UpdateDialogState extends State<_UpdateDialog> {
   Future<void> _install() async {
     final path = _apkPath;
     if (path == null) return;
+    _installAttempted = true;
     try {
       final ok = await AppUpdater._installerChannel.invokeMethod<bool>(
         'installApk',
@@ -243,12 +247,15 @@ class _UpdateDialogState extends State<_UpdateDialog> {
 
   @override
   void dispose() {
-    // Mọi đường rời hộp thoại (Để sau, Huỷ giữa lúc tải, nút back...) đều
-    // ghi nhớ bản đã hỏi để không hỏi lại mỗi lần mở app; ra bản mới hơn thì
-    // vẫn hỏi tiếp (xem AppUpdater.showIfAny).
-    try {
-      widget.db.setSetting('updatePromptedVersion', widget.update.version);
-    } catch (_) {}
+    // Người dùng chần chừ (Để sau, Huỷ giữa lúc tải, đóng hộp thoại) thì ghi
+    // nhớ bản đã hỏi để không hỏi lại mỗi lần mở app. ĐÃ bấm Cài đặt mà cài
+    // không xong (hủy ở trình cài hệ thống...) thì KHÔNG ghi nhớ — lần mở app
+    // sau vẫn phải nhắc. Ra bản mới hơn thì luôn hỏi tiếp (showIfAny).
+    if (!_installAttempted) {
+      try {
+        widget.db.setSetting('updatePromptedVersion', widget.update.version);
+      } catch (_) {}
+    }
     super.dispose();
   }
 

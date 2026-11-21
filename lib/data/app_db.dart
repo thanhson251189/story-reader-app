@@ -260,11 +260,25 @@ class AppDb {
     String? lastChapterUrl,
   }) async {
     final db = await database;
+    // REPLACE xoá hẳn dòng cũ rồi ghi dòng mới: 2 ô "chương mới nhất" và bìa
+    // không nằm trong dòng mới sẽ thành NULL — mất badge "Mới" khi làm mới
+    // mục lục hay thêm lại truyện đã có. Đọc trước để giữ lại.
+    final old = await db.query(
+      'library',
+      columns: ['latest_chapter_url', 'latest_chapter_title', 'cover_url'],
+      where: 'story_url = ?',
+      whereArgs: [storyUrl],
+      limit: 1,
+    );
     await db.insert('library', {
       'story_url': storyUrl,
       'title': title,
-      'cover_url': coverUrl,
+      'cover_url': coverUrl ?? (old.isEmpty ? null : old.first['cover_url']),
       'last_chapter_url': lastChapterUrl,
+      if (old.isNotEmpty) ...{
+        'latest_chapter_url': old.first['latest_chapter_url'],
+        'latest_chapter_title': old.first['latest_chapter_title'],
+      },
       'updated_at': DateTime.now().millisecondsSinceEpoch,
     }, conflictAlgorithm: ConflictAlgorithm.replace);
   }

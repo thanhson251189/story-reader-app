@@ -207,6 +207,13 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> with RouteAware {
     if (_content != null && _scroll.hasClients) {
       await ref.read(appDbProvider).savePosition(_content!.url, _scroll.offset);
     }
+    // Mở chương khác khi đang nghe thì dừng nghe luôn — không tự động nghe
+    // hộ chương vừa mở (muốn nghe chương này thì bấm Play). Mở lại đúng
+    // chương đang nghe thì giữ phiên nghe tiếp tục. TTS tự sang chương kế
+    // khi nghe hết chương không đi qua đây nên không bị ảnh hưởng.
+    if (_player.playing && _player.chapter?.url != url) {
+      await _player.stop();
+    }
     setState(() {
       _loading = true;
       _error = null;
@@ -269,7 +276,6 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> with RouteAware {
         }
       });
       unawaited(_updateProgress(url));
-      if (_player.playing) await _player.start(c);
     } catch (e) {
       if (!mounted) return;
       setState(() {
@@ -357,8 +363,13 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> with RouteAware {
     final db = ref.read(appDbProvider);
     await db.cacheChapter(cleaned);
     await db.setSetting('lastUrl', cleaned.url);
-    await db.touchLibrary(_storyUrlOf(cleaned.url), cleaned.url);
-    if (!mounted) return;
+      await db.touchLibrary(_storyUrlOf(cleaned.url), cleaned.url);
+      // Mở chương khác qua WebView khi đang nghe cũng dừng nghe như đường
+      // _load — không giữ phiên nghe chương cũ sau khi đã xem chương mới.
+      if (_player.playing && _player.chapter?.url != cleaned.url) {
+        await _player.stop();
+      }
+      if (!mounted) return;
     setState(() {
       _content = cleaned;
       _paraKeys = List.generate(cleaned.paragraphs.length, (_) => GlobalKey());

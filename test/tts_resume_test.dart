@@ -132,6 +132,10 @@ class FakeAppDb extends AppDb {
   final settings = <String, String>{};
   final cached = <String, ChapterContent>{};
 
+  /// URL trả chậm khi đọc cache — dùng để chen hành động của user vào giữa
+  /// lúc TTS đang tải chương kế.
+  final slowUrls = <String>{};
+
   @override
   Future<String?> getSetting(String key) async => settings[key];
 
@@ -141,7 +145,12 @@ class FakeAppDb extends AppDb {
   }
 
   @override
-  Future<ChapterContent?> getCachedChapter(String url) async => cached[url];
+  Future<ChapterContent?> getCachedChapter(String url) async {
+    if (slowUrls.contains(url)) {
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+    }
+    return cached[url];
+  }
 
   @override
   Future<void> cacheChapter(ChapterContent c) async {
@@ -152,8 +161,8 @@ class FakeAppDb extends AppDb {
   Future<void> touchLibrary(String storyUrl, String chapterUrl) async {}
 }
 
-Future<void> waitUntil(bool Function() cond) async {
-  for (var i = 0; i < 400 && !cond(); i++) {
+Future<void> waitUntil(bool Function() cond, {int maxMs = 2000}) async {
+  for (var i = 0; i * 5 < maxMs && !cond(); i++) {
     await Future<void>.delayed(const Duration(milliseconds: 5));
   }
   expect(cond(), isTrue, reason: 'hết thời gian chờ điều kiện');
@@ -165,6 +174,8 @@ void main() {
   late FakeJustAudio ja;
   late FakeAppDb db;
   late List<String> synthTexts;
+  // Giá trị trả về của synthesizeToFile: 1 = thành công, 0 = engine lỗi.
+  int synthResult = 1;
   late TtsPlayer player;
 
   setUp(() {
@@ -172,6 +183,7 @@ void main() {
     JustAudioPlatform.instance = ja;
     WakelockPlusPlatformInterface.instance = FakeWakelock();
     synthTexts = [];
+    synthResult = 1;
     final messenger =
         TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
     messenger.setMockMethodCallHandler(const MethodChannel('flutter_tts'), (
@@ -179,6 +191,7 @@ void main() {
     ) async {
       if (call.method == 'synthesizeToFile') {
         synthTexts.add((call.arguments as Map)['text'] as String);
+        return synthResult;
       }
       if (call.method == 'getVoices') return <Map<String, String>>[];
       return 1;
@@ -380,6 +393,80 @@ void main() {
     await player.skipNext();
     expect(player.chapter?.url, c2.url);
     expect(player.currentChunk!.text, 'Đoạn hai.');
+    expect(player.playing, isFalse);
+  });
+
+  test('dừng nghe trong lúc TTS tải chương kế thì không tự bật lại tiếng', () async {
+    final c2 = ChapterContent(
+      url: 'https://x.com/chuong-2',
+      title: 'Chương 2',
+      paragraphs: ['Đoạn hai.'],
+    );
+    final c1 = ChapterContent(
+      url: 'https://x.com/chuong-1',
+      title: 'Chương 1',
+      paragraphs: ['Đoạn một.'],
+      nextUrl: c2.url,
+    );
+    db.cached[c2.url] = c2;
+    db.slowUrls.add(c2.url);
+    await player.start(c1);
+    await waitUntil(() => ja.players.any((p) => p.calls.contains('play')));
+
+    // Hết chunk duy nhất → _chapterDone bắt đầu tải chương 2 (chậm 100ms)...
+    ja.playing.complete();
+    await Future<void>.delayed(const Duration(milliseconds: 30));
+    expect(player.loading, isTrue);
+
+    // ...user dừng nghe giữa chừng (pause hoặc reader gọi stop khi mở
+    // chương khác). Tải xong phải nạp chương mới ở trạng thái dừng.
+    await player.pause();
+    await waitUntil(() => player.loading == false);
+    expect(player.chapter?.url, c2.url);
+    expect(player.playing, isFalse);
+  });
+
+  test('synth lỗi vặt thì thử lại rồi bỏ qua đoạn CÓ báo lỗi', () async {
+    synthResult = 0;
+    await player.start(ChapterContent(
+      url: 'https://x.com/chuong-1',
+      title: 'Chương 1',
+      paragraphs: ['Đoạn một.'],
+    ));
+    // 1 lần synth + 2 lần thử lại đều lỗi → bỏ qua đoạn; hết chương (không có
+    // chương kế) nên dừng. Bắt buộc có thông báo, không được nuốt im lặng.
+    await waitUntil(() => player.playing == false, maxMs: 6000);
+    expect(synthTexts.length, 3, reason: 'phải thử lại 2 lần trước khi bỏ qua');
+    expect(player.lastError, contains('Bỏ qua'));
+    expect(player.playing, isFalse);
+  });
+
+  test('synth hỏng hàng loạt 3 lần liền thì dừng với thông báo rõ ràng', () async {
+    synthResult = 0;
+    await player.start(ChapterContent(
+      url: 'https://x.com/chuong-1',
+      title: 'Chương 1',
+      paragraphs: ['A.', 'B.', 'C.', 'D.'],
+    ));
+    await waitUntil(() => player.playing == false, maxMs: 12000);
+    // 3 đoạn × (1 + 2 lần thử lại): đoạn thứ 4 không bị synth nữa vì đã dừng.
+    expect(synthTexts.length, 9);
+    expect(player.lastError, contains('Không tạo được âm thanh'));
+    expect(player.playing, isFalse);
+  });
+
+  test('nghe hết chương mà chương kế thiếu nguồn thì dừng kèm thông báo', () async {
+    final c1 = ChapterContent(
+      url: 'https://x.com/chuong-1',
+      title: 'Chương 1',
+      paragraphs: ['Đoạn một.'],
+      nextUrl: 'https://other-domain.com/chuong-2',
+    );
+    await player.start(c1);
+    await waitUntil(() => ja.players.any((p) => p.calls.contains('play')));
+    ja.playing.complete();
+    await waitUntil(() => player.playing == false, maxMs: 4000);
+    expect(player.lastError, contains('chương kế'));
     expect(player.playing, isFalse);
   });
 }

@@ -18,7 +18,16 @@ class BookImportResult {
 
 class BookImporter {
   final AppDb db;
-  BookImporter(this.db);
+
+  /// Giới hạn kích thước file nhập: app đọc cả file vào bộ nhớ, file hàng
+  /// trăm MB trên máy RAM thấp là treo/sập. Sách chữ thật hiếm khi quá vài
+  /// chục MB. Truyền maxBytes nhỏ hơn trong test.
+  final int maxBytes;
+
+  static const maxImportBytes = 50 * 1024 * 1024;
+  static const _mb = 1024 * 1024;
+
+  BookImporter(this.db, {this.maxBytes = maxImportBytes});
 
   Future<BookImportResult> importFile(String path) async {
     final ext = p.extension(path).toLowerCase().replaceFirst('.', '');
@@ -28,7 +37,16 @@ class BookImporter {
         'Chưa hỗ trợ .$ext — chỉ đọc được EPUB, MOBI, FB2, TXT',
       );
     }
-    final bytes = await File(path).readAsBytes();
+    final file = File(path);
+    final size = await file.length();
+    if (size > maxBytes) {
+      throw FormatException(
+        'File quá lớn (${(size / _mb).toStringAsFixed(0)}MB) — app đọc được '
+        'tối đa ${(maxBytes / _mb).round()}MB. Hãy chia nhỏ file hoặc chuyển '
+        'đổi sang EPUB.',
+      );
+    }
+    final bytes = await file.readAsBytes();
     final name = p.basenameWithoutExtension(path);
     final book = await LocalBook.parse(ext, bytes, name);
     if (book.chapters.isEmpty) throw FormatException('Không đọc được nội dung sách');

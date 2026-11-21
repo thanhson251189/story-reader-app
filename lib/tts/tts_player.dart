@@ -184,9 +184,6 @@ class TtsPlayer extends ChangeNotifier {
 
   Future<String?> previewVoice() async {
     if (playing) await pause();
-    while (_synthIdle != null) {
-      await _synthIdle!.future;
-    }
     const sample =
         'Xin chào! Đây là giọng đọc thử. Chúc bạn nghe truyện vui vẻ.';
     final file = await _synth(sample, fileName: 'tts_preview.wav');
@@ -263,19 +260,41 @@ class TtsPlayer extends ChangeNotifier {
       await _chapterDone();
       return;
     }
-    var file = await _synth(chunks[_index].text, fileName: _chunkFile(_index));
+    var file = await _synthRetry(
+      chunks[_index].text,
+      fileName: _chunkFile(_index),
+      gen: gen,
+    );
+    var fails = 0;
     // Chỉ thoát khi đổi gen (start/stop/jump) hoặc hết chương. Lúc pause loop
     // chờ ở đây; resume() gọi start() với gen mới, đánh thức loop cũ thoát.
     while (gen == _gen) {
       if (file == null) {
+        // Engine hỏng với đoạn này: bỏ qua NHƯNG phải báo người nghe biết;
+        // hỏng hàng loạt (3 lần liền) thì dừng thay vì nuốt cả chương im lặng.
+        fails++;
+        if (fails >= 3) {
+          lastError =
+              'Không tạo được âm thanh đọc. Kiểm tra giọng đọc trong Cài '
+              'đặt hệ thống rồi bấm nghe lại.';
+          await stop();
+          return;
+        }
+        lastError = 'Bỏ qua một đoạn không tạo được âm thanh.';
+        _notify();
         _index++;
         if (_index >= chunks.length) {
           await _chapterDone();
           return;
         }
-        file = await _synth(chunks[_index].text, fileName: _chunkFile(_index));
+        file = await _synthRetry(
+          chunks[_index].text,
+          fileName: _chunkFile(_index),
+          gen: gen,
+        );
         continue;
       }
+      fails = 0;
       await _waitResume(gen);
       if (gen != _gen) return;
       await _audio.setFilePath(file);
@@ -304,13 +323,24 @@ class TtsPlayer extends ChangeNotifier {
         return;
       }
       file = prefetch == null
-          ? await _synth(chunks[_index].text, fileName: _chunkFile(_index))
+          ? await _synthRetry(
+              chunks[_index].text,
+              fileName: _chunkFile(_index),
+              gen: gen,
+            )
           : await prefetch;
     }
   }
 
   Future<String?> _synth(String text, {required String fileName}) async {
-    _synthIdle ??= Completer<void>();
+    // Chỉ chạy một synth tại một thời điểm: hai synth song song vừa khiến
+    // engine trả lỗi (bị bỏ thành nuốt đoạn) vừa ghi đè cùng file chunk khi
+    // đổi chương trong lúc synth đoạn kế của chương cũ. Người gọi sau chờ
+    // người gọi trước xong bằng completer thay thế.
+    while (_synthIdle != null) {
+      await _synthIdle!.future;
+    }
+    _synthIdle = Completer<void>();
     try {
       final dir = await getTemporaryDirectory();
       final path = '${dir.path}/$fileName';
@@ -326,6 +356,24 @@ class TtsPlayer extends ChangeNotifier {
       _synthIdle?.complete();
       _synthIdle = null;
     }
+  }
+
+  /// Tạo âm thanh cho một đoạn, thử lại thêm 2 lần: engine TTS lỗi vặt
+  /// (đang bận, thiếu bộ nhớ thoáng qua) thường hết ở lần kế. Trả về null nếu
+  /// vẫn hỏng — người gọi quyết định bỏ qua có báo lỗi hay dừng hẳn.
+  Future<String?> _synthRetry(
+    String text, {
+    required String fileName,
+    required int gen,
+  }) async {
+    var file = await _synth(text, fileName: fileName);
+    for (var r = 0; r < 2 && file == null; r++) {
+      if (gen != _gen) return null;
+      await Future<void>.delayed(const Duration(milliseconds: 400));
+      if (gen != _gen) return null;
+      file = await _synth(text, fileName: fileName);
+    }
+    return file;
   }
 
   Future<void> _waitResume(int gen) async {
@@ -353,7 +401,22 @@ class TtsPlayer extends ChangeNotifier {
       final c = await _loadChapter(next);
       loading = false;
       if (c == null) {
+        // Đường _jumpTo (bấm chương trước/sau trên thông báo) có báo lỗi thì
+        // nghe hết chương cũng phải báo — dừng im lặng gây bối rối.
+        lastError =
+            'Không đọc được chương kế: chưa cài nguồn cho trang có chương '
+            'này. Mở chương đó bằng tay để xem chi tiết.';
         await stop();
+        return;
+      }
+      // Trong lúc tải chương kế user có thể đã dừng (pause, hoặc reader gọi
+      // stop khi mở chương khác) — nạp chương mới ở trạng thái dừng, không
+      // tự bật lại tiếng sau khi đã bị dừng.
+      if (!playing) {
+        chapter = c;
+        chunks = chunkify(c);
+        _index = 0;
+        _notify();
         return;
       }
       await start(c);
@@ -409,7 +472,9 @@ class TtsPlayer extends ChangeNotifier {
     await _preview.stop();
     await _tts.stop();
     await WakelockPlus.disable();
-    cancelSleepTimer();
+    // KHÔNG xoá hẹn giờ tắt ở đây: mở chương khác khi đang nghe cũng đi qua
+    // stop() — người nghe đặt hẹn giờ 30 phút không bị mất vô cớ. Hẹn giờ
+    // tự hủy khi kêu (pause() trên phiên đã dừng là không-op).
     _notify();
   }
 

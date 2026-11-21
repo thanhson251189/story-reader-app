@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:audio_service/audio_service.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -30,7 +32,6 @@ Future<void> main() async {
     adapters: repo,
     prefetcher: prefetcher,
   );
-  await player.init();
   await Permission.notification.request();
   await AudioService.init(
     builder: () => TtsAudioHandler(player),
@@ -53,6 +54,15 @@ Future<void> main() async {
       ],
       child: const StoryReaderApp(),
     ),
+  );
+  // Khởi tạo giọng nói SAU khi app đã hiện lên: engine TTS của một số máy có
+  // thể đứng im không hồi đáp — chờ nó trước runApp là màn hình đen mãi.
+  // Lỗi bỏ qua: phần đọc vẫn dùng được, phần nghe dùng cấu hình mặc định
+  // rồi tự nạp cài đặt đã lưu khi engine trả lời.
+  unawaited(
+    player.init().catchError((Object e) {
+      debugPrint('TTS init lỗi: $e');
+    }),
   );
 }
 
