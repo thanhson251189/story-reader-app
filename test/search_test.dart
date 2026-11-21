@@ -1,5 +1,9 @@
+import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:story_reader/adapters/adapter_repository.dart';
 import 'package:story_reader/core/models.dart';
+import 'package:story_reader/core/providers.dart';
 import 'package:story_reader/fetcher/web_fetcher.dart';
 import 'package:story_reader/search/search_screen.dart';
 import 'package:story_reader/sources/registry.dart';
@@ -118,8 +122,11 @@ void main() {
       'selectors': {'content': '.reading-content'},
     });
     final js = WebFetcher.chapterJs(a);
-    expect(js, contains("flatMap(t => t.split(/\\n+/))"),
-        reason: 'một số site nhét cả chương vào một <p> dài với <br>');
+    expect(
+      js,
+      contains("flatMap(t => t.split(/\\n+/))"),
+      reason: 'một số site nhét cả chương vào một <p> dài với <br>',
+    );
   });
 
   test('toggleSource bỏ tích một nguồn khi đang chọn tất cả', () {
@@ -147,4 +154,82 @@ void main() {
     expect(SearchScreen.summary({'a.com'}), 'a.com');
     expect(SearchScreen.summary({'a.com', 'b.com'}), '2 nguồn đã chọn');
   });
+
+  testWidgets('Bấm tiêu đề nguồn thu/mở kết quả của riêng nguồn đó', (
+    tester,
+  ) async {
+    await _pumpSearch(tester);
+    await _search(tester, 'kiem');
+
+    expect(find.text('a.com'), findsOneWidget);
+    expect(find.text('2 kết quả'), findsOneWidget);
+    expect(find.text('Truyện a.com'), findsOneWidget);
+
+    // Thu gọn: kết quả nguồn này biến mất, tiêu đề và số kết quả vẫn còn.
+    await tester.tap(find.text('a.com'));
+    await tester.pump();
+    expect(find.text('Truyện a.com'), findsNothing);
+    expect(find.text('Truyện a.com 2'), findsNothing);
+    expect(find.text('a.com'), findsOneWidget);
+    expect(find.text('2 kết quả'), findsOneWidget);
+    // Nguồn khác không bị ảnh hưởng.
+    expect(find.text('Truyện b.com'), findsOneWidget);
+
+    // Mở lại được.
+    await tester.tap(find.text('a.com'));
+    await tester.pump();
+    expect(find.text('Truyện a.com'), findsOneWidget);
+  });
+
+  testWidgets('Lần tìm mới mở lại nguồn đã thu gọn', (tester) async {
+    await _pumpSearch(tester);
+    await _search(tester, 'kiem');
+    await tester.tap(find.text('a.com'));
+    await tester.pump();
+    expect(find.text('Truyện a.com'), findsNothing);
+
+    await _search(tester, 'kiem moi');
+    expect(find.text('Truyện a.com'), findsOneWidget);
+    expect(find.text('Truyện b.com'), findsOneWidget);
+  });
+}
+
+SourceAdapter _adapter(String domain) => SourceAdapter.fromJson({
+  'domain': domain,
+  'searchUrl': 'https://$domain/tim?q={query}',
+  'selectors': {'searchList': 'a'},
+});
+
+class _FakeFetcher extends WebFetcher {
+  @override
+  Future<List<SearchResult>> searchStories(String query, SourceAdapter a) =>
+      Future.value([
+        // Số kết quả khác nhau theo nguồn để assert tiêu đề không lẫn nhau.
+        for (var i = 1; i <= (a.domain == 'a.com' ? 2 : 3); i++)
+          SearchResult(
+            title: 'Truyện ${a.domain} ${i > 1 ? i : ''}'.trim(),
+            url: 'https://${a.domain}/$i',
+          ),
+      ]);
+}
+
+Future<void> _pumpSearch(WidgetTester tester) async {
+  await tester.pumpWidget(
+    ProviderScope(
+      overrides: [
+        adapterRepoProvider.overrideWithValue(
+          AdapterRepository([_adapter('a.com'), _adapter('b.com')]),
+        ),
+        webFetcherProvider.overrideWithValue(_FakeFetcher()),
+      ],
+      child: const MaterialApp(home: SearchScreen()),
+    ),
+  );
+}
+
+Future<void> _search(WidgetTester tester, String query) async {
+  await tester.enterText(find.byType(TextField), query);
+  await tester.tap(find.text('Tìm'));
+  await tester.pump();
+  await tester.pump();
 }

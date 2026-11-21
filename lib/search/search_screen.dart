@@ -54,6 +54,8 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
   bool _searched = false;
   String? _opening;
   final Map<String, _SourceState> _states = {};
+  // Nguồn đang thu gọn; lần tìm mới mở lại hết.
+  final Set<String> _collapsed = {};
 
   @override
   void dispose() {
@@ -94,6 +96,7 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
       _searched = true;
       _pickerOpen = false;
       _states.clear();
+      _collapsed.clear();
       for (final a in targets) {
         _states[a.domain] = _SourceState();
       }
@@ -331,36 +334,49 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
 
   Widget _sourceSection(SourceAdapter a) {
     final s = _states[a.domain]!;
+    final collapsed = _collapsed.contains(a.domain);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Padding(
-          padding: const EdgeInsets.symmetric(vertical: 8),
-          child: Row(
-            children: [
-              Text(a.domain, style: Theme.of(context).textTheme.titleMedium),
-              const SizedBox(width: 8),
-              if (s.status == _Status.loading)
-                const SizedBox(
-                  width: 14,
-                  height: 14,
-                  child: CircularProgressIndicator(strokeWidth: 2),
-                )
-              else if (s.status == _Status.done)
-                Text(
-                  '${s.results.length} kết quả',
-                  style: Theme.of(context).textTheme.bodySmall,
-                )
-              else
+        // Bấm cả dòng tiêu đề để thu/mở; mũi tên cùng kiểu với nút chọn nguồn.
+        InkWell(
+          borderRadius: BorderRadius.circular(8),
+          onTap: () => setState(() {
+            collapsed ? _collapsed.remove(a.domain) : _collapsed.add(a.domain);
+          }),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 4),
+            child: Row(
+              children: [
+                Text(a.domain, style: Theme.of(context).textTheme.titleMedium),
+                const SizedBox(width: 8),
+                if (s.status == _Status.loading)
+                  const SizedBox(
+                    width: 14,
+                    height: 14,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                else if (s.status == _Status.done)
+                  Text(
+                    '${s.results.length} kết quả',
+                    style: Theme.of(context).textTheme.bodySmall,
+                  )
+                else
+                  Icon(
+                    Icons.warning_amber,
+                    size: 16,
+                    color: Theme.of(context).colorScheme.error,
+                  ),
+                const Spacer(),
                 Icon(
-                  Icons.warning_amber,
-                  size: 16,
-                  color: Theme.of(context).colorScheme.error,
+                  collapsed ? Icons.arrow_drop_down : Icons.arrow_drop_up,
+                  color: Theme.of(context).colorScheme.outline,
                 ),
-            ],
+              ],
+            ),
           ),
         ),
-        if (s.status == _Status.error)
+        if (!collapsed && s.status == _Status.error)
           Card(
             child: Padding(
               padding: const EdgeInsets.all(12),
@@ -384,7 +400,7 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
               ),
             ),
           ),
-        if (s.status == _Status.done && s.results.isEmpty)
+        if (!collapsed && s.status == _Status.done && s.results.isEmpty)
           Padding(
             padding: const EdgeInsets.only(bottom: 8),
             child: Text(
@@ -392,30 +408,31 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
               style: Theme.of(context).textTheme.bodySmall,
             ),
           ),
-        for (final r in s.results)
-          Card(
-            child: ListTile(
-              leading: CoverImage(url: r.coverUrl, width: 40, height: 56),
-              title: Text(
-                r.title,
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
+        if (!collapsed)
+          for (final r in s.results)
+            Card(
+              child: ListTile(
+                leading: CoverImage(url: r.coverUrl, width: 40, height: 56),
+                title: Text(
+                  r.title,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                subtitle: Text(
+                  Uri.tryParse(r.url)?.path ?? r.url,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                trailing: _opening == r.url
+                    ? const SizedBox(
+                        width: 20,
+                        height: 20,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.arrow_forward),
+                onTap: () => _openStory(r, a),
               ),
-              subtitle: Text(
-                Uri.tryParse(r.url)?.path ?? r.url,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-              ),
-              trailing: _opening == r.url
-                  ? const SizedBox(
-                      width: 20,
-                      height: 20,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    )
-                  : const Icon(Icons.arrow_forward),
-              onTap: () => _openStory(r, a),
             ),
-          ),
         const SizedBox(height: 16),
       ],
     );
