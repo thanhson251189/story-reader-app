@@ -32,7 +32,7 @@ lib/
   data/       # SQLite: vị trí đọc, cache chương, thư viện, mục lục, settings
   sources/    # registry index.json ngoài GitHub, cài/cập nhật adapter
   local/      # nhập sách EPUB/MOBI/FB2/TXT có sẵn trong máy
-  update/     # kiểm tra bản mới qua GitHub Release
+  update/     # kiểm tra bản mới, tải APK trong app (thanh tiến độ) rồi mở trình cài
 ```
 
 Adapter không đóng gói trong APK; nguồn truyện cài qua màn "Nguồn truyện" (registry). Bản cá nhân build với `--dart-define=PERSONAL=true` để có sẵn link index mặc định.
