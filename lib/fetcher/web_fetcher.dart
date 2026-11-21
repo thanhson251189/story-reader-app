@@ -328,15 +328,13 @@ class WebFetcher {
     String sel,
     Uri base,
   ) async {
-    try {
-      return _chaptersFromDoc(await _getHtml(url), sel, base);
-    } catch (_) {
+    // Thử tối đa 2 lần: mạng vặt hay lỗi nửa chừng, lần 2 thường ăn ngay.
+    for (var attempt = 0; attempt < 2; attempt++) {
       try {
         return _chaptersFromDoc(await _getHtml(url), sel, base);
-      } catch (_) {
-        return [];
-      }
+      } catch (_) {}
     }
+    return [];
   }
 
   static List<ChapterRef> _chaptersFromDoc(

@@ -16,6 +16,9 @@ class FakeAppDb extends AppDb {
 
   @override
   Future<Set<String>> getCachedChapterUrls() async => cachedUrls;
+
+  @override
+  Future<Set<String>> openedChapterUrls() async => const {};
 }
 
 void main() {

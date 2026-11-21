@@ -9,7 +9,8 @@ class AppDb {
   Database? _db;
 
   // Giàn giáo cache chỉ giữ chương mới nhất: cũ hơn bị xóa bớt để dữ liệu
-  // không phình to vô hạn. Chương sách trong máy (book:) không bao giờ bị dọn.
+  // không phình to vô hạn. Chương sách trong máy (book:) và chương người dùng
+  // tải trước (pinned) không bao giờ bị dọn.
   static const maxCachedChapters = 500;
 
   // Cache web lâu hơn ngưỡng này coi là nội dung cũ: mở lại thì tải bản mới
@@ -18,7 +19,7 @@ class AppDb {
 
   Future<Database> get database async => _db ??= await openDatabase(
     p.join(await getDatabasesPath(), 'story_reader.db'),
-    version: 5,
+    version: 6,
     onCreate: (db, v) async {
       await db.execute(
         'CREATE TABLE positions(url TEXT PRIMARY KEY, offset REAL NOT NULL, updated_at INTEGER NOT NULL)',
@@ -27,7 +28,7 @@ class AppDb {
         'CREATE TABLE settings(key TEXT PRIMARY KEY, value TEXT NOT NULL)',
       );
       await db.execute(
-        'CREATE TABLE chapter_cache(url TEXT PRIMARY KEY, title TEXT NOT NULL, content TEXT NOT NULL, next_url TEXT, prev_url TEXT, fetched_at INTEGER NOT NULL)',
+        'CREATE TABLE chapter_cache(url TEXT PRIMARY KEY, title TEXT NOT NULL, content TEXT NOT NULL, next_url TEXT, prev_url TEXT, fetched_at INTEGER NOT NULL, pinned INTEGER NOT NULL DEFAULT 0)',
       );
       await db.execute(
         'CREATE TABLE library(story_url TEXT PRIMARY KEY, title TEXT NOT NULL, cover_url TEXT, last_chapter_url TEXT, latest_chapter_url TEXT, latest_chapter_title TEXT, updated_at INTEGER NOT NULL)',
@@ -44,6 +45,12 @@ class AppDb {
         );
         await db.execute(
           'ALTER TABLE library ADD COLUMN latest_chapter_title TEXT',
+        );
+      }
+      if (from < 6) {
+        // Ghim chương người dùng tải trước trong mục lục: không bị dọn cache.
+        await db.execute(
+          'ALTER TABLE chapter_cache ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0',
         );
       }
       if (from < 5) {
@@ -91,6 +98,14 @@ class AppDb {
     return rows.isEmpty ? null : (rows.first['offset'] as num).toDouble();
   }
 
+  /// Mọi URL chương đã từng mở (bảng positions) — dùng để đánh dấu chương
+  /// đã đọc trong mục lục. Mỗi lần mở chương đều lưu vị trí nên coi như đã đọc.
+  Future<Set<String>> openedChapterUrls() async {
+    final db = await database;
+    final rows = await db.query('positions', columns: ['url']);
+    return rows.map((r) => r['url'] as String).toSet();
+  }
+
   Future<void> setSetting(String key, String value) async {
     final db = await database;
     await db.insert('settings', {
@@ -116,6 +131,15 @@ class AppDb {
     final db = await database;
     final batch = db.batch();
     for (final c in list) {
+      // REPLACE xoá hẳn row cũ nên ghim mất; đọc ghim hiện có để giữ lại khi
+      // tải lại chương đã ghim (refresh cache cũ, nghe lại...).
+      final old = await db.query(
+        'chapter_cache',
+        columns: ['pinned'],
+        where: 'url = ?',
+        whereArgs: [c.url],
+        limit: 1,
+      );
       batch.insert('chapter_cache', {
         'url': c.url,
         'title': c.title,
@@ -123,6 +147,7 @@ class AppDb {
         'next_url': c.nextUrl,
         'prev_url': c.prevUrl,
         'fetched_at': DateTime.now().millisecondsSinceEpoch,
+        'pinned': old.isEmpty ? 0 : old.first['pinned'],
       }, conflictAlgorithm: ConflictAlgorithm.replace);
     }
     await batch.commit(noResult: true);
@@ -131,16 +156,42 @@ class AppDb {
 
   /// Giữ lại [keep] chương web mới nhất, xóa phần còn lại (theo rowid vì
   /// fetched_at trùng nhau giữa các chương tải cùng lúc thì cứ theo thứ tự).
-  /// Chương sách trong máy (book:) không bị đụng tới — sách nhập vào có thể
-  /// dài hơn hạn mức nhiều lần.
+  /// Chương sách trong máy (book:) và chương đã ghim không bị đụng tới —
+  /// sách nhập vào có thể dài hơn hạn mức nhiều lần, chương ghim là lựa chọn
+  /// đọc offline rõ ràng của người dùng.
   Future<void> pruneChapterCache({int keep = maxCachedChapters}) async {
     final db = await database;
     await db.execute(
-      "DELETE FROM chapter_cache WHERE url NOT LIKE 'book:%' AND rowid NOT IN "
+      "DELETE FROM chapter_cache WHERE url NOT LIKE 'book:%' AND pinned = 0 "
+      'AND rowid NOT IN '
       "(SELECT rowid FROM chapter_cache WHERE url NOT LIKE 'book:%' "
+      'AND pinned = 0 '
       'ORDER BY fetched_at DESC LIMIT ?)',
       [keep],
     );
+  }
+
+  /// Ghim một chương web: không bị dọn cache, không bị xoá khi "Xoá dữ liệu
+  /// tải sẵn". Đặt khi tải trước trong mục lục.
+  Future<void> pinChapter(String url) async {
+    final db = await database;
+    await db.update(
+      'chapter_cache',
+      {'pinned': 1},
+      where: 'url = ?',
+      whereArgs: [url],
+    );
+  }
+
+  /// Số chương web đang được ghim.
+  Future<int> pinnedWebCount() async {
+    final db = await database;
+    return Sqflite.firstIntValue(
+          await db.rawQuery(
+            "SELECT COUNT(*) FROM chapter_cache WHERE url NOT LIKE 'book:%' AND pinned = 1",
+          ),
+        ) ??
+        0;
   }
 
   Future<int?> chapterFetchedAt(String url) async {
@@ -166,11 +217,15 @@ class AppDb {
         0;
   }
 
-  /// Xóa cache chương web để trả lại dung lượng; sách trong máy giữ nguyên
-  /// vì xóa mất thì phải nhập lại file.
+  /// Xóa cache chương web để trả lại dung lượng; chương đã ghim và sách
+  /// trong máy giữ nguyên — ghim là lựa chọn giữ rõ ràng của người dùng,
+  /// sách xoá mất thì phải nhập lại file.
   Future<void> clearWebCache() async {
     final db = await database;
-    await db.delete('chapter_cache', where: "url NOT LIKE 'book:%'");
+    await db.delete(
+      'chapter_cache',
+      where: "url NOT LIKE 'book:%' AND pinned = 0",
+    );
   }
 
   Future<ChapterContent?> getCachedChapter(String url) async {
@@ -292,5 +347,26 @@ class AppDb {
           ),
         )
         .toList();
+  }
+
+  /// Ghi kết quả nạp một truyện: mục lục + (tuỳ chọn) đưa vào thư viện với
+  /// chương đang đọc. Dùng chung cho nút "thêm vào thư viện" ở màn đọc, lần
+  /// đầu nạp mục lục và kiểm tra chương mới — một quy tắc lưu duy nhất để
+  /// không lệch nhau. Không truyền [lastChapterUrl] khi chỉ muốn làm mới mục
+  /// lục mà không đụng dòng "đang đọc" trong thư viện.
+  Future<void> saveStoryInfo(
+    String storyUrl,
+    NovelInfo info, {
+    String? lastChapterUrl,
+  }) async {
+    await saveToc(storyUrl, info.chapters);
+    if (lastChapterUrl != null) {
+      await upsertLibrary(
+        storyUrl: storyUrl,
+        title: info.title,
+        coverUrl: info.coverUrl,
+        lastChapterUrl: lastChapterUrl,
+      );
+    }
   }
 }

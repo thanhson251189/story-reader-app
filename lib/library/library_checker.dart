@@ -7,9 +7,8 @@ import '../fetcher/web_fetcher.dart';
 
 class LibraryCheckResult {
   final int fresh;
-  final int checked;
   final List<String> warns;
-  const LibraryCheckResult(this.fresh, this.checked, this.warns);
+  const LibraryCheckResult(this.fresh, this.warns);
 }
 
 /// Kiểm tra chương mới cho các truyện web trong thư viện. Dùng chung cho nút
@@ -30,7 +29,7 @@ class LibraryChecker {
     List<Map<String, dynamic>>? items,
     void Function(String progress)? onProgress,
   }) async {
-    if (_running) return const LibraryCheckResult(0, 0, []);
+    if (_running) return const LibraryCheckResult(0, []);
     _running = true;
     try {
       final lib = items ?? await db.getLibrary();
@@ -56,15 +55,17 @@ class LibraryChecker {
             continue;
           }
           final last = info.chapters.last;
+          // Không truyền lastChapterUrl: chỉ làm mới mục lục và ghi chương
+          // mới nhất, không đụng dòng "đang đọc" của thư viện.
+          await db.saveStoryInfo(storyUrl, info);
           await db.setLatestChapter(storyUrl, last.url, last.title);
-          await db.saveToc(storyUrl, info.chapters);
           if (last.url != (item['last_chapter_url'] as String? ?? '')) fresh++;
         } catch (e) {
           warns.add('$title: ${friendlyError(e)}');
         }
       }
       revision.value++;
-      return LibraryCheckResult(fresh, targets.length, warns);
+      return LibraryCheckResult(fresh, warns);
     } finally {
       _running = false;
     }

@@ -108,7 +108,8 @@ class AppUpdater {
   static Future<bool> showIfAny(BuildContext context, AppDb db) async {
     final update = await AppUpdater().check();
     if (update == null) return false;
-    // Người dùng đã bấm "Để sau" cho đúng bản này rồi thì thôi hỏi lại;
+    // Người dùng đã từng thấy hộp thoại của bản này rồi thì thôi hỏi lại
+    // (mọi đường đóng hộp thoại đều ghi nhớ — xem _UpdateDialogState.dispose);
     // ra bản mới hơn sẽ hỏi tiếp.
     if (await db.getSetting('updatePromptedVersion') == update.version) {
       return false;
@@ -240,15 +241,15 @@ class _UpdateDialogState extends State<_UpdateDialog> {
     Navigator.pop(context);
   }
 
-  Future<void> _postpone() async {
-    // Ghi nhớ bản đã nhắc để không hỏi lại mỗi lần mở app (chi tiết ở showIfAny).
+  @override
+  void dispose() {
+    // Mọi đường rời hộp thoại (Để sau, Huỷ giữa lúc tải, nút back...) đều
+    // ghi nhớ bản đã hỏi để không hỏi lại mỗi lần mở app; ra bản mới hơn thì
+    // vẫn hỏi tiếp (xem AppUpdater.showIfAny).
     try {
-      await widget.db.setSetting(
-        'updatePromptedVersion',
-        widget.update.version,
-      );
+      widget.db.setSetting('updatePromptedVersion', widget.update.version);
     } catch (_) {}
-    if (mounted) Navigator.pop(context);
+    super.dispose();
   }
 
   @override
@@ -300,7 +301,10 @@ class _UpdateDialogState extends State<_UpdateDialog> {
   }
 
   List<Widget> _actions() {
-    final later = TextButton(onPressed: _postpone, child: const Text('Để sau'));
+    final later = TextButton(
+      onPressed: () => Navigator.pop(context),
+      child: const Text('Để sau'),
+    );
     if (_downloading) {
       return [TextButton(onPressed: _cancel, child: const Text('Huỷ'))];
     }

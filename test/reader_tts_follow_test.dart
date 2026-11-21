@@ -56,6 +56,8 @@ class FakeTtsPlayer extends ChangeNotifier implements TtsPlayer {
   @override
   bool playing = false;
   @override
+  bool loading = false;
+  @override
   String? lastError;
   @override
   DateTime? sleepAt;
@@ -65,6 +67,10 @@ class FakeTtsPlayer extends ChangeNotifier implements TtsPlayer {
   int get currentParaIndex => -1;
   @override
   SpeakChunk? get currentChunk => null;
+  @override
+  Future<void> skipPrev() async {}
+  @override
+  Future<void> skipNext() async {}
 
   void emit() => notifyListeners();
 

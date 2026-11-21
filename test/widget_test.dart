@@ -3,7 +3,6 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:story_reader/core/models.dart';
 import 'package:story_reader/fetcher/web_fetcher.dart';
 import 'package:story_reader/local/local_book.dart';
-import 'package:story_reader/reader/toc_screen.dart';
 import 'package:story_reader/sources/registry.dart';
 import 'package:story_reader/tts/tts_player.dart';
 
@@ -134,5 +133,19 @@ void main() {
       'https://truyendich.vn/slug/',
     );
     expect(storyUrlFromChapter('https://x.com/truyen/chuong-1#top'), 'https://x.com/truyen');
+  });
+
+  group('BookUrl', () {
+    test('storyOf bỏ số chương, giữ nguyên địa chỉ dị dạng', () {
+      expect(BookUrl.storyOf('book:abc123:4'), 'book:abc123');
+      expect(BookUrl.storyOf('book:abc123'), 'book:abc123');
+    });
+
+    test('chapterOf đọc số chương, địa chỉ sai thì null', () {
+      expect(BookUrl.chapterOf('book:abc123:4'), 4);
+      expect(BookUrl.chapterOf('book:abc123:khong-phai-so'), isNull);
+      expect(BookUrl.chapterOf('book:abc123'), isNull);
+      expect(BookUrl.chapterOf('https://x.com/chuong-4'), isNull);
+    });
   });
 }

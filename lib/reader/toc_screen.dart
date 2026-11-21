@@ -7,19 +7,6 @@ import '../core/providers.dart';
 import '../fetcher/web_fetcher.dart';
 import 'reader_screen.dart';
 
-String storyUrlFromChapter(String url) {
-  if (url.startsWith('book:')) {
-    final parts = url.split(':');
-    return parts.length >= 2 ? '${parts[0]}:${parts[1]}' : url;
-  }
-  final uri = Uri.parse(url).removeFragment();
-  // Bỏ segment rỗng do dấu '/' cuối để không cắt nhầm vào tên chương.
-  final segs = uri.pathSegments.where((s) => s.isNotEmpty).toList();
-  if (segs.isNotEmpty) segs.removeLast();
-  final slash = url.endsWith('/') ? '/' : '';
-  return uri.replace(path: '/${segs.join('/')}$slash').toString();
-}
-
 class TocScreen extends ConsumerStatefulWidget {
   final String storyUrl;
   final String? currentChapterUrl;
@@ -77,6 +64,8 @@ class _TocScreenState extends ConsumerState<TocScreen> {
   Map<String, int> _indexByUrl = {};
   List<int> _view = [];
   Set<String> _cached = {};
+  // URL chương đã từng mở (đã chuẩn hoá) — tô xám + dấu check.
+  Set<String> _opened = {};
   bool _loading = true;
   String? _error;
   String? _title;
@@ -121,19 +110,19 @@ class _TocScreenState extends ConsumerState<TocScreen> {
             .fetchStory(widget.storyUrl, adapter);
         chapters = info.chapters;
         _title = info.title;
-        await db.saveToc(widget.storyUrl, chapters);
-        await db.upsertLibrary(
-          storyUrl: widget.storyUrl,
-          title: info.title,
-          coverUrl: info.coverUrl,
+        await db.saveStoryInfo(
+          widget.storyUrl,
+          info,
           lastChapterUrl: widget.currentChapterUrl,
         );
       }
       final cached = await db.getCachedChapterUrls();
+      final opened = await db.openedChapterUrls();
       if (!mounted) return;
       setState(() {
         _chapters = chapters;
         _cached = cached;
+        _opened = opened.map(TocScreen.normUrl).toSet();
         _loading = false;
         _numbers = [
           for (var i = 0; i < chapters.length; i++)
@@ -184,6 +173,9 @@ class _TocScreenState extends ConsumerState<TocScreen> {
     while (i < _chapters.length && ok < count && !_dlCancel) {
       final url = _chapters[i].url;
       if (_cached.contains(url)) {
+        // Đã có trong máy vẫn ghim cho trọn đoạn được yêu cầu: tải trước là
+        // ý định giữ offline, prefetch lẻ trước đó không đáng tin dài hạn.
+        await db.pinChapter(url);
         i++;
         continue;
       }
@@ -192,6 +184,7 @@ class _TocScreenState extends ConsumerState<TocScreen> {
       try {
         final c = await fetcher.fetchChapter(url, adapter);
         await db.cacheChapter(c);
+        await db.pinChapter(url);
         ok++;
         streak = 0;
         i++;
@@ -444,6 +437,10 @@ class _TocScreenState extends ConsumerState<TocScreen> {
                               final isCurrent =
                                   currentNorm != null &&
                                   TocScreen.normUrl(c.url) == currentNorm;
+                              // Chương đã từng mở: tô xám. Icon cached ưu tiên
+                              // hơn vì chỉ dẫn chuyện có thể đọc offline.
+                              final isRead =
+                                  !isCurrent && _opened.contains(TocScreen.normUrl(c.url));
                               return ListTile(
                                 dense: true,
                                 title: Text(
@@ -457,7 +454,13 @@ class _TocScreenState extends ConsumerState<TocScreen> {
                                               .primary,
                                           fontWeight: FontWeight.bold,
                                         )
-                                      : null,
+                                      : (isRead
+                                            ? TextStyle(
+                                                color: Theme.of(context)
+                                                    .colorScheme
+                                                    .onSurfaceVariant,
+                                              )
+                                            : null),
                                 ),
                                 trailing: _cached.contains(c.url)
                                     ? const Icon(
@@ -465,7 +468,15 @@ class _TocScreenState extends ConsumerState<TocScreen> {
                                         size: 18,
                                         color: Colors.green,
                                       )
-                                    : null,
+                                    : (isRead
+                                          ? Icon(
+                                              Icons.check_circle_outline,
+                                              size: 18,
+                                              color: Theme.of(context)
+                                                  .colorScheme
+                                                  .outline,
+                                            )
+                                          : null),
                                 onTap: () => Navigator.pushReplacement(
                                   context,
                                   MaterialPageRoute(

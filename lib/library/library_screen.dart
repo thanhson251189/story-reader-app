@@ -8,10 +8,12 @@ import 'package:path/path.dart' as p;
 
 import '../core/cover_image.dart';
 import '../core/errors.dart';
+import '../core/models.dart';
 import '../core/providers.dart';
 import '../data/backup.dart';
 import '../fetcher/web_fetcher.dart';
 import '../reader/reader_screen.dart';
+import '../reader/toc_screen.dart';
 import '../sources/registry.dart';
 import 'library_checker.dart';
 
@@ -30,6 +32,26 @@ class LibraryScreen extends ConsumerStatefulWidget {
     return 'Mới: ${label.isEmpty ? 'chương mới' : label}';
   }
 
+  // Lọc/tìm theo tên, không phân biệt hoa thường và dấu tiếng Việt.
+  static bool matchesQuery(Map<String, dynamic> item, String query) {
+    final q = query.trim();
+    if (q.isEmpty) return true;
+    return TocScreen.fold(title(item)).contains(TocScreen.fold(q));
+  }
+
+  static String title(Map<String, dynamic> item) =>
+      (item['title'] as String?) ?? '';
+
+  /// Truyện có chương mới (badge "Mới") đứng trước, trong nhóm đó mới đọc
+  /// trước trước (updated_at DESC từ DB).
+  static bool hasNew(Map<String, dynamic> item) =>
+      newBadge(
+        item['latest_chapter_url'] as String?,
+        item['latest_chapter_title'] as String?,
+        item['last_chapter_url'] as String?,
+      ) !=
+      null;
+
   @override
   ConsumerState<LibraryScreen> createState() => _LibraryScreenState();
 }
@@ -43,6 +65,42 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
   String? _checkProgress;
   // storyUrl → số chương trong mục lục đã lưu, để hiện "Chương x/y".
   Map<String, int> _tocCounts = {};
+  // Sắp xếp: 'recent' (mới đọc — mặc định theo DB), 'newest' (có chương mới
+  // lên đầu), 'title' (tên A–Z, không dấu). Tìm kiếm lọc theo tên.
+  String _sort = 'recent';
+  String _query = '';
+  final TextEditingController _searchCtrl = TextEditingController();
+
+  /// Danh sách hiện trên màn: lọc theo [_query] rồi sắp xếp theo [_sort].
+  /// DB đã sort updated_at DESC nên 'recent' giữ nguyên thứ tự.
+  List<Map<String, dynamic>> _display() {
+    var items = _library;
+    if (_query.trim().isNotEmpty) {
+      items = items.where((i) => LibraryScreen.matchesQuery(i, _query)).toList();
+    }
+    switch (_sort) {
+      case 'title':
+        items = [...items]..sort(
+          (a, b) => TocScreen.fold(
+            LibraryScreen.title(a),
+          ).compareTo(TocScreen.fold(LibraryScreen.title(b))),
+        );
+      case 'newest':
+        items = [...items]..sort((a, b) {
+          final an = LibraryScreen.hasNew(a);
+          final bn = LibraryScreen.hasNew(b);
+          if (an != bn) return an ? -1 : 1;
+          // Dart sort không stable: nhóm cùng trạng thái phải so rõ thứ tự.
+          return (b['updated_at'] as int).compareTo(a['updated_at'] as int);
+        });
+    }
+    return items;
+  }
+
+  Future<void> _setSort(String v) async {
+    setState(() => _sort = v);
+    await ref.read(appDbProvider).setSetting('librarySort', v);
+  }
 
   @override
   void initState() {
@@ -55,6 +113,7 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
   @override
   void dispose() {
     LibraryChecker.revision.removeListener(_onExternalCheck);
+    _searchCtrl.dispose();
     super.dispose();
   }
 
@@ -84,11 +143,13 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
       } catch (_) {}
     }
     final auto = (await db.getSetting('autoCheckNew') ?? '1') == '1';
+    final sort = await db.getSetting('librarySort') ?? 'recent';
     if (mounted) {
       setState(() {
         _library = lib;
         _tocCounts = counts;
         _autoCheck = auto;
+        _sort = sort;
         _loaded = true;
       });
     }
@@ -111,7 +172,7 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
     final total = _tocCounts[item['story_url']];
     final suffix = total == null ? '' : '/$total';
     if (last.startsWith('book:')) {
-      final n = int.tryParse(last.split(':').last);
+      final n = BookUrl.chapterOf(last);
       return n == null ? 'Sách trong máy' : 'Chương ${n + 1}$suffix';
     }
     final n = WebFetcher.trailingNumber(last);
@@ -297,8 +358,15 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
     }
   }
 
+  static const _sortLabels = {
+    'recent': 'Mới đọc trước',
+    'newest': 'Chương mới lên đầu',
+    'title': 'Tên A–Z',
+  };
+
   @override
   Widget build(BuildContext context) {
+    final items = _display();
     return Scaffold(
       appBar: AppBar(
         title: const Text('Thư viện'),
@@ -313,6 +381,29 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
                 : const Icon(Icons.new_releases_outlined),
             tooltip: 'Check chương mới',
             onPressed: _checking || _busy ? null : _checkNew,
+          ),
+          PopupMenuButton<String>(
+            icon: const Icon(Icons.sort),
+            tooltip: 'Sắp xếp',
+            onSelected: _setSort,
+            itemBuilder: (_) => [
+              for (final e in _sortLabels.entries)
+                PopupMenuItem(
+                  value: e.key,
+                  child: Row(
+                    children: [
+                      Icon(
+                        _sort == e.key
+                            ? Icons.check_box
+                            : Icons.check_box_outline_blank,
+                        size: 18,
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(child: Text(e.value)),
+                    ],
+                  ),
+                ),
+            ],
           ),
           PopupMenuButton<String>(
             tooltip: 'Tuỳ chọn thư viện',
@@ -418,16 +509,55 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
                       ),
                     ),
                   )
-                : ListView(
-                    padding: const EdgeInsets.all(16),
+                : Column(
                     children: [
-                      for (final item in _library) _card(item),
-                      const SizedBox(height: 8),
-                      Center(
-                        child: Text(
-                          'Giữ một truyện để xoá khỏi thư viện',
-                          style: Theme.of(context).textTheme.bodySmall,
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
+                        child: TextField(
+                          controller: _searchCtrl,
+                          onChanged: (v) => setState(() => _query = v),
+                          decoration: InputDecoration(
+                            isDense: true,
+                            prefixIcon: const Icon(Icons.search, size: 20),
+                            prefixIconConstraints: const BoxConstraints(
+                              minWidth: 36,
+                              minHeight: 36,
+                            ),
+                            hintText: 'Tìm truyện trong thư viện',
+                            suffixIcon: _query.isEmpty
+                                ? null
+                                : IconButton(
+                                    icon: const Icon(Icons.close, size: 18),
+                                    tooltip: 'Xóa tìm kiếm',
+                                    onPressed: () {
+                                      _searchCtrl.clear();
+                                      setState(() => _query = '');
+                                    },
+                                  ),
+                          ),
                         ),
+                      ),
+                      Expanded(
+                        child: items.isEmpty
+                            ? Center(
+                                child: Text(
+                                  'Không có truyện khớp "${_query.trim()}"',
+                                ),
+                              )
+                            : ListView(
+                                padding: const EdgeInsets.all(16),
+                                children: [
+                                  for (final item in items) _card(item),
+                                  const SizedBox(height: 8),
+                                  Center(
+                                    child: Text(
+                                      'Giữ một truyện để xoá khỏi thư viện',
+                                      style:
+                                          Theme.of(context).textTheme.bodySmall,
+                                    ),
+                                  ),
+                                ],
+                              ),
                       ),
                     ],
                   ),

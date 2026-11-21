@@ -130,6 +130,7 @@ class FakeJustAudio extends JustAudioPlatform {
 
 class FakeAppDb extends AppDb {
   final settings = <String, String>{};
+  final cached = <String, ChapterContent>{};
 
   @override
   Future<String?> getSetting(String key) async => settings[key];
@@ -138,6 +139,17 @@ class FakeAppDb extends AppDb {
   Future<void> setSetting(String key, String value) async {
     settings[key] = value;
   }
+
+  @override
+  Future<ChapterContent?> getCachedChapter(String url) async => cached[url];
+
+  @override
+  Future<void> cacheChapter(ChapterContent c) async {
+    cached[c.url] = c;
+  }
+
+  @override
+  Future<void> touchLibrary(String storyUrl, String chapterUrl) async {}
 }
 
 Future<void> waitUntil(bool Function() cond) async {
@@ -151,6 +163,7 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
   late FakeJustAudio ja;
+  late FakeAppDb db;
   late List<String> synthTexts;
   late TtsPlayer player;
 
@@ -174,7 +187,7 @@ void main() {
       const MethodChannel('plugins.flutter.io/path_provider'),
       (call) async => Directory.systemTemp.path,
     );
-    final db = FakeAppDb();
+    db = FakeAppDb();
     final fetcher = WebFetcher();
     final adapters = AdapterRepository([]);
     player = TtsPlayer(
@@ -253,6 +266,120 @@ void main() {
   test('resume khi chưa phát gì thì không làm gì', () async {
     await player.resume();
     expect(synthTexts, isEmpty);
+    expect(player.playing, isFalse);
+  });
+
+  test('skipNext khi đang phát phải chuyển sang chunk kế rồi đọc tiếp', () async {
+    await player.start(chapter());
+    await waitUntil(() => ja.players.any((p) => p.calls.contains('play')));
+    expect(player.currentChunk!.text, s1);
+
+    await player.skipNext();
+    // Đợi loop thật sự phát chunk đích (đặt _chunkDone mới) rồi mới kết thúc
+    // nó — bắn completed sớm hơn thì event rơi vào lúc chưa có chunk đang nghe.
+    await waitUntil(() => ja.playCount() >= 2);
+    expect(player.currentChunk!.text, s2);
+    expect(player.playing, isTrue);
+
+    // Hết chunk tua tới thì đọc tiếp chunk sau của chương.
+    ja.playing.complete();
+    await waitUntil(() => player.currentChunk!.text == 'Đoạn hai.');
+    expect(player.playing, isTrue);
+  });
+
+  test('skipPrev khi đang phát đọc lại chunk trước', () async {
+    await player.start(chapter(), paraIndex: 1);
+    await waitUntil(() => ja.players.any((p) => p.calls.contains('play')));
+    expect(player.currentChunk!.text, 'Đoạn hai.');
+
+    await player.skipPrev();
+    await waitUntil(() => player.currentChunk!.text == s2);
+    expect(player.playing, isTrue);
+  });
+
+  test('skipPrev ở chunk đầu thì đọc lại từ đầu chương', () async {
+    await player.start(chapter());
+    await waitUntil(() => ja.players.any((p) => p.calls.contains('play')));
+
+    await player.skipPrev();
+    await waitUntil(() => player.currentChunk!.text == s1);
+    expect(player.playing, isTrue);
+  });
+
+  test('tua khi đang dừng chỉ dời vị trí: resume đọc từ đoạn đã tua', () async {
+    await player.start(chapter(), paraIndex: 1);
+    await waitUntil(() => ja.players.any((p) => p.calls.contains('play')));
+
+    await player.pause();
+    await player.skipPrev();
+    expect(player.currentChunk!.text, s2);
+    expect(player.playing, isFalse);
+
+    final synthBefore = synthTexts.length;
+    await player.resume();
+    await waitUntil(() => synthTexts.length > synthBefore);
+    // Resume theo semantics đoạn văn: synth chunk ĐẦU đoạn 0.
+    expect(synthTexts[synthBefore], s1);
+    expect(player.playing, isTrue);
+  });
+
+  test('skipNext ở chunk cuối khi đang phát thì sang chương kế', () async {
+    final c2 = ChapterContent(
+      url: 'https://x.com/chuong-2',
+      title: 'Chương 2',
+      paragraphs: ['Đoạn hai.'],
+    );
+    final c1 = ChapterContent(
+      url: 'https://x.com/chuong-1',
+      title: 'Chương 1',
+      paragraphs: ['$s1 $s2', 'Đoạn hai.'],
+      nextUrl: c2.url,
+    );
+    db.cached[c2.url] = c2;
+    await player.start(c1);
+    await waitUntil(() => ja.players.any((p) => p.calls.contains('play')));
+    expect(player.currentChunk!.text, s1);
+
+    // Tua lần lượt qua 3 chunk của chương 1...
+    await player.skipNext();
+    await waitUntil(() => ja.playCount() >= 2);
+    await player.skipNext();
+    await waitUntil(() => ja.playCount() >= 3);
+    expect(player.currentChunk!.text, 'Đoạn hai.');
+
+    // ...bấm lần nữa ở chunk cuối là sang chương 2, đọc tiếp không dừng.
+    await player.skipNext();
+    await waitUntil(() => player.chapter?.url == c2.url);
+    await waitUntil(() => ja.playCount() >= 4);
+    expect(player.playing, isTrue);
+    expect(player.currentChunk!.text, 'Đoạn hai.');
+  });
+
+  test('skipNext ở chunk cuối khi đang dừng chỉ dời sang chương kế, không tự phát', () async {
+    final c2 = ChapterContent(
+      url: 'https://x.com/chuong-2',
+      title: 'Chương 2',
+      paragraphs: ['Đoạn hai.'],
+    );
+    final c1 = ChapterContent(
+      url: 'https://x.com/chuong-1',
+      title: 'Chương 1',
+      paragraphs: ['$s1 $s2', 'Đoạn hai.'],
+      nextUrl: c2.url,
+    );
+    db.cached[c2.url] = c2;
+    await player.start(c1);
+    await waitUntil(() => ja.players.any((p) => p.calls.contains('play')));
+    await player.pause();
+
+    // Đang dừng: tua dời vị trí, chunk cuối thì sang chương 2 nhưng vẫn dừng.
+    await player.skipNext();
+    await player.skipNext();
+    expect(player.currentChunk!.text, 'Đoạn hai.');
+    expect(player.playing, isFalse);
+    await player.skipNext();
+    expect(player.chapter?.url, c2.url);
+    expect(player.currentChunk!.text, 'Đoạn hai.');
     expect(player.playing, isFalse);
   });
 }

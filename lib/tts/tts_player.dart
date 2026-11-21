@@ -371,8 +371,12 @@ class TtsPlayer extends ChangeNotifier {
       if (adapter == null) return null;
       c = await fetcher.fetchChapter(url, adapter);
       await db.cacheChapter(c);
-      await db.setSetting('lastUrl', url);
     }
+    // Nghe TTS chạy sang chương kế (hết chương tự chuyển hoặc bấm chương
+    // trước/sau trên thông báo) cũng là đang đọc: lưu vị trí đọc tiếp và
+    // cập nhật dòng "đang đọc" trong thư viện, kể cả khi chương lấy từ cache.
+    await db.setSetting('lastUrl', url);
+    await db.touchLibrary(storyUrlFromChapter(url), url);
     unawaited(prefetcher.prefetch(c.nextUrl));
     return c;
   }
@@ -407,6 +411,56 @@ class TtsPlayer extends ChangeNotifier {
     await WakelockPlus.disable();
     cancelSleepTimer();
     _notify();
+  }
+
+  /// Tua lùi một chunk (khoảng 1–3 câu): nghe lại câu vừa rồi mà không phải
+  /// dừng rồi bấm phát lại cả đoạn. Ở chunk đầu thì đọc lại từ đầu.
+  Future<void> skipPrev() async {
+    if (chapter == null || chunks.isEmpty) return;
+    await _skipTo(_index <= 0 ? 0 : _index - 1);
+  }
+
+  /// Tua tới một chunk kế để bỏ qua đoạn không muốn nghe. Ở chunk cuối thì
+  /// sang chương kế như khi nghe hết chương: đang phát thì phát tiếp chương
+  /// mới, đang dừng thì chỉ dời vị trí (không tự bật tiếng). Không có chương
+  /// kế thì nghe lại đoạn cuối như cũ.
+  Future<void> skipNext() async {
+    if (chapter == null || chunks.isEmpty) return;
+    if (_index + 1 >= chunks.length) {
+      final url = chapter?.nextUrl;
+      if (url != null) {
+        await _jumpTo(url);
+        return;
+      }
+    }
+    await _skipTo((_index + 1).clamp(0, chunks.length - 1));
+  }
+
+  /// Tua tới chunk [i]. Đang phát thì cắt chunk hiện tại và phát lại từ chunk
+  /// đích (cùng máy start()); đang dừng thì chỉ dời vị trí nghe — lần resume kế
+  /// qua nút media/headset đọc từ đoạn đó.
+  Future<void> _skipTo(int i) async {
+    if (!playing) {
+      _index = i;
+      _notify();
+      return;
+    }
+    _gen++;
+    final gen = _gen;
+    _signalResume();
+    _chunkDone?.complete();
+    _chunkDone = null;
+    // Chỉ pause, không stop: load file mới ở dưới tự thay nguồn đang phát,
+    // còn stop() bỏ platform player cũ rồi phải dựng lại (chậm hơn, và thêm
+    // một nguồn sự kiện phải nối lại).
+    await _audio.pause();
+    await _tts.stop();
+    _index = i;
+    lastError = null;
+    playing = true;
+    if (keepScreenOn) await WakelockPlus.enable();
+    _notify();
+    unawaited(_loop(gen));
   }
 
   Future<void> nextChapter() async {

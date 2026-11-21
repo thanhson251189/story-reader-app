@@ -149,3 +149,33 @@ class ChallengeException implements Exception {
   @override
   String toString() => 'Trang đang chặn bot, cần mở WebView để vượt kiểm tra';
 }
+
+/// Cấu trúc địa chỉ chương sách nhập từ file: `book:<mã sách>:<số chương>`.
+/// Một nơi duy nhất cắt chuỗi để mọi màn hình hiểu địa chỉ sách giống nhau.
+class BookUrl {
+  /// Phần định danh truyện `book:<mã>` (bỏ số chương).
+  static String storyOf(String url) {
+    final parts = url.split(':');
+    return parts.length >= 2 ? '${parts[0]}:${parts[1]}' : url;
+  }
+
+  /// Số thứ tự chương (bắt đầu từ 0) hoặc null nếu địa chỉ không có số.
+  static int? chapterOf(String url) {
+    if (!url.startsWith('book:')) return null;
+    final parts = url.split(':');
+    return parts.length >= 3 ? int.tryParse(parts[2]) : null;
+  }
+}
+
+/// Suy ra URL truyện từ URL chương: với sách trong máy là phần định danh
+/// `book:<mã>`; với trang web là URL chương bỏ đoạn cuối. Trang đơn như
+/// wikisource không suy được kiểu này (nơi mở đã biết thì truyền thẳng).
+String storyUrlFromChapter(String url) {
+  if (url.startsWith('book:')) return BookUrl.storyOf(url);
+  final uri = Uri.parse(url).removeFragment();
+  // Bỏ segment rỗng do dấu '/' cuối để không cắt nhầm vào tên chương.
+  final segs = uri.pathSegments.where((s) => s.isNotEmpty).toList();
+  if (segs.isNotEmpty) segs.removeLast();
+  final slash = url.endsWith('/') ? '/' : '';
+  return uri.replace(path: '/${segs.join('/')}$slash').toString();
+}

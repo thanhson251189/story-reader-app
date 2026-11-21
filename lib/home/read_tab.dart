@@ -6,6 +6,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:file_picker/file_picker.dart';
 
 import '../core/errors.dart';
+import '../core/models.dart';
 import '../core/providers.dart';
 import '../local/book_importer.dart';
 import '../reader/reader_screen.dart';
@@ -111,13 +112,12 @@ class _ReadTabState extends ConsumerState<ReadTab> {
   String _lastLabel() {
     final last = _lastUrl!;
     if (!last.startsWith('book:')) return last;
-    final parts = last.split(':');
-    final story = parts.length >= 2 ? '${parts[0]}:${parts[1]}' : last;
+    final story = BookUrl.storyOf(last);
     final title = _library
         .where((e) => e['story_url'] == story)
         .map((e) => e['title'] as String?)
         .firstOrNull;
-    final n = int.tryParse(parts.last);
+    final n = BookUrl.chapterOf(last);
     final chapter = n == null ? '' : ' — Chương ${n + 1}';
     return title == null ? 'Sách trong máy$chapter' : '$title$chapter';
   }

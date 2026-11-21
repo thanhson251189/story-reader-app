@@ -4,6 +4,8 @@
 *.pyc
 *.swp
 .DS_Store
+# Trạng thái công cụ quét bảo mật Mimosa, không đưa vào git
+.mimosa/
 .atom/
 .build/
 .buildlog/

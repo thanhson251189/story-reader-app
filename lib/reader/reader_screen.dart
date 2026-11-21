@@ -19,6 +19,13 @@ class ReaderScreen extends ConsumerStatefulWidget {
   final String? storyUrl;
   const ReaderScreen({super.key, required this.url, this.storyUrl});
 
+  /// Đoạn văn có chứa từ khoá (không phân biệt hoa thường, dấu tiếng Việt).
+  static bool paragraphMatches(String text, String query) {
+    final q = query.trim();
+    if (q.isEmpty) return false;
+    return TocScreen.fold(text).contains(TocScreen.fold(q));
+  }
+
   @override
   ConsumerState<ReaderScreen> createState() => _ReaderScreenState();
 }
@@ -42,6 +49,11 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> with RouteAware {
   int _lastSpokenPara = -1;
   String? _shownError;
   String? _progressLabel;
+  // Tìm trong chương: từ khoá giữ nguyên giữa các lần mở sheet; đoạn khớp khi
+  // bấm kết quả được nháy sáng 2.5s để mắt bám theo chỗ cuộn tới.
+  final TextEditingController _searchCtrl = TextEditingController();
+  int _flashPara = -1;
+  Timer? _flashTimer;
   late final TtsPlayer _player;
 
   static const _themes = {
@@ -144,6 +156,7 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> with RouteAware {
       setState(() {
         _content = pc;
         _paraKeys = List.generate(pc.paragraphs.length, (_) => GlobalKey());
+        _flashPara = -1;
         _lastSpokenPara = -1;
       });
       unawaited(_updateProgress(pc.url));
@@ -153,8 +166,11 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> with RouteAware {
       return;
     }
     setState(() {});
+    // Theo đoạn văn cả khi đã dừng: tua câu lúc pause phải cuộn tới đúng chỗ
+    // để bấm phát trong app cũng đọc từ đó. Chỉ theo khi cùng chương — không
+    // bao giờ kéo reader lùi về chương TTS khác.
     final idx = _player.currentParaIndex;
-    if (_player.playing &&
+    if (_player.chapter?.url == _content?.url &&
         idx >= 0 &&
         idx != _lastSpokenPara &&
         idx < _paraKeys.length) {
@@ -240,6 +256,7 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> with RouteAware {
       setState(() {
         _content = cc;
         _paraKeys = List.generate(cc.paragraphs.length, (_) => GlobalKey());
+        _flashPara = -1;
         _loading = false;
       });
       WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -295,14 +312,9 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> with RouteAware {
       final info = await ref
           .read(webFetcherProvider)
           .fetchStory(storyUrl, adapter);
-      final db = ref.read(appDbProvider);
-      await db.upsertLibrary(
-        storyUrl: storyUrl,
-        title: info.title,
-        coverUrl: info.coverUrl,
-        lastChapterUrl: c.url,
-      );
-      await db.saveToc(storyUrl, info.chapters);
+      await ref
+          .read(appDbProvider)
+          .saveStoryInfo(storyUrl, info, lastChapterUrl: c.url);
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Đã thêm "${info.title}" vào thư viện')),
@@ -350,6 +362,7 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> with RouteAware {
     setState(() {
       _content = cleaned;
       _paraKeys = List.generate(cleaned.paragraphs.length, (_) => GlobalKey());
+      _flashPara = -1;
       _error = null;
       _loading = false;
     });
@@ -367,6 +380,14 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> with RouteAware {
     }
     return 0;
   }
+
+  // Nút tua câu chỉ bấm được khi có phiên nghe (đang phát hoặc nghe dở) và
+  // không đang chuyển chương.
+  bool get _skipEnabled =>
+      !_loading &&
+      !_player.loading &&
+      _player.chapter != null &&
+      _player.chunks.isNotEmpty;
 
   void _togglePlay() {
     final c = _content;
@@ -425,6 +446,117 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> with RouteAware {
         ),
       ),
     );
+  }
+
+  // Tìm từ khoá trong chương đang đọc: sheet liệt kê các đoạn khớp, bấm thì
+  // cuộn tới và nháy sáng đoạn đó. Tìm không dấu (dùng fold chung với mục lục).
+  void _openSearch() {
+    final c = _content;
+    if (c == null) return;
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      builder: (_) => StatefulBuilder(
+        builder: (ctx, setSheet) {
+          final q = _searchCtrl.text;
+          final hits = [
+            for (var i = 0; i < c.paragraphs.length; i++)
+              if (ReaderScreen.paragraphMatches(c.paragraphs[i], q)) i,
+          ];
+          return ConstrainedBox(
+            constraints: BoxConstraints(
+              maxHeight: MediaQuery.of(ctx).size.height * 0.8,
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 16, 16, 4),
+                  child: TextField(
+                    controller: _searchCtrl,
+                    autofocus: true,
+                    onChanged: (_) => setSheet(() {}),
+                    decoration: InputDecoration(
+                      isDense: true,
+                      prefixIcon: const Icon(Icons.search, size: 20),
+                      hintText: 'Tìm trong chương',
+                      suffixIcon: q.isEmpty
+                          ? null
+                          : IconButton(
+                              icon: const Icon(Icons.close, size: 18),
+                              tooltip: 'Xoá từ khoá',
+                              onPressed: () {
+                                _searchCtrl.clear();
+                                setSheet(() {});
+                              },
+                            ),
+                    ),
+                  ),
+                ),
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                  child: Align(
+                    alignment: Alignment.centerLeft,
+                    child: Text(
+                      q.trim().isEmpty
+                          ? 'Nhập từ khoá để tìm trong chương'
+                          : '${hits.length} đoạn khớp',
+                      style: Theme.of(ctx).textTheme.bodySmall,
+                    ),
+                  ),
+                ),
+                Flexible(
+                  child: ListView(
+                    shrinkWrap: true,
+                    padding: EdgeInsets.only(
+                      bottom: 12 + MediaQuery.of(ctx).padding.bottom,
+                    ),
+                    children: [
+                      if (q.trim().isNotEmpty && hits.isEmpty)
+                        Padding(
+                          padding: const EdgeInsets.all(16),
+                          child: Text('Không tìm thấy "$q" trong chương'),
+                        ),
+                      for (final i in hits)
+                        ListTile(
+                          dense: true,
+                          title: Text(
+                            c.paragraphs[i],
+                            maxLines: 3,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                          subtitle: Text('Đoạn ${i + 1}'),
+                          onTap: () {
+                            Navigator.pop(ctx);
+                            _gotoParagraph(i);
+                          },
+                        ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  void _gotoParagraph(int i) {
+    if (!mounted) return;
+    setState(() => _flashPara = i);
+    _flashTimer?.cancel();
+    _flashTimer = Timer(const Duration(milliseconds: 2500), () {
+      if (mounted) setState(() => _flashPara = -1);
+    });
+    final ctx = i < _paraKeys.length ? _paraKeys[i].currentContext : null;
+    if (ctx != null) {
+      Scrollable.ensureVisible(
+        ctx,
+        duration: const Duration(milliseconds: 300),
+        alignment: 0.0,
+      );
+    }
   }
 
   String _voiceTitle(Map<String, String> v) {
@@ -604,6 +736,7 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> with RouteAware {
     var previewing = false;
     var cacheLoaded = false;
     var cacheCount = 0;
+    var pinnedCount = 0;
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
@@ -614,6 +747,10 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> with RouteAware {
             cacheLoaded = true;
             db.webCacheCount().then((n) {
               cacheCount = n;
+              if (ctx.mounted) setSheet(() {});
+            });
+            db.pinnedWebCount().then((n) {
+              pinnedCount = n;
               if (ctx.mounted) setSheet(() {});
             });
           }
@@ -777,22 +914,28 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> with RouteAware {
                   ListTile(
                     contentPadding: EdgeInsets.zero,
                     leading: const Icon(Icons.cleaning_services_outlined),
-                    title: Text('Dữ liệu tải sẵn: $cacheCount chương'),
+                    title: Text(
+                      'Dữ liệu tải sẵn: $cacheCount chương'
+                      '${pinnedCount > 0 ? ' ($pinnedCount đã ghim)' : ''}',
+                    ),
                     subtitle: const Text(
                       'Bản lưu chương web để đọc lại nhanh, không cần mạng. '
-                      'Giữ tối đa 500 chương mới nhất; sách trong máy không bị xoá.',
+                      'Giữ tối đa 500 chương mới nhất; chương đã tải trước và '
+                      'sách trong máy không bị xoá.',
                     ),
                     trailing: TextButton(
-                      onPressed: cacheCount == 0
+                      onPressed: cacheCount - pinnedCount <= 0
                           ? null
                           : () async {
+                              final removable = cacheCount - pinnedCount;
                               final ok = await showDialog<bool>(
                                 context: context,
                                 builder: (dlg) => AlertDialog(
                                   title: const Text('Xoá dữ liệu tải sẵn?'),
                                   content: Text(
-                                    'Xoá $cacheCount chương web đã lưu. '
-                                    'Sách nhập từ file không bị đụng tới.',
+                                    'Xoá $removable chương web đã lưu. Chương '
+                                    'đã tải trước (ghim) và sách nhập từ file '
+                                    'không bị đụng tới.',
                                   ),
                                   actions: [
                                     TextButton(
@@ -809,12 +952,15 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> with RouteAware {
                               );
                               if (ok != true) return;
                               await db.clearWebCache();
-                              cacheCount = 0;
+                              cacheCount = pinnedCount;
                               if (ctx.mounted) setSheet(() {});
                               if (mounted) {
                                 ScaffoldMessenger.of(context).showSnackBar(
-                                  const SnackBar(
-                                    content: Text('Đã xoá dữ liệu tải sẵn'),
+                                  SnackBar(
+                                    content: Text(
+                                      'Đã xoá dữ liệu tải sẵn'
+                                      '${pinnedCount > 0 ? ', giữ $pinnedCount chương đã ghim' : ''}',
+                                    ),
                                   ),
                                 );
                               }
@@ -866,6 +1012,8 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> with RouteAware {
     _volChannel.invokeMethod('setEnabled', false);
     _player.removeListener(_onPlayer);
     _saveTimer?.cancel();
+    _flashTimer?.cancel();
+    _searchCtrl.dispose();
     final c = _content;
     if (c != null && _scroll.hasClients) {
       ref.read(appDbProvider).savePosition(c.url, _scroll.offset);
@@ -903,6 +1051,12 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> with RouteAware {
           overflow: TextOverflow.ellipsis,
         ),
         actions: [
+          if (c != null)
+            IconButton(
+              icon: const Icon(Icons.search),
+              onPressed: _loading ? null : _openSearch,
+              tooltip: 'Tìm trong chương',
+            ),
           if (c != null)
             IconButton(
               icon: const Icon(Icons.list),
@@ -961,6 +1115,13 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> with RouteAware {
                       tooltip: 'Chương trước',
                     ),
                     IconButton(
+                      icon: const Icon(Icons.fast_rewind),
+                      color: fg,
+                      iconSize: 26,
+                      onPressed: _skipEnabled ? _player.skipPrev : null,
+                      tooltip: 'Câu trước',
+                    ),
+                    IconButton(
                       icon: Icon(
                         isPlayingThis ? Icons.pause_circle : Icons.play_circle,
                       ),
@@ -968,6 +1129,13 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> with RouteAware {
                       iconSize: 40,
                       onPressed: _loading ? null : _togglePlay,
                       tooltip: isPlayingThis ? 'Tạm dừng đọc' : 'Nghe đọc',
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.fast_forward),
+                      color: fg,
+                      iconSize: 26,
+                      onPressed: _skipEnabled ? _player.skipNext : null,
+                      tooltip: 'Câu sau',
                     ),
                     Expanded(
                       child: Column(
@@ -1109,7 +1277,14 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> with RouteAware {
   ) {
     final key = i < _paraKeys.length ? _paraKeys[i] : null;
     if (!active || chunkText.isEmpty) {
-      return Text(p, key: key, style: style);
+      return Text(
+        p,
+        key: key,
+        // Nháy sáng đoạn vừa nhảy tới từ kết quả tìm kiếm (2.5s rồi tự tắt).
+        style: _flashPara == i
+            ? style.copyWith(backgroundColor: const Color(0x66FFB74D))
+            : style,
+      );
     }
     final sentences = p.split(TtsPlayer.sentenceSplit);
     return Text.rich(
