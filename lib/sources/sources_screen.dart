@@ -286,8 +286,9 @@ class _SourcesScreenState extends ConsumerState<SourcesScreen> {
     } else {
       label = 'Đã cài v${inst.version}';
     }
-    final loginUrl = inst?.loginUrl;
-    final menu = inst == null
+    final adapter = inst;
+    final loginUrl = adapter?.loginUrl;
+    final menu = adapter == null
         ? null
         : PopupMenuButton<String>(
             enabled: _busyId == null && !_updatingAll,
@@ -295,15 +296,11 @@ class _SourcesScreenState extends ConsumerState<SourcesScreen> {
             onSelected: (v) {
               if (v == 'rename') {
                 _rename(e);
-              } else if (v == 'login' && loginUrl != null) {
-                Navigator.push(
+              } else if (v == 'login') {
+                openSourceLogin(
                   context,
-                  MaterialPageRoute(
-                    builder: (_) => SourceLoginScreen(
-                      name: _names[e.domain] ?? e.name,
-                      url: loginUrl,
-                    ),
-                  ),
+                  adapter,
+                  _names[e.domain] ?? e.name,
                 );
               } else if (v == 'delete') {
                 _confirmDelete(e);

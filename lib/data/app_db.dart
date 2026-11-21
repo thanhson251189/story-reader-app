@@ -365,19 +365,25 @@ class AppDb {
 
   /// Chương trước/sau của một URL chương suy từ mục lục đã lưu. Dùng làm dự
   /// phòng cho nguồn không có nút prev/next trên trang chương (trang có nút
-  /// thì link trên trang luôn thắng). Trả về (prevUrl, nextUrl), null nếu không
-  /// tìm thấy hoặc đã là chương đầu/cuối.
+  /// thì link trên trang luôn thắng). Khớp chương theo URL đã chuẩn hóa để
+  /// không lệch một ký tự (slash cuối, fragment) mà âm thầm vô hiệu.
   Future<(String?, String?)> chapterNeighbors(String chapterUrl) async {
     final db = await database;
+    final want = normalizeChapterUrl(chapterUrl);
     final rows = await db.query(
       'toc',
-      where: 'chapter_url = ?',
-      whereArgs: [chapterUrl],
-      limit: 1,
+      columns: ['story_url', 'chapter_url', 'idx'],
     );
-    if (rows.isEmpty) return (null, null);
-    final storyUrl = rows.first['story_url'] as String;
-    final idx = rows.first['idx'] as int;
+    Map<String, dynamic>? hit;
+    for (final r in rows) {
+      if (normalizeChapterUrl(r['chapter_url'] as String) == want) {
+        hit = r;
+        break;
+      }
+    }
+    if (hit == null) return (null, null);
+    final storyUrl = hit['story_url'] as String;
+    final idx = hit['idx'] as int;
     Future<String?> at(int i) async {
       final r = await db.query(
         'toc',
@@ -389,6 +395,28 @@ class AppDb {
     }
 
     return (await at(idx - 1), await at(idx + 1));
+  }
+
+  /// Bổ sung chương trước/sau thiếu cho nội dung chương, suy từ mục lục đã
+  /// lưu. Dùng chung cho MỌI đường tải (màn đọc, nghe đọc, tải trước): nguồn
+  /// không có nút prev/next trên trang thì chỉ đường này biết chương kế là
+  /// gì — thiếu ở đường nào thì tính năng "nghe tự sang chương kế" chết ở
+  /// đường đó. Chương đã đủ thông tin trả nguyên vẹn (link trên trang thắng).
+  Future<ChapterContent> fillNav(ChapterContent c) async {
+    if (c.nextUrl != null && c.prevUrl != null) return c;
+    try {
+      final (prev, next) = await chapterNeighbors(c.url);
+      if (prev == null && next == null) return c;
+      return ChapterContent(
+        url: c.url,
+        title: c.title,
+        paragraphs: c.paragraphs,
+        nextUrl: c.nextUrl ?? next,
+        prevUrl: c.prevUrl ?? prev,
+      );
+    } catch (_) {
+      return c;
+    }
   }
 
   /// Ghi kết quả nạp một truyện: mục lục + (tuỳ chọn) đưa vào thư viện với

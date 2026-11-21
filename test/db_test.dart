@@ -102,4 +102,46 @@ void main() {
         (null, null));
     await (await db.database).close();
   });
+
+  test('chapterNeighbors khớp URL chuẩn hóa, fillNav bù chương kế', () async {
+    final db = AppDb();
+    await db.saveToc('https://s.com/truyen', [
+      ChapterRef(title: 'Chương 1', url: 'https://s.com/truyen/c-1'),
+      // Mục lục lưu URL có slash cuối — lệch với form màn đọc nhận được.
+      ChapterRef(title: 'Chương 2', url: 'https://s.com/truyen/c-2/'),
+      ChapterRef(title: 'Chương 3', url: 'https://s.com/truyen/c-3'),
+    ]);
+
+    // Màn đọc nhận URL KHÔNG slash cuối: vẫn phải tìm thấy nhờ chuẩn hóa.
+    final (prev, next) = await db.chapterNeighbors('https://s.com/truyen/c-2');
+    expect(prev, 'https://s.com/truyen/c-1');
+    expect(next, 'https://s.com/truyen/c-3');
+
+    // Chương tải về thiếu prev/next (nguồn không có nút chuyển chương):
+    // fillNav bù từ mục lục, giữ nguyên các trường khác.
+    final filled = await db.fillNav(
+      ChapterContent(
+        url: 'https://s.com/truyen/c-2/',
+        title: 'Chương 2',
+        paragraphs: ['Nội dung'],
+      ),
+    );
+    expect(filled.prevUrl, 'https://s.com/truyen/c-1');
+    expect(filled.nextUrl, 'https://s.com/truyen/c-3');
+    expect(filled.title, 'Chương 2');
+    expect(filled.paragraphs, ['Nội dung']);
+
+    // Chương đã có link trên trang: link trên trang thắng, chỉ bù phần thiếu.
+    final intact = await db.fillNav(
+      ChapterContent(
+        url: 'https://s.com/truyen/c-2',
+        title: 'Chương 2',
+        paragraphs: ['Nội dung'],
+        nextUrl: 'https://s.com/truyen/c-9',
+      ),
+    );
+    expect(intact.nextUrl, 'https://s.com/truyen/c-9');
+    expect(intact.prevUrl, 'https://s.com/truyen/c-1');
+    await (await db.database).close();
+  });
 }

@@ -396,15 +396,17 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
                         children: [
                           if (a.loginUrl != null)
                             TextButton.icon(
-                              onPressed: () => Navigator.push(
-                                context,
-                                MaterialPageRoute(
-                                  builder: (_) => SourceLoginScreen(
-                                    name: a.domain,
-                                    url: a.loginUrl!,
-                                  ),
-                                ),
-                              ),
+                              onPressed: () async {
+                                final names = await loadAdapterNames(
+                                  ref.read(appDbProvider),
+                                );
+                                if (!mounted) return;
+                                await openSourceLogin(
+                                  context,
+                                  a,
+                                  names[a.domain] ?? a.domain,
+                                );
+                              },
                               icon: const Icon(Icons.login),
                               label: const Text('Đăng nhập'),
                             ),

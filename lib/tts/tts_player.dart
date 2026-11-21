@@ -433,7 +433,15 @@ class TtsPlayer extends ChangeNotifier {
       final adapter = adapters.forUrl(url);
       if (adapter == null) return null;
       c = await fetcher.fetchChapter(url, adapter);
+      // Nguồn không có nút prev/next trên trang: bổ sung chương kế từ mục
+      // lục TRƯỚC khi cache — thiếu ở đây thì nghe hết chương không biết
+      // sang đâu và tự tắt im lặng.
+      c = await db.fillNav(c);
       await db.cacheChapter(c);
+    } else {
+      // Cache do bộ tải trước ghi có thể chưa kèm prev/next: bù trên bản
+      // ghi nhớ (không ghi lại để không làm mới fetched_at).
+      c = await db.fillNav(c);
     }
     // Nghe TTS chạy sang chương kế (hết chương tự chuyển hoặc bấm chương
     // trước/sau trên thông báo) cũng là đang đọc: lưu vị trí đọc tiếp và

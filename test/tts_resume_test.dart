@@ -132,6 +132,9 @@ class FakeAppDb extends AppDb {
   final settings = <String, String>{};
   final cached = <String, ChapterContent>{};
 
+  /// Mục lục giả lập cho chapterNeighbors (fillNav thật dùng nó).
+  final toc = <String, List<ChapterRef>>{};
+
   /// URL trả chậm khi đọc cache — dùng để chen hành động của user vào giữa
   /// lúc TTS đang tải chương kế.
   final slowUrls = <String>{};
@@ -159,6 +162,21 @@ class FakeAppDb extends AppDb {
 
   @override
   Future<void> touchLibrary(String storyUrl, String chapterUrl) async {}
+
+  @override
+  Future<(String?, String?)> chapterNeighbors(String chapterUrl) async {
+    for (final chapters in toc.values) {
+      for (var i = 0; i < chapters.length; i++) {
+        if (chapters[i].url == chapterUrl) {
+          return (
+            i > 0 ? chapters[i - 1].url : null,
+            i + 1 < chapters.length ? chapters[i + 1].url : null,
+          );
+        }
+      }
+    }
+    return (null, null);
+  }
 }
 
 Future<void> waitUntil(bool Function() cond, {int maxMs = 2000}) async {
@@ -228,6 +246,8 @@ void main() {
     title: 'Chương 1',
     paragraphs: ['$s1 $s2', 'Đoạn hai.'],
   );
+
+  String chapterUrl(int i) => 'https://x.com/chuong-$i';
 
   test('pause giữa đoạn văn rồi resume phải đọc lại từ đầu đoạn đó', () async {
     final c = chapter();
@@ -468,5 +488,43 @@ void main() {
     await waitUntil(() => player.playing == false, maxMs: 4000);
     expect(player.lastError, contains('chương kế'));
     expect(player.playing, isFalse);
+  });
+
+  test('nghe tự sang chương kế trên nguồn không có nút prev/next', () async {
+    // Mô phỏng dammyy/docln: chương fetch về không có nextUrl, nav suy từ
+    // mục lục. Bộ tải trước đã cache chương 2, 3 KHÔNG kèm prev/next.
+    db.toc['https://x.com/truyen'] = [
+      for (var i = 1; i <= 3; i++)
+        ChapterRef(title: 'Chương $i', url: chapterUrl(i)),
+    ];
+    for (var i = 2; i <= 3; i++) {
+      db.cached[chapterUrl(i)] = ChapterContent(
+        url: chapterUrl(i),
+        title: 'Chương $i',
+        paragraphs: ['Đoạn một.'],
+      );
+    }
+    // Chương 1 mở bằng tay: có nextUrl (đã fill từ mục lục).
+    await player.start(
+      ChapterContent(
+        url: chapterUrl(1),
+        title: 'Chương 1',
+        paragraphs: ['Đoạn một.'],
+        nextUrl: chapterUrl(2),
+      ),
+    );
+    await waitUntil(() => ja.players.any((p) => p.calls.contains('play')));
+
+    // Hết chương 1 → sang chương 2 (cache không nav → fillNav phải bù).
+    ja.playing.complete();
+    await waitUntil(() => player.chapter?.url == chapterUrl(2), maxMs: 6000);
+    await waitUntil(() => ja.playCount() >= 2);
+    // Hết chương 2 → VẪN phải sang chương 3 (đây là chỗ trước đây dừng im lặng).
+    ja.playing.complete();
+    await waitUntil(() => player.chapter?.url == chapterUrl(3), maxMs: 6000);
+    await waitUntil(() => ja.playCount() >= 3);
+    // Hết chương 3 (cuối mục lục) → dừng là đúng.
+    ja.playing.complete();
+    await waitUntil(() => player.playing == false, maxMs: 4000);
   });
 }

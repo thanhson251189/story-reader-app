@@ -185,3 +185,18 @@ String storyUrlFromChapter(String url) {
   final slash = url.endsWith('/') ? '/' : '';
   return uri.replace(path: '/${segs.join('/')}$slash').toString();
 }
+
+/// Chuẩn hóa URL chương để so khớp với mục lục: bỏ fragment, slash cuối,
+/// host chữ thường. Màn đọc nhận URL từ location.href có thể lệch nhẹ với
+/// href trong mục lục — chuẩn hóa trước khi so để không lệch một ký tự mà
+/// âm thầm vô hiệu (vuốt ngang, nghe tự sang chương kế).
+String normalizeChapterUrl(String url) {
+  final u = Uri.tryParse(url.trim());
+  if (u == null || u.host.isEmpty) return url.trim();
+  var path = u.path;
+  while (path.length > 1 && path.endsWith('/')) {
+    path = path.substring(0, path.length - 1);
+  }
+  final q = u.query.isEmpty ? '' : '?${u.query}';
+  return '${u.host.toLowerCase()}$path$q';
+}

@@ -46,6 +46,11 @@ class FakeAppDb extends AppDb {
     cache[c.url] = c;
   }
 
+  // Test này không kiểm tra suy chương trước/sau — trả nguyên vẹn để tránh
+  // đụng database thật.
+  @override
+  Future<ChapterContent> fillNav(ChapterContent c) async => c;
+
   @override
   Future<void> touchLibrary(String storyUrl, String chapterUrl) async {}
 }

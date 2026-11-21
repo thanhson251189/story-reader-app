@@ -9,6 +9,9 @@ class _FakeDb extends AppDb {
   final Map<String, ChapterContent> cache = {};
   final Map<String, String> settings = {};
 
+  /// URL đã đi qua fillNav trước khi cache (theo dõi đường nối trong test).
+  final List<String> filled = [];
+
   @override
   Future<String?> getSetting(String key) async => settings[key];
 
@@ -18,6 +21,12 @@ class _FakeDb extends AppDb {
   @override
   Future<void> cacheChapter(ChapterContent c) async {
     cache[c.url] = c;
+  }
+
+  @override
+  Future<ChapterContent> fillNav(ChapterContent c) async {
+    filled.add(c.url);
+    return c;
   }
 }
 
@@ -74,6 +83,9 @@ void main() {
     await make(db, fetcher).prefetch(url(2));
     expect(fetcher.fetched, [url(2), url(3), url(4)]);
     expect(db.cache.containsKey(url(4)), true);
+    // Mọi chương ghi cache phải đi qua fillNav trước (nghe đọc tự sang chương
+    // kế phụ thuộc nextUrl trong cache).
+    expect(db.filled, [url(2), url(3), url(4)]);
   });
 
   test('bỏ qua chương đã cache, không tải lại', () async {

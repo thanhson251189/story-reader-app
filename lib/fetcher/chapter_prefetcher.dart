@@ -50,7 +50,9 @@ class ChapterPrefetcher {
         }
         final c = await fetcher.fetchChapter(url, adapter);
         if (gen != _gen) return;
-        await db.cacheChapter(c);
+        // Ghi cache kèm chương trước/sau suy từ mục lục: nghe đọc tự sang
+        // chương kế phụ thuộc nextUrl trong cache.
+        await db.cacheChapter(await db.fillNav(c));
         debugPrint('Prefetch xong: ${c.title}');
         fetched++;
         url = c.nextUrl;

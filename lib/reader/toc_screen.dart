@@ -39,18 +39,9 @@ class TocScreen extends ConsumerStatefulWidget {
   }
 
   // So khớp chương đang đọc với mục lục: bỏ qua khác biệt vô hại giữa URL
-  // trang chương (location.href) và href trong mục lục — fragment '#',
-  // dấu '/' cuối, http/https, hoa thường host.
-  static String normUrl(String url) {
-    final u = Uri.tryParse(url.trim());
-    if (u == null || u.host.isEmpty) return url.trim();
-    var path = u.path;
-    while (path.length > 1 && path.endsWith('/')) {
-      path = path.substring(0, path.length - 1);
-    }
-    final q = u.query.isEmpty ? '' : '?${u.query}';
-    return '${u.host.toLowerCase()}$path$q';
-  }
+  // trang chương (location.href) và href trong mục lục. Quy tắc thật nằm ở
+  // normalizeChapterUrl (core/models) để bộ dữ liệu dùng chung cho fillNav.
+  static String normUrl(String url) => normalizeChapterUrl(url);
 
   @override
   ConsumerState<TocScreen> createState() => _TocScreenState();

@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
@@ -255,7 +254,7 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> with RouteAware {
         }
         c = await ref.read(webFetcherProvider).fetchChapter(url, adapter);
       }
-      final cc = await _fillNav(c, url);
+      final cc = await db.fillNav(c);
       await db.cacheChapter(cc);
       await db.setSetting('lastUrl', url);
       await db.touchLibrary(_storyUrlOf(url), url);
@@ -363,43 +362,23 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> with RouteAware {
       return;
     }
     final db = ref.read(appDbProvider);
-    await db.cacheChapter(cleaned);
-    await db.setSetting('lastUrl', cleaned.url);
-      await db.touchLibrary(_storyUrlOf(cleaned.url), cleaned.url);
-      // Mở chương khác qua WebView khi đang nghe cũng dừng nghe như đường
-      // _load — không giữ phiên nghe chương cũ sau khi đã xem chương mới.
-      if (_player.playing && _player.chapter?.url != cleaned.url) {
-        await _player.stop();
-      }
-      if (!mounted) return;
+    final filled = await db.fillNav(cleaned);
+    await db.cacheChapter(filled);
+    await db.setSetting('lastUrl', filled.url);
+    await db.touchLibrary(_storyUrlOf(filled.url), filled.url);
+    // Mở chương khác qua WebView khi đang nghe cũng dừng nghe như đường
+    // _load — không giữ phiên nghe chương cũ sau khi đã xem chương mới.
+    if (_player.playing && _player.chapter?.url != filled.url) {
+      await _player.stop();
+    }
+    if (!mounted) return;
     setState(() {
-      _content = cleaned;
-      _paraKeys = List.generate(cleaned.paragraphs.length, (_) => GlobalKey());
+      _content = filled;
+      _paraKeys = List.generate(filled.paragraphs.length, (_) => GlobalKey());
       _flashPara = -1;
       _error = null;
       _loading = false;
     });
-  }
-
-  // Nguồn không có nút prev/next trên trang chương (dammyy...): suy chương
-  // trước/sau từ mục lục đã lưu để vuốt ngang, nghe tự sang chương kế và tải
-  // nền vẫn hoạt động. Link có sẵn trên trang luôn thắng.
-  Future<ChapterContent> _fillNav(ChapterContent c, String url) async {
-    if (c.nextUrl != null && c.prevUrl != null) return c;
-    try {
-      final (prev, next) = await ref
-          .read(appDbProvider)
-          .chapterNeighbors(url);
-      return ChapterContent(
-        url: c.url,
-        title: c.title,
-        paragraphs: c.paragraphs,
-        nextUrl: c.nextUrl ?? next,
-        prevUrl: c.prevUrl ?? prev,
-      );
-    } catch (_) {
-      return c;
-    }
   }
 
   // Nguồn yêu cầu tài khoản (adapter khai báo loginUrl): hiện nút đăng nhập
@@ -412,23 +391,12 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> with RouteAware {
     return [
       FilledButton.tonal(
         onPressed: () async {
-          // Tên hiển thị theo bản đổi tên trong màn Nguồn nếu có.
-          final names = Map<String, String>.from(
-            jsonDecode(
-                  await ref.read(appDbProvider).getSetting('adapterNames') ??
-                      '{}',
-                )
-                as Map,
-          );
+          final names = await loadAdapterNames(ref.read(appDbProvider));
           if (!mounted) return;
-          Navigator.push(
+          await openSourceLogin(
             context,
-            MaterialPageRoute(
-              builder: (_) => SourceLoginScreen(
-                name: names[adapter.domain] ?? adapter.domain,
-                url: loginUrl,
-              ),
-            ),
+            adapter,
+            names[adapter.domain] ?? adapter.domain,
           );
         },
         child: const Text('Đăng nhập nguồn'),

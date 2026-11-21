@@ -1,7 +1,9 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:story_reader/adapters/adapter_repository.dart';
 import 'package:story_reader/core/models.dart';
+import 'package:story_reader/data/app_db.dart';
 import 'package:story_reader/sources/registry.dart';
+import 'package:story_reader/sources/source_login_screen.dart';
 
 SourceAdapter adapter(String domain, int version) => SourceAdapter(
   domain: domain,
@@ -76,4 +78,25 @@ void main() {
     final plain = SourceAdapter.fromJson({'domain': 'x.com'});
     expect(plain.loginUrl, null);
   });
+
+  test('loadAdapterNames đọc json hợp lệ, hỏng thì trả rỗng thay vì sập', () async {
+    final db = _FakeDb();
+    expect(await loadAdapterNames(db), isEmpty);
+
+    db.settings['adapterNames'] = '{"a.com":"Nguồn A","b.com":"Nguồn B"}';
+    expect(await loadAdapterNames(db), {
+      'a.com': 'Nguồn A',
+      'b.com': 'Nguồn B',
+    });
+
+    db.settings['adapterNames'] = '{json hỏng';
+    expect(await loadAdapterNames(db), isEmpty);
+  });
+}
+
+class _FakeDb extends AppDb {
+  final settings = <String, String>{};
+
+  @override
+  Future<String?> getSetting(String key) async => settings[key];
 }
