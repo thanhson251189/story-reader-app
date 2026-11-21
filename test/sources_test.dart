@@ -57,4 +57,23 @@ void main() {
     expect(left.keys, ['y']);
     expect(saved.keys, ['x', 'y'], reason: 'không mutate map gốc');
   });
+
+  test('loginUrl đọc từ json và withSearch giữ nguyên', () {
+    final a = SourceAdapter.fromJson({
+      'domain': 'dammyy.cc',
+      'selectors': {'content': '.chapter-content'},
+      'searchUrl': 'https://dammyy.cc/tim-kiem?search={query}',
+      'loginUrl': 'https://dammyy.cc/login',
+    });
+    expect(a.loginUrl, 'https://dammyy.cc/login');
+    final seeded = a.withSearch(
+      'https://dammyy.cc/tim-kiem?search={query}',
+      const {'searchList': '.card'},
+    );
+    expect(seeded.loginUrl, 'https://dammyy.cc/login',
+        reason: 'seed search không được mất trang đăng nhập');
+    // Nguồn không khai báo đăng nhập: null, không gây lỗi.
+    final plain = SourceAdapter.fromJson({'domain': 'x.com'});
+    expect(plain.loginUrl, null);
+  });
 }

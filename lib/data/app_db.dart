@@ -363,6 +363,34 @@ class AppDb {
         .toList();
   }
 
+  /// Chương trước/sau của một URL chương suy từ mục lục đã lưu. Dùng làm dự
+  /// phòng cho nguồn không có nút prev/next trên trang chương (trang có nút
+  /// thì link trên trang luôn thắng). Trả về (prevUrl, nextUrl), null nếu không
+  /// tìm thấy hoặc đã là chương đầu/cuối.
+  Future<(String?, String?)> chapterNeighbors(String chapterUrl) async {
+    final db = await database;
+    final rows = await db.query(
+      'toc',
+      where: 'chapter_url = ?',
+      whereArgs: [chapterUrl],
+      limit: 1,
+    );
+    if (rows.isEmpty) return (null, null);
+    final storyUrl = rows.first['story_url'] as String;
+    final idx = rows.first['idx'] as int;
+    Future<String?> at(int i) async {
+      final r = await db.query(
+        'toc',
+        where: 'story_url = ? AND idx = ?',
+        whereArgs: [storyUrl, i],
+        limit: 1,
+      );
+      return r.isEmpty ? null : r.first['chapter_url'] as String;
+    }
+
+    return (await at(idx - 1), await at(idx + 1));
+  }
+
   /// Ghi kết quả nạp một truyện: mục lục + (tuỳ chọn) đưa vào thư viện với
   /// chương đang đọc. Dùng chung cho nút "thêm vào thư viện" ở màn đọc, lần
   /// đầu nạp mục lục và kiểm tra chương mới — một quy tắc lưu duy nhất để

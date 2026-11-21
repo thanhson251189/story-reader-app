@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../core/errors.dart';
 import '../core/providers.dart';
 import 'registry.dart';
+import 'source_login_screen.dart';
 
 class SourcesScreen extends ConsumerStatefulWidget {
   const SourcesScreen({super.key});
@@ -285,15 +286,34 @@ class _SourcesScreenState extends ConsumerState<SourcesScreen> {
     } else {
       label = 'Đã cài v${inst.version}';
     }
+    final loginUrl = inst?.loginUrl;
     final menu = inst == null
         ? null
         : PopupMenuButton<String>(
             enabled: _busyId == null && !_updatingAll,
             tooltip: 'Tùy chọn nguồn',
-            onSelected: (v) => v == 'rename' ? _rename(e) : _confirmDelete(e),
-            itemBuilder: (_) => const [
-              PopupMenuItem(value: 'rename', child: Text('Đổi tên')),
-              PopupMenuItem(value: 'delete', child: Text('Xóa')),
+            onSelected: (v) {
+              if (v == 'rename') {
+                _rename(e);
+              } else if (v == 'login' && loginUrl != null) {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => SourceLoginScreen(
+                      name: _names[e.domain] ?? e.name,
+                      url: loginUrl,
+                    ),
+                  ),
+                );
+              } else if (v == 'delete') {
+                _confirmDelete(e);
+              }
+            },
+            itemBuilder: (_) => [
+              if (loginUrl != null)
+                const PopupMenuItem(value: 'login', child: Text('Đăng nhập')),
+              const PopupMenuItem(value: 'rename', child: Text('Đổi tên')),
+              const PopupMenuItem(value: 'delete', child: Text('Xóa')),
             ],
           );
     return Card(

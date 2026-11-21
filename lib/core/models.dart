@@ -26,6 +26,9 @@ class SourceAdapter {
   final TocApi? tocApi;
   // Mục lục phân trang HTML (site không có JSON API): template chứa {slug} và {page}.
   final String? tocPageUrl;
+  // Trang đăng nhập cho nguồn yêu cầu tài khoản: màn Nguồn mở WebView để user
+  // tự đăng nhập; cookie lưu vào WebView dùng chung nên lần tải nền sau đó tự mang theo.
+  final String? loginUrl;
 
   SourceAdapter({
     required this.domain,
@@ -36,6 +39,7 @@ class SourceAdapter {
     this.searchUrl,
     this.tocApi,
     this.tocPageUrl,
+    this.loginUrl,
   });
 
   factory SourceAdapter.fromJson(Map<String, dynamic> j) => SourceAdapter(
@@ -51,6 +55,7 @@ class SourceAdapter {
         ? null
         : TocApi.fromJson(Map<String, dynamic>.from(j['tocApi'] as Map)),
     tocPageUrl: j['tocPageUrl'] as String?,
+    loginUrl: j['loginUrl'] as String?,
   );
 
   SourceAdapter withSearch(String url, Map<String, String> extraSelectors) =>
@@ -63,6 +68,7 @@ class SourceAdapter {
         searchUrl: url,
         tocApi: tocApi,
         tocPageUrl: tocPageUrl,
+        loginUrl: loginUrl,
       );
 
   bool matches(String url) {

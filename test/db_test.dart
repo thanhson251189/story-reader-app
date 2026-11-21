@@ -70,4 +70,36 @@ void main() {
     expect(row['last_chapter_url'], 'https://x.test/truyen-b/mo-dau');
     await (await db.database).close();
   });
+
+  test('chapterNeighbors suy chương trước/sau từ mục lục đã lưu', () async {
+    final db = AppDb();
+    const storyUrl = 'https://dammyy.cc/truyen-c.html';
+    await db.saveStoryInfo(
+      storyUrl,
+      NovelInfo(title: 'Truyện C', chapters: [
+        ChapterRef(title: 'C1', url: 'https://dammyy.cc/truyen-c/chuong-1.html'),
+        ChapterRef(title: 'C2', url: 'https://dammyy.cc/truyen-c/chuong-2.html'),
+        ChapterRef(title: 'C3', url: 'https://dammyy.cc/truyen-c/chuong-3.html'),
+      ]),
+    );
+    expect(
+      await db.chapterNeighbors('https://dammyy.cc/truyen-c/chuong-1.html'),
+      (null, 'https://dammyy.cc/truyen-c/chuong-2.html'),
+    );
+    expect(
+      await db.chapterNeighbors('https://dammyy.cc/truyen-c/chuong-2.html'),
+      (
+        'https://dammyy.cc/truyen-c/chuong-1.html',
+        'https://dammyy.cc/truyen-c/chuong-3.html'
+      ),
+    );
+    expect(
+      await db.chapterNeighbors('https://dammyy.cc/truyen-c/chuong-3.html'),
+      ('https://dammyy.cc/truyen-c/chuong-2.html', null),
+    );
+    // Chương không có trong mục lục nào: không suy được.
+    expect(await db.chapterNeighbors('https://dammyy.cc/khac/chuong-9.html'),
+        (null, null));
+    await (await db.database).close();
+  });
 }

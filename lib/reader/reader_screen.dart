@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
@@ -11,6 +12,7 @@ import '../core/providers.dart';
 import '../data/app_db.dart';
 import '../fetcher/web_fetcher.dart';
 import '../fetcher/webview_fallback_screen.dart';
+import '../sources/source_login_screen.dart';
 import '../tts/tts_player.dart';
 import 'toc_screen.dart';
 
@@ -253,7 +255,7 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> with RouteAware {
         }
         c = await ref.read(webFetcherProvider).fetchChapter(url, adapter);
       }
-      final cc = c;
+      final cc = await _fillNav(c, url);
       await db.cacheChapter(cc);
       await db.setSetting('lastUrl', url);
       await db.touchLibrary(_storyUrlOf(url), url);
@@ -377,6 +379,61 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> with RouteAware {
       _error = null;
       _loading = false;
     });
+  }
+
+  // Nguồn không có nút prev/next trên trang chương (dammyy...): suy chương
+  // trước/sau từ mục lục đã lưu để vuốt ngang, nghe tự sang chương kế và tải
+  // nền vẫn hoạt động. Link có sẵn trên trang luôn thắng.
+  Future<ChapterContent> _fillNav(ChapterContent c, String url) async {
+    if (c.nextUrl != null && c.prevUrl != null) return c;
+    try {
+      final (prev, next) = await ref
+          .read(appDbProvider)
+          .chapterNeighbors(url);
+      return ChapterContent(
+        url: c.url,
+        title: c.title,
+        paragraphs: c.paragraphs,
+        nextUrl: c.nextUrl ?? next,
+        prevUrl: c.prevUrl ?? prev,
+      );
+    } catch (_) {
+      return c;
+    }
+  }
+
+  // Nguồn yêu cầu tài khoản (adapter khai báo loginUrl): hiện nút đăng nhập
+  // cạnh các nút xử lý lỗi để người dùng mở WebView đăng nhập rồi thử lại.
+  List<Widget>? _loginButton() {
+    final url = _failedUrl ?? widget.url;
+    final adapter = ref.read(adapterRepoProvider).forUrl(url);
+    final loginUrl = adapter?.loginUrl;
+    if (adapter == null || loginUrl == null) return null;
+    return [
+      FilledButton.tonal(
+        onPressed: () async {
+          // Tên hiển thị theo bản đổi tên trong màn Nguồn nếu có.
+          final names = Map<String, String>.from(
+            jsonDecode(
+                  await ref.read(appDbProvider).getSetting('adapterNames') ??
+                      '{}',
+                )
+                as Map,
+          );
+          if (!mounted) return;
+          Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (_) => SourceLoginScreen(
+                name: names[adapter.domain] ?? adapter.domain,
+                url: loginUrl,
+              ),
+            ),
+          );
+        },
+        child: const Text('Đăng nhập nguồn'),
+      ),
+    ];
   }
 
   int _visibleParaIndex() {
@@ -1216,6 +1273,7 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> with RouteAware {
                     onPressed: _openFallback,
                     child: const Text('Mở WebView'),
                   ),
+                  ...?_loginButton(),
                 ],
               ),
             ],

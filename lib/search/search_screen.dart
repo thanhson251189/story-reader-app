@@ -10,6 +10,7 @@ import '../core/providers.dart';
 import '../fetcher/web_fetcher.dart';
 import '../fetcher/webview_fallback_screen.dart';
 import '../reader/reader_screen.dart';
+import '../sources/source_login_screen.dart';
 
 enum _Status { loading, done, error }
 
@@ -390,10 +391,29 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
                   if (s.blocked)
                     Align(
                       alignment: Alignment.centerRight,
-                      child: TextButton.icon(
-                        onPressed: () => _searchViaWebView(a),
-                        icon: const Icon(Icons.open_in_browser),
-                        label: const Text('Mở WebView'),
+                      child: Wrap(
+                        spacing: 4,
+                        children: [
+                          if (a.loginUrl != null)
+                            TextButton.icon(
+                              onPressed: () => Navigator.push(
+                                context,
+                                MaterialPageRoute(
+                                  builder: (_) => SourceLoginScreen(
+                                    name: a.domain,
+                                    url: a.loginUrl!,
+                                  ),
+                                ),
+                              ),
+                              icon: const Icon(Icons.login),
+                              label: const Text('Đăng nhập'),
+                            ),
+                          TextButton.icon(
+                            onPressed: () => _searchViaWebView(a),
+                            icon: const Icon(Icons.open_in_browser),
+                            label: const Text('Mở WebView'),
+                          ),
+                        ],
                       ),
                     ),
                 ],

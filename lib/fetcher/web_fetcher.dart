@@ -188,9 +188,26 @@ class WebFetcher {
     return out;
   }
 
+  // Cookie người dùng đã đăng nhập qua WebView của nguồn (màn "Đăng nhập" ở
+  // màn Nguồn) mang sang các request HTTP thuần — đường WebView tự có sẵn vì
+  // cùng profile. Lỗi thì bỏ qua: nguồn không cần đăng nhập vẫn tải bình thường.
+  Future<Map<String, String>> _headersFor(String url) async {
+    final headers = {'User-Agent': _ua};
+    try {
+      final cookies = await CookieManager.instance()
+          .getCookies(url: WebUri(url));
+      final header = cookies
+          .where((c) => c.name.isNotEmpty && c.value.isNotEmpty)
+          .map((c) => '${c.name}=${c.value}')
+          .join('; ');
+      if (header.isNotEmpty) headers['Cookie'] = header;
+    } catch (_) {}
+    return headers;
+  }
+
   Future<Map<String, dynamic>> _getJson(String url) async {
     final res = await http
-        .get(Uri.parse(url), headers: {'User-Agent': _ua})
+        .get(Uri.parse(url), headers: await _headersFor(url))
         .timeout(const Duration(seconds: 15));
     if (res.statusCode != 200) throw Exception('HTTP ${res.statusCode}');
     return jsonDecode(res.body) as Map<String, dynamic>;
@@ -266,7 +283,7 @@ class WebFetcher {
 
   Future<html_dom.Document> _getHtml(String url) async {
     final res = await http
-        .get(Uri.parse(url), headers: {'User-Agent': _ua})
+        .get(Uri.parse(url), headers: await _headersFor(url))
         .timeout(const Duration(seconds: 20));
     if (res.statusCode != 200) throw Exception('HTTP ${res.statusCode}');
     return html_parser.parse(res.body);
