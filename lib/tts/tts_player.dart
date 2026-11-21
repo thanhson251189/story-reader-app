@@ -9,6 +9,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
 
 import '../adapters/adapter_repository.dart';
+import '../core/errors.dart';
 import '../core/models.dart';
 import '../data/app_db.dart';
 import '../fetcher/chapter_prefetcher.dart';
@@ -39,6 +40,9 @@ class TtsPlayer extends ChangeNotifier {
   // của setSpeechRate (giá trị mặc định 0.5 cũ là để lại từ thời _tts.speak).
   double rate = 1.0;
   double pitch = 1.0;
+  // Giữ màn hình sáng trong lúc nghe (tốn pin) — tuỳ chọn, mặc định tắt vì
+  // âm thanh phát trong foreground service nên tắt màn hình vẫn nghe được.
+  bool keepScreenOn = false;
   List<Map<String, String>> voices = [];
   Map<String, String>? currentVoice;
   String? voiceWarning;
@@ -85,6 +89,7 @@ class TtsPlayer extends ChangeNotifier {
     await _tts.setVolume(1.0);
     rate = double.tryParse(await db.getSetting('ttsRate') ?? '') ?? 1.0;
     pitch = double.tryParse(await db.getSetting('ttsPitch') ?? '') ?? 1.0;
+    keepScreenOn = (await db.getSetting('keepScreenOn') ?? '0') == '1';
     await _tts.setPitch(pitch);
     await reloadVoices();
     await _restoreVoice();
@@ -245,7 +250,7 @@ class TtsPlayer extends ChangeNotifier {
     }
     lastError = null;
     playing = true;
-    await WakelockPlus.enable();
+    if (keepScreenOn) await WakelockPlus.enable();
     _notify();
     debugPrint('TTS start: ${c.title} (${chunks.length} chunks)');
     unawaited(_loop(gen));
@@ -354,7 +359,7 @@ class TtsPlayer extends ChangeNotifier {
       await start(c);
     } catch (e) {
       loading = false;
-      lastError = 'Không tải được chương kế: $e';
+      lastError = 'Không tải được chương kế: ${friendlyError(e)}';
       await stop();
     }
   }
@@ -431,7 +436,8 @@ class TtsPlayer extends ChangeNotifier {
       final c = await _loadChapter(url);
       loading = false;
       if (c == null) {
-        lastError = 'Không tải được chương';
+        lastError =
+            'Không tải được chương. Mở chương này bằng tay để xem chi tiết.';
         playing = false;
         _notify();
         return;
@@ -447,7 +453,7 @@ class TtsPlayer extends ChangeNotifier {
     } catch (e) {
       loading = false;
       playing = false;
-      lastError = 'Không tải được chương: $e';
+      lastError = 'Không tải được chương: ${friendlyError(e)}';
       _notify();
     }
   }
@@ -456,6 +462,20 @@ class TtsPlayer extends ChangeNotifier {
     rate = v;
     await _audio.setSpeed(v);
     await db.setSetting('ttsRate', v.toString());
+    _notify();
+  }
+
+  Future<void> setKeepScreenOn(bool v) async {
+    keepScreenOn = v;
+    await db.setSetting('keepScreenOn', v ? '1' : '0');
+    // Đang nghe thì áp dụng ngay, không đợi lần phát kế.
+    if (playing) {
+      if (v) {
+        await WakelockPlus.enable();
+      } else {
+        await WakelockPlus.disable();
+      }
+    }
     _notify();
   }
 

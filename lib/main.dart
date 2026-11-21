@@ -64,11 +64,19 @@ class StoryReaderApp extends StatelessWidget {
     return MaterialApp(
       title: 'Story Reader',
       debugShowCheckedModeBanner: false,
+      // Nền tối toàn app đi theo cài đặt hệ thống; màn đọc vẫn tự quản
+      // 3 lựa chọn riêng (sáng/tối/vàng) nên không bị ảnh hưởng.
       theme: ThemeData(
         useMaterial3: true,
         colorSchemeSeed: Colors.brown,
         brightness: Brightness.light,
       ),
+      darkTheme: ThemeData(
+        useMaterial3: true,
+        colorSchemeSeed: Colors.brown,
+        brightness: Brightness.dark,
+      ),
+      themeMode: ThemeMode.system,
       navigatorObservers: [routeObserver],
       home: const HomeScreen(),
     );

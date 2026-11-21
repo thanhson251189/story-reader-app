@@ -9,6 +9,9 @@ import 'package:package_info_plus/package_info_plus.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 import 'package:url_launcher/url_launcher.dart';
+
+import '../core/errors.dart';
+import '../data/app_db.dart';
 import '../sources/registry.dart';
 
 class UpdateInfo {
@@ -34,11 +37,15 @@ class AppUpdater {
 
   Future<UpdateInfo?> check() async {
     final current = (await PackageInfo.fromPlatform()).version;
-    final res =
-        await http.get(Uri.parse(repoApi)).timeout(const Duration(seconds: 10));
+    final res = await http
+        .get(Uri.parse(repoApi))
+        .timeout(const Duration(seconds: 10));
     if (res.statusCode != 200) return null;
     final j = jsonDecode(res.body) as Map<String, dynamic>;
-    final tag = (j['tag_name'] as String? ?? '').replaceFirst(RegExp(r'^v'), '');
+    final tag = (j['tag_name'] as String? ?? '').replaceFirst(
+      RegExp(r'^v'),
+      '',
+    );
     if (tag.isEmpty || SourceRegistry.compareVersions(tag, current) <= 0) {
       return null;
     }
@@ -98,12 +105,18 @@ class AppUpdater {
     }
   }
 
-  static Future<bool> showIfAny(BuildContext context) async {
+  static Future<bool> showIfAny(BuildContext context, AppDb db) async {
     final update = await AppUpdater().check();
-    if (update == null || !context.mounted) return false;
+    if (update == null) return false;
+    // Người dùng đã bấm "Để sau" cho đúng bản này rồi thì thôi hỏi lại;
+    // ra bản mới hơn sẽ hỏi tiếp.
+    if (await db.getSetting('updatePromptedVersion') == update.version) {
+      return false;
+    }
+    if (!context.mounted) return false;
     await showDialog<void>(
       context: context,
-      builder: (_) => _UpdateDialog(update: update),
+      builder: (_) => _UpdateDialog(update: update, db: db),
     );
     return true;
   }
@@ -111,7 +124,8 @@ class AppUpdater {
 
 class _UpdateDialog extends StatefulWidget {
   final UpdateInfo update;
-  const _UpdateDialog({required this.update});
+  final AppDb db;
+  const _UpdateDialog({required this.update, required this.db});
 
   @override
   State<_UpdateDialog> createState() => _UpdateDialogState();
@@ -159,22 +173,17 @@ class _UpdateDialogState extends State<_UpdateDialog> {
       final path = p.join(dir.path, 'story_reader_update.apk');
       _client = http.Client();
       var lastUi = 0;
-      await AppUpdater.downloadApk(
-        widget.update.url,
-        path,
-        (r, t) {
-          if (r == t || r - lastUi >= _uiStep) {
-            lastUi = r;
-            if (mounted) {
-              setState(() {
-                _received = r;
-                _total = t;
-              });
-            }
+      await AppUpdater.downloadApk(widget.update.url, path, (r, t) {
+        if (r == t || r - lastUi >= _uiStep) {
+          lastUi = r;
+          if (mounted) {
+            setState(() {
+              _received = r;
+              _total = t;
+            });
           }
-        },
-        client: _client,
-      );
+        }
+      }, client: _client);
       if (!mounted) return;
       setState(() {
         _downloading = false;
@@ -187,7 +196,7 @@ class _UpdateDialogState extends State<_UpdateDialog> {
         _downloading = false;
         _error = e is TimeoutException
             ? 'Mạng quá chậm hoặc mất kết nối khi tải, hãy thử lại.'
-            : 'Tải về lỗi: ${e.toString().replaceFirst('Exception: ', '')}';
+            : 'Tải về lỗi: ${friendlyError(e)}';
       });
     } finally {
       _client = null;
@@ -198,15 +207,18 @@ class _UpdateDialogState extends State<_UpdateDialog> {
     final path = _apkPath;
     if (path == null) return;
     try {
-      final ok = await AppUpdater._installerChannel
-          .invokeMethod<bool>('installApk', path);
+      final ok = await AppUpdater._installerChannel.invokeMethod<bool>(
+        'installApk',
+        path,
+      );
       if (!mounted) return;
       if (ok == true) {
         Navigator.pop(context);
       } else {
         // Native đã mở sẵn màn hình cấp quyền; giữ dialog để bấm lại.
         setState(() {
-          _error = 'Hãy cho phép Story Reader "Cài ứng dụng không rõ nguồn" '
+          _error =
+              'Hãy cho phép Story Reader "Cài ứng dụng không rõ nguồn" '
               'trong màn hình vừa mở, rồi bấm Cài đặt.';
         });
       }
@@ -226,6 +238,17 @@ class _UpdateDialogState extends State<_UpdateDialog> {
     _cancelled = true;
     _client?.close();
     Navigator.pop(context);
+  }
+
+  Future<void> _postpone() async {
+    // Ghi nhớ bản đã nhắc để không hỏi lại mỗi lần mở app (chi tiết ở showIfAny).
+    try {
+      await widget.db.setSetting(
+        'updatePromptedVersion',
+        widget.update.version,
+      );
+    } catch (_) {}
+    if (mounted) Navigator.pop(context);
   }
 
   @override
@@ -254,8 +277,8 @@ class _UpdateDialogState extends State<_UpdateDialog> {
             total == null
                 ? '${(_received / _mb).toStringAsFixed(1)} MB'
                 : '${(_received / _mb).toStringAsFixed(1)} / '
-                    '${(total / _mb).toStringAsFixed(1)} MB '
-                    '(${(100 * _received / total).round()}%)',
+                      '${(total / _mb).toStringAsFixed(1)} MB '
+                      '(${(100 * _received / total).round()}%)',
             style: Theme.of(context).textTheme.bodySmall,
           ),
         ],
@@ -264,8 +287,7 @@ class _UpdateDialogState extends State<_UpdateDialog> {
     if (_error != null && !_downloaded) return Text(_error!);
     if (_downloaded) {
       return Text(
-        _error ??
-            'Đã tải xong bản cài đặt. Bấm Cài đặt để cài lên máy.',
+        _error ?? 'Đã tải xong bản cài đặt. Bấm Cài đặt để cài lên máy.',
       );
     }
     return SingleChildScrollView(
@@ -278,25 +300,30 @@ class _UpdateDialogState extends State<_UpdateDialog> {
   }
 
   List<Widget> _actions() {
-    final later = TextButton(
-      onPressed: () => Navigator.pop(context),
-      child: const Text('Để sau'),
-    );
+    final later = TextButton(onPressed: _postpone, child: const Text('Để sau'));
     if (_downloading) {
       return [TextButton(onPressed: _cancel, child: const Text('Huỷ'))];
     }
     if (_downloaded) {
       // APK còn nguyên trên máy: chỉ cài lại, không tải lại cả file.
-      return [later, FilledButton(onPressed: _install, child: const Text('Cài đặt'))];
+      return [
+        later,
+        FilledButton(onPressed: _install, child: const Text('Cài đặt')),
+      ];
     }
     if (_error != null) {
-      return [later, FilledButton(onPressed: _start, child: const Text('Thử lại'))];
+      return [
+        later,
+        FilledButton(onPressed: _start, child: const Text('Thử lại')),
+      ];
     }
     return [
       later,
       FilledButton(
         onPressed: _start,
-        child: Text(widget.update.directApk ? 'Tải về & cài đặt' : 'Mở trang tải'),
+        child: Text(
+          widget.update.directApk ? 'Tải về & cài đặt' : 'Mở trang tải',
+        ),
       ),
     ];
   }

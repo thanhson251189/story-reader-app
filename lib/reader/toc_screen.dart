@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../core/errors.dart';
 import '../core/models.dart';
 import '../core/providers.dart';
 import '../fetcher/web_fetcher.dart';
@@ -151,7 +152,7 @@ class _TocScreenState extends ConsumerState<TocScreen> {
       if (!mounted) return;
       setState(() {
         _loading = false;
-        _error = e.toString().replaceFirst('Exception: ', '');
+        _error = friendlyError(e);
       });
     }
   }
@@ -440,7 +441,8 @@ class _TocScreenState extends ConsumerState<TocScreen> {
                             itemBuilder: (_, vi) {
                               final i = _view[vi];
                               final c = _chapters[i];
-                              final isCurrent = currentNorm != null &&
+                              final isCurrent =
+                                  currentNorm != null &&
                                   TocScreen.normUrl(c.url) == currentNorm;
                               return ListTile(
                                 dense: true,

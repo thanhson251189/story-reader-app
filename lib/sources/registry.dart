@@ -180,6 +180,24 @@ class SourceRegistry {
     await db.setSetting('installedAdapters', jsonEncode(saved));
   }
 
+  /// Chạy ngầm lúc mở app: tải index (có cache dự phòng), cài sẵn các bản
+  /// cập nhật nguồn đã cài. Lỗi từng nguồn bỏ qua — người dùng không cần biết
+  /// trừ khi có gì thực sự đổi; trả về số nguồn đã cập nhật để báo một dòng.
+  Future<int> autoUpdateInstalled() async {
+    final entries = await loadIndex();
+    if (entries.isEmpty) return 0;
+    final version = await appVersion();
+    final updates = pendingUpdates(entries, adapters, version);
+    var ok = 0;
+    for (final e in updates) {
+      try {
+        await install(e);
+        ok++;
+      } catch (_) {}
+    }
+    return ok;
+  }
+
   static Future<void> restoreInstalled(
     AppDb db,
     AdapterRepository adapters,

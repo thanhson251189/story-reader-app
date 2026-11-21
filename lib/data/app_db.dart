@@ -8,6 +8,14 @@ import '../core/models.dart';
 class AppDb {
   Database? _db;
 
+  // Giàn giáo cache chỉ giữ chương mới nhất: cũ hơn bị xóa bớt để dữ liệu
+  // không phình to vô hạn. Chương sách trong máy (book:) không bao giờ bị dọn.
+  static const maxCachedChapters = 500;
+
+  // Cache web lâu hơn ngưỡng này coi là nội dung cũ: mở lại thì tải bản mới
+  // từ web (lỗi mạng thì vẫn dùng bản cũ, không chặn người đọc).
+  static const staleCacheDays = 7;
+
   Future<Database> get database async => _db ??= await openDatabase(
     p.join(await getDatabasesPath(), 'story_reader.db'),
     version: 5,
@@ -118,6 +126,51 @@ class AppDb {
       }, conflictAlgorithm: ConflictAlgorithm.replace);
     }
     await batch.commit(noResult: true);
+    await pruneChapterCache();
+  }
+
+  /// Giữ lại [keep] chương web mới nhất, xóa phần còn lại (theo rowid vì
+  /// fetched_at trùng nhau giữa các chương tải cùng lúc thì cứ theo thứ tự).
+  /// Chương sách trong máy (book:) không bị đụng tới — sách nhập vào có thể
+  /// dài hơn hạn mức nhiều lần.
+  Future<void> pruneChapterCache({int keep = maxCachedChapters}) async {
+    final db = await database;
+    await db.execute(
+      "DELETE FROM chapter_cache WHERE url NOT LIKE 'book:%' AND rowid NOT IN "
+      "(SELECT rowid FROM chapter_cache WHERE url NOT LIKE 'book:%' "
+      'ORDER BY fetched_at DESC LIMIT ?)',
+      [keep],
+    );
+  }
+
+  Future<int?> chapterFetchedAt(String url) async {
+    final db = await database;
+    final rows = await db.query(
+      'chapter_cache',
+      columns: ['fetched_at'],
+      where: 'url = ?',
+      whereArgs: [url],
+      limit: 1,
+    );
+    return rows.isEmpty ? null : rows.first['fetched_at'] as int;
+  }
+
+  /// Số chương web đang được lưu tạm (không tính sách trong máy).
+  Future<int> webCacheCount() async {
+    final db = await database;
+    return Sqflite.firstIntValue(
+          await db.rawQuery(
+            "SELECT COUNT(*) FROM chapter_cache WHERE url NOT LIKE 'book:%'",
+          ),
+        ) ??
+        0;
+  }
+
+  /// Xóa cache chương web để trả lại dung lượng; sách trong máy giữ nguyên
+  /// vì xóa mất thì phải nhập lại file.
+  Future<void> clearWebCache() async {
+    final db = await database;
+    await db.delete('chapter_cache', where: "url NOT LIKE 'book:%'");
   }
 
   Future<ChapterContent?> getCachedChapter(String url) async {

@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:file_picker/file_picker.dart';
 
+import '../core/errors.dart';
 import '../core/providers.dart';
 import '../local/book_importer.dart';
 import '../reader/reader_screen.dart';
@@ -100,11 +101,7 @@ class _ReadTabState extends ConsumerState<ReadTab> {
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            'Nhập sách lỗi: ${e.toString().replaceFirst('FormatException: ', '')}',
-          ),
-        ),
+        SnackBar(content: Text('Nhập sách lỗi: ${friendlyError(e)}')),
       );
     } finally {
       if (mounted) setState(() => _importing = false);

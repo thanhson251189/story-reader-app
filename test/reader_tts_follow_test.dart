@@ -13,6 +13,7 @@ class FakeAppDb extends AppDb {
   final settings = <String, String>{};
   final positions = <String, double>{};
   final cache = <String, ChapterContent>{};
+  final toc = <String, List<ChapterRef>>{};
 
   @override
   Future<String?> getSetting(String key) async => settings[key];
@@ -32,6 +33,13 @@ class FakeAppDb extends AppDb {
 
   @override
   Future<ChapterContent?> getCachedChapter(String url) async => cache[url];
+
+  @override
+  Future<int?> chapterFetchedAt(String url) async => null;
+
+  @override
+  Future<List<ChapterRef>> getToc(String storyUrl) async =>
+      toc[storyUrl] ?? const [];
 
   @override
   Future<void> cacheChapter(ChapterContent c) async {
@@ -133,7 +141,10 @@ void main() {
 
   testWidgets('TTS đang phát chuyển chương thì reader đi theo', (tester) async {
     await pumpReader(tester, 'https://x.test/c/4');
-    await tester.drag(find.byType(SingleChildScrollView), const Offset(0, -300));
+    await tester.drag(
+      find.byType(SingleChildScrollView),
+      const Offset(0, -300),
+    );
     await tester.pumpAndSettle();
     await tester.pump(const Duration(milliseconds: 700));
     expect(db.positions['https://x.test/c/4'], greaterThan(0));

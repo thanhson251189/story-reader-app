@@ -5,8 +5,10 @@ import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../core/errors.dart';
 import '../core/models.dart';
 import '../core/providers.dart';
+import '../data/app_db.dart';
 import '../fetcher/web_fetcher.dart';
 import '../fetcher/webview_fallback_screen.dart';
 import '../tts/tts_player.dart';
@@ -39,6 +41,7 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> with RouteAware {
   List<GlobalKey> _paraKeys = [];
   int _lastSpokenPara = -1;
   String? _shownError;
+  String? _progressLabel;
   late final TtsPlayer _player;
 
   static const _themes = {
@@ -143,6 +146,7 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> with RouteAware {
         _paraKeys = List.generate(pc.paragraphs.length, (_) => GlobalKey());
         _lastSpokenPara = -1;
       });
+      unawaited(_updateProgress(pc.url));
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (_scroll.hasClients) _scroll.jumpTo(0);
       });
@@ -196,6 +200,24 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> with RouteAware {
       final db = ref.read(appDbProvider);
       ChapterContent? c;
       if (useCache) c = await db.getCachedChapter(url);
+      if (c != null && !url.startsWith('book:')) {
+        // Cache lâu hơn staleCacheDays coi là nội dung cũ: thử tải bản mới
+        // từ web; lỗi mạng/chặn thì vẫn đọc bản cũ — đọc được chương cũ vẫn
+        // tốt hơn là báo lỗi đứng hình.
+        try {
+          final at = await db.chapterFetchedAt(url);
+          final stale =
+              at == null ||
+              DateTime.now().millisecondsSinceEpoch - at >
+                  AppDb.staleCacheDays * Duration.millisecondsPerDay;
+          if (stale) {
+            final adapter = ref.read(adapterRepoProvider).forUrl(url);
+            if (adapter != null) {
+              c = await ref.read(webFetcherProvider).fetchChapter(url, adapter);
+            }
+          }
+        } catch (_) {}
+      }
       if (c == null) {
         if (url.startsWith('book:')) {
           throw Exception('Chương này không còn trong máy. Hãy nhập lại sách.');
@@ -229,15 +251,34 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> with RouteAware {
           );
         }
       });
+      unawaited(_updateProgress(url));
       if (_player.playing) await _player.start(c);
     } catch (e) {
       if (!mounted) return;
       setState(() {
         _loading = false;
-        _error = e is ChallengeException
-            ? e.toString()
-            : e.toString().replaceFirst('Exception: ', '');
+        _error = friendlyError(e);
       });
+    }
+  }
+
+  // "Chương x/y" lấy từ mục lục đã lưu; không có mục lục thì ẩn đi.
+  Future<void> _updateProgress(String chapterUrl) async {
+    try {
+      final toc = await ref.read(appDbProvider).getToc(_storyUrlOf(chapterUrl));
+      if (toc.isEmpty) {
+        if (mounted) setState(() => _progressLabel = null);
+        return;
+      }
+      final i = toc.indexWhere(
+        (c) => TocScreen.normUrl(c.url) == TocScreen.normUrl(chapterUrl),
+      );
+      if (!mounted) return;
+      setState(() {
+        _progressLabel = i < 0 ? null : 'Chương ${i + 1}/${toc.length}';
+      });
+    } catch (_) {
+      if (mounted) setState(() => _progressLabel = null);
     }
   }
 
@@ -269,7 +310,7 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> with RouteAware {
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context)
-          .showSnackBar(SnackBar(content: Text('Lỗi: $e')));
+          .showSnackBar(SnackBar(content: Text(friendlyError(e))));
     } finally {
       if (mounted) setState(() => _addingToLib = false);
     }
@@ -561,12 +602,21 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> with RouteAware {
   void _openSettings() {
     final db = ref.read(appDbProvider);
     var previewing = false;
+    var cacheLoaded = false;
+    var cacheCount = 0;
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
       builder: (_) => StatefulBuilder(
         builder: (ctx, setSheet) {
           final titleStyle = Theme.of(ctx).textTheme.titleMedium;
+          if (!cacheLoaded) {
+            cacheLoaded = true;
+            db.webCacheCount().then((n) {
+              cacheCount = n;
+              if (ctx.mounted) setSheet(() {});
+            });
+          }
           return ConstrainedBox(
             constraints: BoxConstraints(
               maxHeight: MediaQuery.of(ctx).size.height * 0.85,
@@ -724,6 +774,54 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> with RouteAware {
                     'Tải nền chương kế để đọc/nghe liền mạch. Nghỉ 5s giữa các lần tải để tránh bị chặn.',
                     style: Theme.of(ctx).textTheme.bodySmall,
                   ),
+                  ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    leading: const Icon(Icons.cleaning_services_outlined),
+                    title: Text('Dữ liệu tải sẵn: $cacheCount chương'),
+                    subtitle: const Text(
+                      'Bản lưu chương web để đọc lại nhanh, không cần mạng. '
+                      'Giữ tối đa 500 chương mới nhất; sách trong máy không bị xoá.',
+                    ),
+                    trailing: TextButton(
+                      onPressed: cacheCount == 0
+                          ? null
+                          : () async {
+                              final ok = await showDialog<bool>(
+                                context: context,
+                                builder: (dlg) => AlertDialog(
+                                  title: const Text('Xoá dữ liệu tải sẵn?'),
+                                  content: Text(
+                                    'Xoá $cacheCount chương web đã lưu. '
+                                    'Sách nhập từ file không bị đụng tới.',
+                                  ),
+                                  actions: [
+                                    TextButton(
+                                      onPressed: () =>
+                                          Navigator.pop(dlg, false),
+                                      child: const Text('Huỷ'),
+                                    ),
+                                    FilledButton(
+                                      onPressed: () => Navigator.pop(dlg, true),
+                                      child: const Text('Xoá'),
+                                    ),
+                                  ],
+                                ),
+                              );
+                              if (ok != true) return;
+                              await db.clearWebCache();
+                              cacheCount = 0;
+                              if (ctx.mounted) setSheet(() {});
+                              if (mounted) {
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  const SnackBar(
+                                    content: Text('Đã xoá dữ liệu tải sẵn'),
+                                  ),
+                                );
+                              }
+                            },
+                      child: const Text('Xoá'),
+                    ),
+                  ),
                   SwitchListTile(
                     contentPadding: EdgeInsets.zero,
                     secondary: const Icon(Icons.swap_vert),
@@ -737,6 +835,19 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> with RouteAware {
                       setState(() => _volPage = v);
                       db.setSetting('volPageTurn', v ? '1' : '0');
                       _syncVolKeys();
+                    },
+                  ),
+                  SwitchListTile(
+                    contentPadding: EdgeInsets.zero,
+                    secondary: const Icon(Icons.brightness_high),
+                    title: const Text('Giữ màn hình sáng khi nghe đọc'),
+                    subtitle: const Text(
+                      'Tắt để tiết kiệm pin — âm thanh vẫn chạy nền như nghe nhạc.',
+                    ),
+                    value: _player.keepScreenOn,
+                    onChanged: (v) {
+                      setSheet(() {});
+                      _player.setKeepScreenOn(v);
                     },
                   ),
                 ],
@@ -761,6 +872,19 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> with RouteAware {
     }
     _scroll.dispose();
     super.dispose();
+  }
+
+  // Vuốt ngang để sang chương trước/sau như các app đọc truyện thông dụng.
+  // Cuộn dọc không đụng độ: SingleChildScrollView chỉ nhận cử chỉ dọc.
+  void _onHorizontalDragEnd(DragEndDetails d) {
+    final v = d.primaryVelocity ?? 0;
+    final c = _content;
+    if (c == null || _loading) return;
+    if (v < -500) {
+      if (c.nextUrl != null) _load(c.nextUrl!);
+    } else if (v > 500) {
+      if (c.prevUrl != null) _load(c.prevUrl!);
+    }
   }
 
   @override
@@ -846,12 +970,24 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> with RouteAware {
                       tooltip: isPlayingThis ? 'Tạm dừng đọc' : 'Nghe đọc',
                     ),
                     Expanded(
-                      child: Text(
-                        c.title,
-                        textAlign: TextAlign.center,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(color: fg),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text(
+                            c.title,
+                            textAlign: TextAlign.center,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(color: fg),
+                          ),
+                          if (_progressLabel != null)
+                            Text(
+                              _progressLabel!,
+                              textAlign: TextAlign.center,
+                              maxLines: 1,
+                              style: TextStyle(color: fg, fontSize: 12),
+                            ),
+                        ],
                       ),
                     ),
                     IconButton(
@@ -917,45 +1053,48 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> with RouteAware {
     final speakingThis = _player.playing && _player.chapter?.url == c.url;
     final activePara = speakingThis ? _player.currentParaIndex : -1;
     final chunkText = speakingThis ? (_player.currentChunk?.text ?? '') : '';
-    return Scrollbar(
-      controller: _scroll,
-      child: SingleChildScrollView(
+    return GestureDetector(
+      onHorizontalDragEnd: _onHorizontalDragEnd,
+      child: Scrollbar(
         controller: _scroll,
-        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              c.title,
-              style: style.copyWith(
-                fontSize: _fontSize + 4,
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-            const SizedBox(height: 16),
-            for (var i = 0; i < c.paragraphs.length; i++)
-              Padding(
-                padding: EdgeInsets.only(bottom: _fontSize * 0.7),
-                child: _paragraph(
-                  i,
-                  c.paragraphs[i],
-                  style,
-                  activePara == i,
-                  chunkText,
+        child: SingleChildScrollView(
+          controller: _scroll,
+          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                c.title,
+                style: style.copyWith(
+                  fontSize: _fontSize + 4,
+                  fontWeight: FontWeight.bold,
                 ),
               ),
-            if (c.nextUrl != null)
-              Center(
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 24),
-                  child: FilledButton.icon(
-                    onPressed: () => _load(c.nextUrl!),
-                    icon: const Icon(Icons.arrow_forward),
-                    label: const Text('Chương sau'),
+              const SizedBox(height: 16),
+              for (var i = 0; i < c.paragraphs.length; i++)
+                Padding(
+                  padding: EdgeInsets.only(bottom: _fontSize * 0.7),
+                  child: _paragraph(
+                    i,
+                    c.paragraphs[i],
+                    style,
+                    activePara == i,
+                    chunkText,
                   ),
                 ),
-              ),
-          ],
+              if (c.nextUrl != null)
+                Center(
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 24),
+                    child: FilledButton.icon(
+                      onPressed: () => _load(c.nextUrl!),
+                      icon: const Icon(Icons.arrow_forward),
+                      label: const Text('Chương sau'),
+                    ),
+                  ),
+                ),
+            ],
+          ),
         ),
       ),
     );

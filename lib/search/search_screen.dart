@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../core/cover_image.dart';
+import '../core/errors.dart';
 import '../core/models.dart';
 import '../core/providers.dart';
 import '../fetcher/web_fetcher.dart';
@@ -115,7 +116,7 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
             _states[a.domain]!
               ..status = _Status.error
               ..blocked = e is ChallengeException
-              ..error = e.toString().replaceFirst('Exception: ', '');
+              ..error = friendlyError(e);
           });
         }
       }
@@ -179,11 +180,7 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              'Không mở được truyện: ${e.toString().replaceFirst('Exception: ', '')}',
-            ),
-          ),
+          SnackBar(content: Text('Không mở được truyện: ${friendlyError(e)}')),
         );
       }
     } finally {

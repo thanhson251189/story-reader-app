@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../core/errors.dart';
 import '../core/providers.dart';
 import 'registry.dart';
 
@@ -63,7 +64,7 @@ class _SourcesScreenState extends ConsumerState<SourcesScreen> {
       if (mounted) {
         setState(() {
           _loading = false;
-          _error = 'Không tải được index: $e';
+          _error = 'Không tải được danh sách nguồn: ${friendlyError(e)}';
         });
       }
     }
@@ -86,7 +87,7 @@ class _SourcesScreenState extends ConsumerState<SourcesScreen> {
     } catch (err) {
       if (mounted) {
         ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text('Lỗi: $err')));
+            .showSnackBar(SnackBar(content: Text(friendlyError(err))));
       }
     } finally {
       if (mounted) setState(() => _busyId = null);
@@ -109,7 +110,7 @@ class _SourcesScreenState extends ConsumerState<SourcesScreen> {
         await _registry.install(e);
         ok++;
       } catch (err) {
-        errs.add('${e.name}: $err');
+        errs.add('${e.name}: ${friendlyError(err)}');
       }
     }
     if (!mounted) return;
