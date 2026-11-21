@@ -1,4 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:html/parser.dart' as html_parser;
 import 'package:story_reader/core/models.dart';
 import 'package:story_reader/fetcher/web_fetcher.dart';
 
@@ -79,5 +80,32 @@ void main() {
       Uri.parse('https://x.com'),
     );
     expect(noCover!.coverUrl, null);
+  });
+
+  test('maxTocPage bỏ #fragment khi khớp link phân trang', () {
+    final doc = html_parser.parse('''
+      <html><body>
+        <a href="/truyen/pham-nhan-tu-tien-phan-1/?trang=2#danh-sach-chuong">2</a>
+        <a href="/truyen/pham-nhan-tu-tien-phan-1/?trang=50#danh-sach-chuong">50</a>
+        <a href="/truyen/pham-nhan-tu-tien-phan-1/?trang=51">51</a>
+        <a href="/the-loai/khac/?trang=9">9</a>
+      </body></html>
+    ''');
+    const tpl = 'https://phamnhantutien.org/truyen/{slug}/?trang={page}';
+    const slug = 'pham-nhan-tu-tien-phan-1';
+    const base = 'https://phamnhantutien.org/truyen/pham-nhan-tu-tien-phan-1/';
+    expect(
+      WebFetcher.maxTocPage(doc, tpl, slug, Uri.parse(base)),
+      51,
+      reason: 'link có #fragment và không fragment đều được tính',
+    );
+    // Link site khác khớp prefix của template khác: không tính.
+    final doc2 = html_parser.parse(
+      '<a href="https://khac.com/truyen/pham-nhan-tu-tien-phan-1/?trang=9">',
+    );
+    expect(
+      WebFetcher.maxTocPage(doc2, tpl, slug, Uri.parse(base)),
+      1,
+    );
   });
 }

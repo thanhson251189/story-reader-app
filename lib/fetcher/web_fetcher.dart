@@ -311,7 +311,7 @@ class WebFetcher {
     final cover = coverSrc == null || coverSrc.isEmpty
         ? null
         : base.resolve(coverSrc).toString();
-    final maxPage = _maxTocPage(doc, tpl, slug, base);
+    final maxPage = maxTocPage(doc, tpl, slug, base);
     final all = <ChapterRef>[...chapters];
     if (maxPage > 1) {
       const concurrency = 6;
@@ -377,7 +377,9 @@ class WebFetcher {
   }
 
   // Số trang cuối = số lớn nhất trong các link phân trang khớp template.
-  static int _maxTocPage(
+  // Link trên một số site có gắn #fragment (vd ?trang=50#danh-sach-chuong):
+  // bỏ fragment trước khi khớp để không làm hỏng phần số trang.
+  static int maxTocPage(
     html_dom.Document doc,
     String tpl,
     String slug,
@@ -390,7 +392,7 @@ class WebFetcher {
     for (final el in doc.querySelectorAll('a[href]')) {
       final href = el.attributes['href'];
       if (href == null) continue;
-      final abs = base.resolve(href).toString();
+      final abs = base.resolve(href).removeFragment().toString();
       if (!abs.startsWith(prefix) || !abs.endsWith(suffix)) continue;
       if (abs.length <= prefix.length + suffix.length) continue;
       final n = int.tryParse(
