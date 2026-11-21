@@ -14,6 +14,7 @@ import 'home_screen.dart';
 import 'sources/registry.dart';
 import 'tts/audio_handler.dart';
 import 'tts/tts_player.dart';
+import 'update/app_updater.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -55,6 +56,9 @@ Future<void> main() async {
       child: const StoryReaderApp(),
     ),
   );
+  // Xoá file APK cài đặt còn sót từ lần cập nhật trước (khoảng 60MB): cài
+  // xong bản mới là file hết tác dụng, lần tải kế luôn ghi đè file mới.
+  unawaited(AppUpdater.cleanupLeftoverApk());
   // Khởi tạo giọng nói SAU khi app đã hiện lên: engine TTS của một số máy có
   // thể đứng im không hồi đáp — chờ nó trước runApp là màn hình đen mãi.
   // Lỗi bỏ qua: phần đọc vẫn dùng được, phần nghe dùng cấu hình mặc định

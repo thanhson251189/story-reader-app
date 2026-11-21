@@ -13,7 +13,8 @@ import '../reader/reader_screen.dart';
 import '../sources/sources_screen.dart';
 
 class ReadTab extends ConsumerStatefulWidget {
-  const ReadTab({super.key});
+  final bool active;
+  const ReadTab({super.key, required this.active});
 
   @override
   ConsumerState<ReadTab> createState() => _ReadTabState();
@@ -29,6 +30,15 @@ class _ReadTabState extends ConsumerState<ReadTab> {
   void initState() {
     super.initState();
     _loadLast();
+  }
+
+  @override
+  void didUpdateWidget(ReadTab old) {
+    super.didUpdateWidget(old);
+    // Tab nằm trong IndexedStack nên initState chỉ chạy lúc mở app: quay lại
+    // tab Đọc sau khi đọc truyện khác (từ Thư viện/Tìm kiếm) phải nạp lại
+    // "Đọc tiếp", không thì thẻ này cứ giữ link truyện cũ lúc mở app.
+    if (widget.active && !old.active) _loadLast();
   }
 
   Future<void> _loadLast() async {

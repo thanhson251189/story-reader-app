@@ -71,7 +71,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
         children: [
           LibraryScreen(active: _tab == 0),
           const SearchScreen(),
-          const ReadTab(),
+          ReadTab(active: _tab == 2),
         ],
       ),
       bottomNavigationBar: NavigationBar(

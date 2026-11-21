@@ -105,6 +105,20 @@ class AppUpdater {
     }
   }
 
+  /// Xoá file APK cài đặt còn sót từ lần cập nhật trước. Trình cài hệ thống
+  /// không gọi lại app khi cài xong nên không biết được khoảnh khắc "cài
+  /// xong" chính xác — nhưng lần đầu mở app sau khi cài là chắc chắn sau đó,
+  /// và file này không còn dùng được nữa (lần tải kế luôn ghi đè file mới).
+  /// Xoá cả thư mục update cho sạch; lỗi bỏ qua, không ảnh hưởng app.
+  static Future<void> cleanupLeftoverApk() async {
+    try {
+      final dir = Directory(
+        p.join((await getTemporaryDirectory()).path, 'update'),
+      );
+      if (await dir.exists()) await dir.delete(recursive: true);
+    } catch (_) {}
+  }
+
   static Future<bool> showIfAny(BuildContext context, AppDb db) async {
     final update = await AppUpdater().check();
     if (update == null) return false;

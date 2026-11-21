@@ -4,7 +4,18 @@ import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
+import 'package:path_provider_platform_interface/path_provider_platform_interface.dart';
 import 'package:story_reader/update/app_updater.dart';
+
+/// Giả lập nền path_provider thuần Dart (KHÔNG dùng TestWidgetsFlutterBinding:
+/// binding chặn HTTP thật, làm hỏng các test tải file qua server loopback).
+class FakePathProvider extends PathProviderPlatform {
+  final String tempPath;
+  FakePathProvider(this.tempPath);
+
+  @override
+  Future<String?> getTemporaryPath() async => tempPath;
+}
 
 void main() {
   late HttpServer server;
@@ -13,6 +24,8 @@ void main() {
   setUp(() async {
     server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
     tmp = await Directory.systemTemp.createTemp('apk_dl_test');
+    // Trỏ thư mục tạm về tmp của riêng test (cleanupLeftoverApk dùng nó).
+    PathProviderPlatform.instance = FakePathProvider(tmp.path);
   });
 
   tearDown(() async {
@@ -103,5 +116,21 @@ void main() {
       throwsA(isA<TimeoutException>()),
     );
     expect(await File(path).exists(), false);
+  });
+
+  test('cleanupLeftoverApk xoá thư mục update còn sót từ lần cài trước', () async {
+    final updateDir = Directory(p.join(tmp.path, 'update'))
+      ..createSync(recursive: true);
+    File(p.join(updateDir.path, 'story_reader_update.apk'))
+        .writeAsStringSync('apk giả');
+
+    await AppUpdater.cleanupLeftoverApk();
+
+    expect(updateDir.existsSync(), false);
+  });
+
+  test('cleanupLeftoverApk không lỗi khi chưa có file nào để xoá', () async {
+    await AppUpdater.cleanupLeftoverApk();
+    await AppUpdater.cleanupLeftoverApk();
   });
 }
