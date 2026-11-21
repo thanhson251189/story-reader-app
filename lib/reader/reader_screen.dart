@@ -290,16 +290,9 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> with RouteAware {
       ),
     );
     if (map == null || !mounted) return;
-    final c = ChapterContent.fromJson(map);
-    final cleaned = ChapterContent(
-      url: c.url,
-      title: c.title,
-      paragraphs: c.paragraphs
-          .map(adapter.clean)
-          .where((p) => p.isNotEmpty)
-          .toList(),
-      nextUrl: c.nextUrl,
-      prevUrl: c.prevUrl,
+    final cleaned = WebFetcher.cleanChapter(
+      ChapterContent.fromJson(map),
+      adapter,
     );
     if (cleaned.paragraphs.isEmpty) {
       setState(
@@ -979,7 +972,7 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> with RouteAware {
     if (!active || chunkText.isEmpty) {
       return Text(p, key: key, style: style);
     }
-    final sentences = p.split(RegExp(r'(?<=[.!?…])\s+'));
+    final sentences = p.split(TtsPlayer.sentenceSplit);
     return Text.rich(
       key: key,
       TextSpan(

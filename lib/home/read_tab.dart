@@ -82,18 +82,7 @@ class _ReadTabState extends ConsumerState<ReadTab> {
     }
     final path = picked?.path;
     if (path == null || !mounted) return;
-    final ext = path.contains('.') ? path.split('.').last.toLowerCase() : '';
-    const supported = {'epub', 'mobi', 'azw', 'azw3', 'fb2', 'txt'};
-    if (!supported.contains(ext)) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            'Chưa hỗ trợ .$ext — chỉ đọc được EPUB, MOBI, FB2, TXT',
-          ),
-        ),
-      );
-      return;
-    }
+    // Đuôi không hỗ trợ do BookImporter chặn sớm và báo lỗi qua snackbar dưới.
     setState(() => _importing = true);
     try {
       final result = await BookImporter(ref.read(appDbProvider))

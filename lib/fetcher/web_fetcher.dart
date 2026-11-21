@@ -125,19 +125,23 @@ class WebFetcher {
           .where((r) => r.title.isNotEmpty && r.url.isNotEmpty)
           .toList();
 
+  // Làm sạch chương bóc từ WebView (headless hoặc fallback thủ công):
+  // áp textCleanup theo adapter và bỏ đoạn rỗng.
+  static ChapterContent cleanChapter(ChapterContent c, SourceAdapter a) =>
+      ChapterContent(
+        url: c.url,
+        title: c.title,
+        paragraphs: c.paragraphs
+            .map(a.clean)
+            .where((p) => p.isNotEmpty)
+            .toList(),
+        nextUrl: c.nextUrl,
+        prevUrl: c.prevUrl,
+      );
+
   Future<ChapterContent> fetchChapter(String url, SourceAdapter adapter) async {
     final map = await _fetch(url, chapterJs(adapter));
-    final c = ChapterContent.fromJson(map);
-    return ChapterContent(
-      url: c.url,
-      title: c.title,
-      paragraphs: c.paragraphs
-          .map(adapter.clean)
-          .where((p) => p.isNotEmpty)
-          .toList(),
-      nextUrl: c.nextUrl,
-      prevUrl: c.prevUrl,
-    );
+    return cleanChapter(ChapterContent.fromJson(map), adapter);
   }
 
   Future<NovelInfo> fetchStory(String url, SourceAdapter adapter) async {

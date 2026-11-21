@@ -102,6 +102,30 @@ void main() {
     expect(book.chapters.first.paragraphs, ['Nội dung một.']);
   });
 
+  test('cleanChapter áp textCleanup và bỏ đoạn rỗng', () {
+    final a = SourceAdapter.fromJson({
+      'domain': 'x.com',
+      'selectors': {'content': '#c'},
+      'textCleanup': [
+        {'pattern': 'ADS', 'replacement': ''}
+      ],
+    });
+    final c = WebFetcher.cleanChapter(
+      ChapterContent(
+        url: 'u',
+        title: 't',
+        paragraphs: ['hello ADS', '', '   '],
+        nextUrl: 'u2',
+        prevUrl: 'u0',
+      ),
+      a,
+    );
+    expect(c.paragraphs, ['hello']);
+    expect(c.url, 'u');
+    expect(c.nextUrl, 'u2');
+    expect(c.prevUrl, 'u0');
+  });
+
   test('storyUrlFromChapter', () {
     expect(storyUrlFromChapter('book:abc123:4'), 'book:abc123');
     expect(storyUrlFromChapter('https://x.com/truyen/chuong-1'), 'https://x.com/truyen');

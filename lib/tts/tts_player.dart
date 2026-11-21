@@ -34,7 +34,10 @@ class TtsPlayer extends ChangeNotifier {
   ChapterContent? chapter;
   bool playing = false;
   bool loading = false;
-  double rate = 0.5;
+  // Tốc độ là speed tuyệt đối của just_audio (1.0 = bình thường) vì âm thanh
+  // là file WAV synthesizeToFile rồi phát lại, không phải thang 0.5=chuẩn
+  // của setSpeechRate (giá trị mặc định 0.5 cũ là để lại từ thời _tts.speak).
+  double rate = 1.0;
   double pitch = 1.0;
   List<Map<String, String>> voices = [];
   Map<String, String>? currentVoice;
@@ -64,6 +67,10 @@ class TtsPlayer extends ChangeNotifier {
     });
   }
 
+  // Tách câu dùng chung cho chunkify (TTS) và tô sáng câu đang đọc trong
+  // reader: hai nơi phải cùng một quy tắc nếu không highlight sẽ lệch chunk.
+  static final sentenceSplit = RegExp(r'(?<=[.!?…])\s+');
+
   int get currentParaIndex => chunks.isEmpty
       ? -1
       : chunks[_index.clamp(0, chunks.length - 1)].paraIndex;
@@ -76,7 +83,7 @@ class TtsPlayer extends ChangeNotifier {
     final langResult = await _tts.setLanguage('vi-VN');
     await _tts.awaitSynthCompletion(true);
     await _tts.setVolume(1.0);
-    rate = double.tryParse(await db.getSetting('ttsRate') ?? '') ?? 0.5;
+    rate = double.tryParse(await db.getSetting('ttsRate') ?? '') ?? 1.0;
     pitch = double.tryParse(await db.getSetting('ttsPitch') ?? '') ?? 1.0;
     await _tts.setPitch(pitch);
     await reloadVoices();
@@ -191,7 +198,7 @@ class TtsPlayer extends ChangeNotifier {
     final out = <SpeakChunk>[];
     for (var i = 0; i < c.paragraphs.length; i++) {
       final sentences = c.paragraphs[i]
-          .split(RegExp(r'(?<=[.!?…])\s+'))
+          .split(sentenceSplit)
           .where((s) => s.trim().isNotEmpty)
           .toList();
       final merged = <String>[];

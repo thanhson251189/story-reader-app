@@ -21,8 +21,14 @@ class BookImporter {
   BookImporter(this.db);
 
   Future<BookImportResult> importFile(String path) async {
-    final bytes = await File(path).readAsBytes();
     final ext = p.extension(path).toLowerCase().replaceFirst('.', '');
+    // Chặn sớm trước khi đọc cả file vào bộ nhớ (FilePicker cho chọn loại nào).
+    if (!LocalBook.formats.contains(ext)) {
+      throw FormatException(
+        'Chưa hỗ trợ .$ext — chỉ đọc được EPUB, MOBI, FB2, TXT',
+      );
+    }
+    final bytes = await File(path).readAsBytes();
     final name = p.basenameWithoutExtension(path);
     final book = await LocalBook.parse(ext, bytes, name);
     if (book.chapters.isEmpty) throw FormatException('Không đọc được nội dung sách');

@@ -1,39 +1,26 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
-import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import 'core/providers.dart';
 import 'home/read_tab.dart';
 import 'library/library_screen.dart';
 import 'search/search_screen.dart';
-import 'sources/registry.dart';
 import 'update/app_updater.dart';
 
-class HomeScreen extends ConsumerStatefulWidget {
+class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
 
   @override
-  ConsumerState<HomeScreen> createState() => _HomeScreenState();
+  State<HomeScreen> createState() => _HomeScreenState();
 }
 
-class _HomeScreenState extends ConsumerState<HomeScreen> {
+class _HomeScreenState extends State<HomeScreen> {
   int _tab = 2;
 
   @override
   void initState() {
     super.initState();
-    unawaited(_warmRegistry());
     unawaited(AppUpdater.showIfAny(context).catchError((_) => false));
-  }
-
-  Future<void> _warmRegistry() async {
-    try {
-      await SourceRegistry(
-        ref.read(appDbProvider),
-        ref.read(adapterRepoProvider),
-      ).loadIndex();
-    } catch (_) {}
   }
 
   @override

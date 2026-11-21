@@ -1,6 +1,6 @@
 # Story Reader
 
-App Android đọc/nghe truyện từ web truyện dịch (mục tiêu đầu tiên: truyendich.space). WebView thật tải trang như người dùng, inject JS bóc text chương, hiển thị trong giao diện đọc sạch; TTS tiếng Việt tự chuyển chương. Kế hoạch chi tiết: [Ke-Hoach-App-Doc-Truyen.md](Ke-Hoach-App-Doc-Truyen.md).
+App Android đọc/nghe truyện từ web truyện dịch (mục tiêu đầu tiên: truyendich.us). WebView thật tải trang như người dùng, inject JS bóc text chương, hiển thị trong giao diện đọc sạch; TTS tiếng Việt tự chuyển chương. Kế hoạch chi tiết: [Ke-Hoach-App-Doc-Truyen.md](Ke-Hoach-App-Doc-Truyen.md).
 
 ## Môi trường đã cài (máy này)
 

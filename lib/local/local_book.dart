@@ -24,6 +24,11 @@ class LocalBook {
     this.cover,
   });
 
+  // Đuôi file parse() thử đọc được; BookImporter dùng set này để chặn sớm
+  // trước khi đọc cả file vào bộ nhớ. azw3 được thử để trả lỗi rõ ràng
+  // (KF8 chưa hỗ trợ) dù không quảng cáo ở nút nhập sách.
+  static const formats = {'epub', 'mobi', 'azw', 'azw3', 'fb2', 'txt'};
+
   static Future<LocalBook> parse(String ext, Uint8List bytes, String fileName) async {
     switch (ext) {
       case 'epub':
