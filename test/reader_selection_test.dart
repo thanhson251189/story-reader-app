@@ -193,4 +193,65 @@ void main() {
     expect(await db.getWordFixes(), contains(('gi ết', 'giết')));
     expect(find.text('Copy'), findsNothing);
   });
+
+  testWidgets('Mở tìm kiếm: sheet hiện ngay trên bàn phím, không bị trùm', (
+    tester,
+  ) async {
+    final db = FakeAppDb();
+    db.cache['https://x.test/c/1'] = ChapterContent(
+      url: 'https://x.test/c/1',
+      title: 'Chương 1',
+      paragraphs: ['Đoạn một có chữ cần tìm.', 'Đoạn hai bình thường.'],
+    );
+    await pumpReader(tester, db);
+
+    // Giả bàn phím chiếm 300px LOGICAL đáy màn (FakeViewPadding tính theo
+    // pixel vật lý nên phải nhân devicePixelRatio) như trên máy thật lúc ô
+    // nhập có focus.
+    tester.view.viewInsets = FakeViewPadding(
+      bottom: 300 * tester.view.devicePixelRatio,
+    );
+    addTearDown(tester.view.resetViewInsets);
+
+    await tester.tap(find.byTooltip('Tìm trong chương'));
+    await tester.pumpAndSettle();
+
+    // Sheet phải hiện đủ phần nhập + gợi ý NGAY khi mở, nằm trên bàn phím
+    // (bug đã gặp: sheet không nhính theo viewInsets nên bị trùm hết).
+    expect(find.text('Nhập từ khoá để tìm trong chương'), findsOneWidget);
+    final hint = tester.getRect(find.text('Nhập từ khoá để tìm trong chương'));
+    final screenH = tester.view.physicalSize.height / tester.view.devicePixelRatio;
+    expect(hint.bottom, lessThan(screenH - 300), reason: 'sheet bị bàn phím đè: $hint');
+  });
+
+  testWidgets('Kết quả tìm kiếm tô màu phần khớp từ khoá', (tester) async {
+    final db = FakeAppDb();
+    db.cache['https://x.test/c/1'] = ChapterContent(
+      url: 'https://x.test/c/1',
+      title: 'Chương 1',
+      paragraphs: ['Đoạn một có chữ cần tìm.', 'Đoạn hai bình thường.'],
+    );
+    await pumpReader(tester, db);
+
+    await tester.tap(find.byTooltip('Tìm trong chương'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField), 'cần');
+    await tester.pumpAndSettle();
+
+    expect(find.text('1 đoạn khớp'), findsOneWidget);
+
+    // Tiêu đề kết quả là Text.rich với span "cần" mang nền tô màu.
+    final tile = tester
+        .widgetList<Text>(
+          find.byWidgetPredicate((w) => w is Text && w.textSpan != null),
+        )
+        .where((t) => t.textSpan!.toPlainText().contains('Đoạn một'))
+        .single;
+    final spans = (tile.textSpan! as TextSpan).children!.cast<TextSpan>();
+    final highlighted = [
+      for (final s in spans)
+        if (s.style?.backgroundColor != null) s.text,
+    ];
+    expect(highlighted, ['cần']);
+  });
 }

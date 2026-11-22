@@ -29,6 +29,38 @@ class ReaderScreen extends ConsumerStatefulWidget {
     return TocScreen.fold(text).contains(TocScreen.fold(q));
   }
 
+  /// Tách [text] thành các TextSpan, chỗ khớp [query] (so sánh KHÔNG DẤU qua
+  /// fold) mang [matchStyle], phần còn lại mang [baseStyle]. fold giữ nguyên
+  /// độ dài từng ký tự nên vị trí khớp trong bản fold khớp 1-1 với bản gốc.
+  static List<TextSpan> highlightSpans(
+    String text,
+    String query,
+    TextStyle base,
+    TextStyle match,
+  ) {
+    final q = query.trim();
+    if (q.isEmpty) return [TextSpan(text: text, style: base)];
+    final fText = TocScreen.fold(text);
+    final fQuery = TocScreen.fold(q);
+    final spans = <TextSpan>[];
+    var start = 0;
+    var at = fText.indexOf(fQuery);
+    while (at >= 0) {
+      if (at > start) {
+        spans.add(TextSpan(text: text.substring(start, at), style: base));
+      }
+      spans.add(
+        TextSpan(text: text.substring(at, at + fQuery.length), style: match),
+      );
+      start = at + fQuery.length;
+      at = fText.indexOf(fQuery, start);
+    }
+    if (start < text.length) {
+      spans.add(TextSpan(text: text.substring(start), style: base));
+    }
+    return spans;
+  }
+
   @override
   ConsumerState<ReaderScreen> createState() => _ReaderScreenState();
 }
@@ -539,78 +571,103 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> with RouteAware {
             for (var i = 0; i < c.paragraphs.length; i++)
               if (ReaderScreen.paragraphMatches(c.paragraphs[i], q)) i,
           ];
-          return ConstrainedBox(
-            constraints: BoxConstraints(
-              maxHeight: MediaQuery.of(ctx).size.height * 0.8,
-            ),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 16, 16, 4),
-                  child: TextField(
-                    controller: _searchCtrl,
-                    autofocus: true,
-                    onChanged: (_) => setSheet(() {}),
-                    decoration: InputDecoration(
-                      isDense: true,
-                      prefixIcon: const Icon(Icons.search, size: 20),
-                      hintText: 'Tìm trong chương',
-                      suffixIcon: q.isEmpty
-                          ? null
-                          : IconButton(
-                              icon: const Icon(Icons.close, size: 18),
-                              tooltip: 'Xoá từ khoá',
-                              onPressed: () {
-                                _searchCtrl.clear();
-                                setSheet(() {});
-                              },
-                            ),
+          // Nhích sheet lên TRÊN bàn phím: không có dòng này thì sheet nằm
+          // dưới keyboard — lúc mới mở sheet chỉ có ô nhập (chưa có kết quả
+          // nên gập gọn) là bị bàn phím trùm hết, nhìn như không hiện gì;
+          // gõ chữ có kết quả thì sheet giãn cao mới ló ra (bug đã gặp).
+          final insets = MediaQuery.of(ctx).viewInsets.bottom;
+          return Padding(
+            padding: EdgeInsets.only(bottom: insets),
+            child: ConstrainedBox(
+              constraints: BoxConstraints(
+                maxHeight:
+                    (MediaQuery.of(ctx).size.height * 0.8 - insets).clamp(
+                  220.0,
+                  MediaQuery.of(ctx).size.height * 0.8,
+                ),
+              ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 16, 16, 4),
+                    child: TextField(
+                      controller: _searchCtrl,
+                      autofocus: true,
+                      onChanged: (_) => setSheet(() {}),
+                      decoration: InputDecoration(
+                        isDense: true,
+                        prefixIcon: const Icon(Icons.search, size: 20),
+                        hintText: 'Tìm trong chương',
+                        suffixIcon: q.isEmpty
+                            ? null
+                            : IconButton(
+                                icon: const Icon(Icons.close, size: 18),
+                                tooltip: 'Xoá từ khoá',
+                                onPressed: () {
+                                  _searchCtrl.clear();
+                                  setSheet(() {});
+                                },
+                              ),
+                      ),
                     ),
                   ),
-                ),
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 16),
-                  child: Align(
-                    alignment: Alignment.centerLeft,
-                    child: Text(
-                      q.trim().isEmpty
-                          ? 'Nhập từ khoá để tìm trong chương'
-                          : '${hits.length} đoạn khớp',
-                      style: Theme.of(ctx).textTheme.bodySmall,
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 16),
+                    child: Align(
+                      alignment: Alignment.centerLeft,
+                      child: Text(
+                        q.trim().isEmpty
+                            ? 'Nhập từ khoá để tìm trong chương'
+                            : '${hits.length} đoạn khớp',
+                        style: Theme.of(ctx).textTheme.bodySmall,
+                      ),
                     ),
                   ),
-                ),
-                Flexible(
-                  child: ListView(
-                    shrinkWrap: true,
-                    padding: EdgeInsets.only(
-                      bottom: 12 + MediaQuery.of(ctx).padding.bottom,
-                    ),
-                    children: [
-                      if (q.trim().isNotEmpty && hits.isEmpty)
-                        Padding(
-                          padding: const EdgeInsets.all(16),
-                          child: Text('Không tìm thấy "$q" trong chương'),
-                        ),
-                      for (final i in hits)
-                        ListTile(
-                          dense: true,
-                          title: Text(
-                            c.paragraphs[i],
-                            maxLines: 3,
-                            overflow: TextOverflow.ellipsis,
+                  Flexible(
+                    child: ListView(
+                      shrinkWrap: true,
+                      padding: EdgeInsets.only(
+                        bottom: 12 + MediaQuery.of(ctx).padding.bottom,
+                      ),
+                      children: [
+                        if (q.trim().isNotEmpty && hits.isEmpty)
+                          Padding(
+                            padding: const EdgeInsets.all(16),
+                            child: Text('Không tìm thấy "$q" trong chương'),
                           ),
-                          subtitle: Text('Đoạn ${i + 1}'),
-                          onTap: () {
-                            Navigator.pop(ctx);
-                            _gotoParagraph(i);
-                          },
-                        ),
-                    ],
+                        for (final i in hits)
+                          ListTile(
+                            dense: true,
+                            // Tô nền phần khớp từ khoá để mắt bắt ngay chỗ
+                            // giống nhau giữa các kết quả.
+                            title: Text.rich(
+                              TextSpan(
+                                children: ReaderScreen.highlightSpans(
+                                  c.paragraphs[i],
+                                  q,
+                                  Theme.of(ctx).textTheme.bodyLarge ??
+                                      const TextStyle(),
+                                  const TextStyle(
+                                    backgroundColor: Color(0x66FFB74D),
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                              ),
+                              maxLines: 3,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                            subtitle: Text('Đoạn ${i + 1}'),
+                            onTap: () {
+                              Navigator.pop(ctx);
+                              _gotoParagraph(i);
+                            },
+                          ),
+                      ],
+                    ),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
           );
         },
