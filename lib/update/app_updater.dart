@@ -157,7 +157,8 @@ class _UpdateDialog extends StatefulWidget {
   State<_UpdateDialog> createState() => _UpdateDialogState();
 }
 
-class _UpdateDialogState extends State<_UpdateDialog> {
+class _UpdateDialogState extends State<_UpdateDialog>
+    with WidgetsBindingObserver {
   static const _mb = 1024 * 1024;
   static const _uiStep = 256 * 1024; // nhịp cập nhật progress bar
 
@@ -172,8 +173,63 @@ class _UpdateDialogState extends State<_UpdateDialog> {
   int? _total;
   String? _apkPath;
   String? _error;
+  // Quyền "cài ứng dụng không rõ nguồn": tra TRƯỚC khi tải — thiếu quyền mà
+  // để tải xong 60MB mới báo lỗi là phí cả mạng lẫn thời gian người dùng.
+  bool _canInstall = true;
+  bool _permChecked = false;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    _checkInstallPermission();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state != AppLifecycleState.resumed) return;
+    // Quay lại từ màn cấp quyền: tra lại quyền. Đã tải xong mà đủ quyền thì
+    // tự cài luôn — người dùng không phải bấm Cài đặt thêm lần nữa.
+    _checkInstallPermission().then((_) {
+      if (mounted && _canInstall && _downloaded && _apkPath != null) {
+        _install();
+      }
+    });
+  }
+
+  Future<void> _checkInstallPermission() async {
+    bool ok;
+    try {
+      ok =
+          await AppUpdater._installerChannel.invokeMethod<bool>(
+            'canInstallApks',
+          ) ??
+          true;
+    } catch (_) {
+      // Không tra được (máy lạ, test...) thì cứ vào flow tải — native sẽ
+      // chặn và mở màn cấp quyền ở bước cài nếu thật sự thiếu.
+      ok = true;
+    }
+    if (!mounted) return;
+    setState(() {
+      _canInstall = ok;
+      _permChecked = true;
+    });
+  }
+
+  Future<void> _openPermissionSettings() async {
+    try {
+      await AppUpdater._installerChannel.invokeMethod(
+        'openInstallPermissionSettings',
+      );
+    } catch (_) {}
+  }
 
   Future<void> _start() async {
+    if (!_canInstall) {
+      _openPermissionSettings();
+      return;
+    }
     if (widget.update.directApk) {
       await _download();
       if (_apkPath != null && mounted) await _install();
@@ -272,6 +328,7 @@ class _UpdateDialogState extends State<_UpdateDialog> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     // Đóng hộp thoại giữa lúc tải (chạm ngoài, nút hệ thống) cũng phải ngắt
     // tải: client không close là stream vẫn tải ngầm tới xong vô ích.
     _client?.close();
@@ -297,6 +354,29 @@ class _UpdateDialogState extends State<_UpdateDialog> {
   }
 
   Widget _content() {
+    if (!_permChecked) {
+      return const SizedBox(
+        height: 24,
+        child: Center(child: CircularProgressIndicator(strokeWidth: 2)),
+      );
+    }
+    if (!_canInstall && !_downloaded && _error == null) {
+      return Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'Cần quyền "Cài ứng dụng không rõ nguồn" để cài bản cập nhật.',
+          ),
+          const SizedBox(height: 8),
+          Text(
+            'Bấm "Cấp quyền" → bật cho Story Reader → quay lại app, ứng '
+            'dụng sẽ tự tải về và cài tiếp.',
+            style: Theme.of(context).textTheme.bodySmall,
+          ),
+        ],
+      );
+    }
     if (_downloading) {
       final total = _total;
       return Column(
@@ -340,6 +420,16 @@ class _UpdateDialogState extends State<_UpdateDialog> {
       onPressed: () => Navigator.pop(context),
       child: const Text('Để sau'),
     );
+    if (!_permChecked) return [later];
+    if (!_canInstall && !_downloaded && _error == null) {
+      return [
+        later,
+        FilledButton(
+          onPressed: _openPermissionSettings,
+          child: const Text('Cấp quyền'),
+        ),
+      ];
+    }
     if (_downloading) {
       return [TextButton(onPressed: _cancel, child: const Text('Huỷ'))];
     }

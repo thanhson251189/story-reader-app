@@ -49,9 +49,31 @@ class MainActivity : AudioServiceActivity() {
                         }
                     }
                 }
+                "canInstallApks" -> result.success(canInstallApks())
+                "openInstallPermissionSettings" -> {
+                    openInstallPermissionSettings()
+                    result.success(null)
+                }
                 else -> result.notImplemented()
             }
         }
+    }
+
+    // Đủ quyền "cài ứng dụng không rõ nguồn" chưa? Android < 8 không cần.
+    private fun canInstallApks(): Boolean =
+        Build.VERSION.SDK_INT < Build.VERSION_CODES.O ||
+            packageManager.canRequestPackageInstalls()
+
+    // Mở màn hình hệ thống cấp quyền cài ứng dụng không rõ nguồn cho app.
+    private fun openInstallPermissionSettings() {
+        try {
+            startActivity(
+                Intent(
+                    Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
+                    Uri.parse("package:$packageName")
+                )
+            )
+        } catch (_: Exception) {}
     }
 
     // Mở trình cài hệ thống cho APK đã tải về. targetSdk >= 24 bắt buộc dùng
@@ -63,17 +85,8 @@ class MainActivity : AudioServiceActivity() {
         if (!file.exists()) {
             throw IllegalStateException("File APK không còn, hãy tải lại")
         }
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
-            !packageManager.canRequestPackageInstalls()
-        ) {
-            try {
-                startActivity(
-                    Intent(
-                        Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
-                        Uri.parse("package:$packageName")
-                    )
-                )
-            } catch (_: Exception) {}
+        if (!canInstallApks()) {
+            openInstallPermissionSettings()
             return false
         }
         val uri = FileProvider.getUriForFile(this, "$packageName.fileprovider", file)
