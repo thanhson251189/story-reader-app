@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../core/providers.dart';
+import '../data/app_db.dart';
 
 /// Màn quản lý danh sách từ/cụm từ sửa lỗi: nguồn truyện đôi khi chèn nhầm
 /// khoảng trắng giữa các ký tự ("gi ết", "thi th ể") — người dùng dạy app
@@ -38,28 +39,16 @@ class _WordFixScreenState extends ConsumerState<WordFixScreen> {
     await _load();
   }
 
-  // Hộp thoại thêm/sửa một cặp: [existing] null là thêm mới. Trả về null là
-  // huỷ, không lưu gì. Lỗi hiển thị ngay trong hộp thoại (cụm từ trống,
-  // trùng với dòng khác) — không đóng hộp thoại để người dùng sửa tiếp.
+  // Hộp thoại thêm/sửa một cặp: [existing] null là thêm mới. Lưu qua helper
+  // dùng chung (xem showWordFixEditor), xong nạp lại danh sách.
   Future<void> _openEditor({(String, String)? existing}) async {
-    final result = await showDialog<(String, String)>(
-      context: context,
-      builder: (_) => _FixDialog(
-        initialWrong: existing?.$1,
-        initialRight: existing?.$2,
-        fixes: _fixes,
-        isEdit: existing != null,
-      ),
+    final ok = await showWordFixEditor(
+      context,
+      ref.read(appDbProvider),
+      initialWrong: existing?.$1,
+      initialRight: existing?.$2,
     );
-    if (result == null) return;
-    final next = [..._fixes];
-    final at = existing == null ? -1 : next.indexOf(existing);
-    if (at >= 0) {
-      next[at] = result;
-    } else {
-      next.add(result);
-    }
-    await _save(next);
+    if (ok) await _load();
   }
 
   Future<void> _delete(int index) async {
@@ -168,6 +157,40 @@ class _WordFixScreenState extends ConsumerState<WordFixScreen> {
       ),
     );
   }
+}
+
+/// Mở hộp thoại thêm/sửa một cụm từ sửa lỗi và LƯU NGAY vào DB. Dùng chung
+/// cho màn quản lý (tab Cài đặt) và nút "Đổi từ" khi bôi đen text ở màn đọc.
+/// Trả về true nếu đã lưu — nơi gọi nên áp lại bản sửa cho nội dung đang mở.
+Future<bool> showWordFixEditor(
+  BuildContext context,
+  AppDb db, {
+  String? initialWrong,
+  String? initialRight,
+}) async {
+  final fixes = await db.getWordFixes();
+  if (!context.mounted) return false;
+  final result = await showDialog<(String, String)>(
+    context: context,
+    builder: (_) => _FixDialog(
+      initialWrong: initialWrong,
+      initialRight: initialRight,
+      fixes: fixes,
+      isEdit: initialWrong != null && initialRight != null,
+    ),
+  );
+  if (result == null) return false;
+  final next = [...fixes];
+  final at = initialWrong == null
+      ? -1
+      : next.indexWhere((f) => f.$1 == initialWrong);
+  if (at >= 0) {
+    next[at] = result;
+  } else {
+    next.add(result);
+  }
+  await db.setWordFixes(next);
+  return true;
 }
 
 /// Hộp thoại nhập cặp (sai → đúng). StatefulWidget tự giữ controller: pop về

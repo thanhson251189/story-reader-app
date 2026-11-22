@@ -63,13 +63,22 @@ void main() {
     fail('UI không cập nhật đúng sau thao tác');
   }
 
+  /// Bấm mở hộp thoại thêm/sửa: chuỗi mở hộp thoại có MỘT lần đọc DB trước
+  /// showDialog (showWordFixEditor nạp danh sách để kiểm tra trùng) nên tap
+  /// phải chạy trong runAsync, không thì hộp thoại không bao giờ mở.
+  Future<void> openEditor(WidgetTester tester, Finder tapTarget) =>
+      tester.runAsync(() async {
+        await tester.tap(tapTarget);
+        await Future<void>.delayed(const Duration(milliseconds: 100));
+        await tester.pumpAndSettle();
+      });
+
   testWidgets('Thêm cụm từ: hiện danh sách và lưu DB', (tester) async {
     final db = AppDb(fileName: 'test_word_fix_screen.db');
     await pumpScreen(tester, db);
     expect(find.text('Chưa có cụm từ nào'), findsOneWidget);
 
-    await tester.tap(find.text('Thêm cụm từ'));
-    await tester.pumpAndSettle();
+    await openEditor(tester, find.text('Thêm cụm từ'));
     await tester.enterText(find.byType(TextField).at(0), 'gi ết');
     await tester.enterText(find.byType(TextField).at(1), 'giết');
     await tester.tap(find.text('Lưu'));
@@ -93,8 +102,7 @@ void main() {
     await tester.runAsync(() => db.setWordFixes([('gi ết', 'giết')]));
     await pumpScreen(tester, db);
 
-    await tester.tap(find.text('Thêm cụm từ'));
-    await tester.pumpAndSettle();
+    await openEditor(tester, find.text('Thêm cụm từ'));
     // Trùng cụm từ đã có.
     await tester.enterText(find.byType(TextField).at(0), 'gi ết');
     await tester.enterText(find.byType(TextField).at(1), 'khác');
@@ -123,8 +131,7 @@ void main() {
     await tester.runAsync(() => db.setWordFixes([('thi th ể', 'thi thể')]));
     await pumpScreen(tester, db);
 
-    await tester.tap(find.text('thi th ể'));
-    await tester.pumpAndSettle();
+    await openEditor(tester, find.text('thi th ể'));
     await tester.enterText(find.byType(TextField).at(1), 'thi thể.');
     await tester.tap(find.text('Lưu'));
     await waitUntil(

@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../core/errors.dart';
 import '../core/models.dart';
@@ -11,6 +12,7 @@ import '../core/providers.dart';
 import '../data/app_db.dart';
 import '../fetcher/web_fetcher.dart';
 import '../fetcher/webview_fallback_screen.dart';
+import '../settings/word_fix_screen.dart';
 import '../sources/source_login_screen.dart';
 import '../tts/tts_player.dart';
 import 'toc_screen.dart';
@@ -35,6 +37,11 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> with RouteAware {
   final _scroll = ScrollController();
   Timer? _saveTimer;
   ChapterContent? _content;
+  // Bản gốc TRƯỚC khi áp sửa từ: thêm cụm từ mới lúc đang đọc (bôi đen →
+  // "Đổi từ") cần áp lại từ bản gốc, không phải chồng sửa lên bản đã sửa.
+  ChapterContent? _contentRaw;
+  // Text đang bôi đen (onSelectionChanged của SelectionArea báo về).
+  String? _selectedText;
   bool _loading = true;
   String? _error;
   String? _failedUrl;
@@ -57,6 +64,7 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> with RouteAware {
     if (_openReaders.isEmpty) return null;
     return _openReaders.last._onNativeKey(call);
   }
+
   bool _isTopRoute = true;
   List<GlobalKey> _paraKeys = [];
   int _lastSpokenPara = -1;
@@ -171,6 +179,7 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> with RouteAware {
       }
       setState(() {
         _content = pc;
+        _contentRaw = pc;
         _paraKeys = List.generate(pc.paragraphs.length, (_) => GlobalKey());
         _flashPara = -1;
         _lastSpokenPara = -1;
@@ -281,6 +290,7 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> with RouteAware {
       if (!mounted) return;
       setState(() {
         _content = fixed;
+        _contentRaw = cc;
         _paraKeys = List.generate(fixed.paragraphs.length, (_) => GlobalKey());
         _flashPara = -1;
         _loading = false;
@@ -394,6 +404,7 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> with RouteAware {
     if (!mounted) return;
     setState(() {
       _content = shown;
+      _contentRaw = filled;
       _paraKeys = List.generate(shown.paragraphs.length, (_) => GlobalKey());
       _flashPara = -1;
       _error = null;
@@ -1305,44 +1316,129 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> with RouteAware {
         child: SingleChildScrollView(
           controller: _scroll,
           padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                c.title,
-                style: style.copyWith(
-                  fontSize: _fontSize + 4,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-              const SizedBox(height: 16),
-              for (var i = 0; i < c.paragraphs.length; i++)
-                Padding(
-                  padding: EdgeInsets.only(bottom: _fontSize * 0.7),
-                  child: _paragraph(
-                    i,
-                    c.paragraphs[i],
-                    style,
-                    activePara == i,
-                    chunkText,
+          // Bôi đen được chữ khi đọc (long-press/kéo): menu Copy, Đổi từ
+          // (thêm vào danh sách sửa lỗi), Dịch (Google Translate). Chỉ có
+          // kéo ngang để chuyển chương nên không giành gesture với chọn text.
+          child: SelectionArea(
+            onSelectionChanged: (sel) => _selectedText = sel?.plainText,
+            contextMenuBuilder: _selectionMenu,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  c.title,
+                  style: style.copyWith(
+                    fontSize: _fontSize + 4,
+                    fontWeight: FontWeight.bold,
                   ),
                 ),
-              if (c.nextUrl != null)
-                Center(
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 24),
-                    child: FilledButton.icon(
-                      onPressed: () => _load(c.nextUrl!),
-                      icon: const Icon(Icons.arrow_forward),
-                      label: const Text('Chương sau'),
+                const SizedBox(height: 16),
+                for (var i = 0; i < c.paragraphs.length; i++)
+                  Padding(
+                    padding: EdgeInsets.only(bottom: _fontSize * 0.7),
+                    child: _paragraph(
+                      i,
+                      c.paragraphs[i],
+                      style,
+                      activePara == i,
+                      chunkText,
                     ),
                   ),
-                ),
-            ],
+                if (c.nextUrl != null)
+                  Center(
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 24),
+                      child: FilledButton.icon(
+                        onPressed: () => _load(c.nextUrl!),
+                        icon: const Icon(Icons.arrow_forward),
+                        label: const Text('Chương sau'),
+                      ),
+                    ),
+                  ),
+              ],
+            ),
           ),
         ),
       ),
     );
+  }
+
+  // ---- Bôi đen text khi đọc: menu Copy / Đổi từ / Dịch ----
+
+  Widget _selectionMenu(BuildContext context, SelectableRegionState state) {
+    return AdaptiveTextSelectionToolbar.buttonItems(
+      anchors: TextSelectionToolbarAnchors(
+        primaryAnchor: state.selectionEndpoints.first.point,
+        secondaryAnchor: state.selectionEndpoints.last.point,
+      ),
+      buttonItems: [
+        ContextMenuButtonItem(
+          label: 'Copy',
+          onPressed: () {
+            final text = _selectedText ?? '';
+            if (text.isNotEmpty) {
+              Clipboard.setData(ClipboardData(text: text));
+            }
+            state.clearSelection();
+          },
+        ),
+        ContextMenuButtonItem(
+          label: 'Đổi từ',
+          onPressed: () => _fixSelected(state),
+        ),
+        ContextMenuButtonItem(
+          label: 'Dịch',
+          onPressed: () => _translateSelected(state),
+        ),
+      ],
+    );
+  }
+
+  /// Đổi từ: thêm vào danh sách sửa lỗi với cụm từ đang bôi đen, lưu xong áp
+  /// lại bản sửa NGAY cho chương đang mở (không phải mở lại chương).
+  Future<void> _fixSelected(SelectableRegionState state) async {
+    final text = (_selectedText ?? '').trim();
+    state.clearSelection();
+    if (text.isEmpty || !mounted) return;
+    final ok = await showWordFixEditor(
+      context,
+      ref.read(appDbProvider),
+      initialWrong: text,
+    );
+    if (!ok || !mounted) return;
+    final raw = _contentRaw;
+    if (raw == null) return;
+    final fixed = await ref.read(appDbProvider).fixWords(raw);
+    if (!mounted) return;
+    setState(() {
+      _content = fixed;
+      _paraKeys = List.generate(fixed.paragraphs.length, (_) => GlobalKey());
+      _flashPara = -1;
+    });
+  }
+
+  /// Dịch: mở Google Translate với text đang bôi đen (trình duyệt ngoài).
+  Future<void> _translateSelected(SelectableRegionState state) async {
+    final text = (_selectedText ?? '').trim();
+    state.clearSelection();
+    if (text.isEmpty || !mounted) return;
+    try {
+      await launchUrl(
+        Uri.parse(
+          'https://translate.google.com/'
+          '?text=${Uri.encodeQueryComponent(text)}&op=translate',
+        ),
+        mode: LaunchMode.externalApplication,
+      );
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Không mở được trình dịch: ${friendlyError(e)}'),
+          ),
+        );
+      }
+    }
   }
 
   Widget _paragraph(

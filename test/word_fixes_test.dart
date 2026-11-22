@@ -28,7 +28,33 @@ void main() {
     final db = AppDb(fileName: 'test_word_fixes.db');
     expect(await db.getWordFixes(), isEmpty);
     final c = chapter();
-    expect(await db.fixWords(c), same(c));
+    final fixed = await db.fixWords(c);
+    expect(fixed.url, c.url);
+    expect(fixed.title, c.title);
+    expect(fixed.paragraphs, c.paragraphs);
+    expect(fixed.nextUrl, c.nextUrl);
+  });
+
+  test('Chuẩn hóa bỏ ký tự rác chèn giữa chữ ("s.á.t" → "sát")', () async {
+    final db = AppDb(fileName: 'test_word_fixes.db');
+    final fixed = await db.fixWords(
+      ChapterContent(
+        url: 'u',
+        title: 'C\u200Bhương 1',
+        paragraphs: [
+          'Hắn s.á.t người rồi.',
+          'Tôi...anh không nói dối, kết thúc.',
+          'b\u00ADát và 1.5 triệu.',
+        ],
+      ),
+    );
+    // Chấm giữa chữ bị bỏ; ký tự vô hình (zero-width, soft hyphen) bị bỏ.
+    expect(fixed.title, 'Chương 1');
+    expect(fixed.paragraphs[0], 'Hắn sát người rồi.');
+    expect(fixed.paragraphs[2], 'bát và 1.5 triệu.');
+    // Chấm lửng run nhiều chấm + chấm câu (sau nó là khoảng trắng/hết câu)
+    // giữ nguyên.
+    expect(fixed.paragraphs[1], 'Tôi...anh không nói dối, kết thúc.');
   });
 
   test('set/get giữ thứ tự, fixWords áp tiêu đề + từng đoạn, giữ URL', () async {

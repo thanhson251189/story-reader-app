@@ -145,7 +145,9 @@ class AppDb {
     final pinnedUrls = <String>{};
     final urls = list.map((c) => c.url).toList();
     for (var i = 0; i < urls.length; i += _pinQueryBatch) {
-      final end = i + _pinQueryBatch > urls.length ? urls.length : i + _pinQueryBatch;
+      final end = i + _pinQueryBatch > urls.length
+          ? urls.length
+          : i + _pinQueryBatch;
       final chunk = urls.sublist(i, end);
       final ph = List.filled(chunk.length, '?').join(',');
       final rows = await db.query(
@@ -486,21 +488,49 @@ class AppDb {
     }
   }
 
-  Future<void> setWordFixes(List<(String, String)> fixes) =>
-      setSetting(
-        wordFixesKey,
-        jsonEncode([for (final (from, to) in fixes) [from, to]]),
-      );
+  Future<void> setWordFixes(List<(String, String)> fixes) => setSetting(
+    wordFixesKey,
+    jsonEncode([
+      for (final (from, to) in fixes) [from, to],
+    ]),
+  );
+
+  /// Ký tự rác một số nguồn cài vào GIỮA các chữ để chống copy ("s.á.t" thay
+  /// vì "sát"): dấu chấm và họ hàng của nó đứng kề sát chữ hai bên. Dấu chấm
+  /// câu thật luôn có khoảng trắng hoặc hết câu sau nó nên không bị đụng tới;
+  /// chấm lửng "tôi...anh" là RUN nhiều chấm — chỉ bỏ run ĐÚNG MỘT chấm để
+  /// không xé vỡ dấu lười biếng.
+  static final _dotJunk = RegExp(
+    r'(?<=[\p{L}])[.·‧․∙•⋅](?=[\p{L}])',
+    unicode: true,
+  );
+
+  /// Ký tự vô hình chen vào từ (zero-width space/ZWNJ/ZWJ, BOM, soft hyphen).
+  static final _invisibleJunk = RegExp('[\u200B\u200C\u200D\uFEFF\u00AD]');
+
+  static String _cleanJunk(String s) =>
+      s.replaceAll(_invisibleJunk, '').replaceAll(_dotJunk, '');
 
   /// Áp danh sách từ sửa lỗi vào tiêu đề + từng đoạn của nội dung chương.
-  /// Khớp nguyên văn (phân biệt hoa thường), áp theo thứ tự trong danh sách.
-  /// CHỈ gọi ở đường hiển thị/phát (màn đọc, nghe đọc) — không sửa trước khi
-  /// ghi cache: cache giữ bản gốc thì xoá/sửa một cụm từ trong danh sách có
-  /// tác dụng ngược ngay trên cả chương đã tải sẵn, không kẹt lỗi sai cũ.
+  /// Chạy chuẩn hóa ký tự rác TRƯỚC, rồi mới áp danh sách người dùng (mục
+  /// nhập của người dùng viết theo bản đã chuẩn hóa). Khớp nguyên văn (phân
+  /// biệt hoa thường), áp theo thứ tự trong danh sách. CHỈ gọi ở đường hiển
+  /// thị/phát (màn đọc, nghe đọc) — không sửa trước khi ghi cache: cache giữ
+  /// bản gốc thì xoá/sửa một cụm từ trong danh sách có tác dụng ngược ngay
+  /// trên cả chương đã tải sẵn, không kẹt lỗi sai cũ.
   Future<ChapterContent> fixWords(ChapterContent c) async {
     final fixes = await getWordFixes();
-    if (fixes.isEmpty) return c;
+    if (fixes.isEmpty) {
+      return ChapterContent(
+        url: c.url,
+        title: _cleanJunk(c.title),
+        paragraphs: [for (final pa in c.paragraphs) _cleanJunk(pa)],
+        nextUrl: c.nextUrl,
+        prevUrl: c.prevUrl,
+      );
+    }
     String fix(String s) {
+      s = _cleanJunk(s);
       for (final (from, to) in fixes) {
         s = s.replaceAll(from, to);
       }
