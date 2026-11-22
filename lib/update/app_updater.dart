@@ -20,11 +20,15 @@ class UpdateInfo {
   // Release kèm APK thì là link tải trực tiếp; không thì là link trang release.
   final String url;
   final bool directApk;
+  // Dung lượng file APK theo GitHub (byte) — đối chiếu sau khi tải để bắt
+  // file cụt/hỏng mà stream không báo lỗi.
+  final int? expectedSize;
   UpdateInfo({
     required this.version,
     required this.changelog,
     required this.url,
     required this.directApk,
+    this.expectedSize,
   });
 }
 
@@ -59,6 +63,7 @@ class AppUpdater {
           ? assets.first['browser_download_url'] as String
           : j['html_url'] as String,
       directApk: assets.isNotEmpty,
+      expectedSize: assets.isNotEmpty ? assets.first['size'] as int? : null,
     );
   }
 
@@ -66,12 +71,18 @@ class AppUpdater {
   /// server trả về). Lỗi thì xoá file lẻ. Truyền client từ ngoài để huỷ được;
   /// [stallTimeout] là khoảng nghỉ tối đa giữa hai lần nhận dữ liệu — nghẽn
   /// mạng quá lâu sẽ hủy để dialog không treo ở trạng thái đang tải.
+  /// [expectedSize] là dung lượng APK theo GitHub — đối chiếu sau khi tải.
+  /// KHÔNG được tin stream là đủ: kết nối đóng sớm kết thúc stream NGẮT
+  /// NGỎI mà không báo lỗi → file cụt → trình cài hệ thống mở ra rồi tự tắt
+  /// im lặng (bug "tải xong không có gì xảy ra"). Kiểm tra 3 lớp: đủ byte
+  /// theo content-length, đúng dung lượng theo GitHub, đúng chữ ký ZIP 'PK'.
   static Future<String> downloadApk(
     String url,
     String savePath,
     void Function(int received, int? total) onProgress, {
     http.Client? client,
     Duration stallTimeout = const Duration(seconds: 30),
+    int? expectedSize,
   }) async {
     final owned = client == null;
     final c = client ?? http.Client();
@@ -93,6 +104,26 @@ class AppUpdater {
         await sink.flush();
       } finally {
         await sink.close();
+      }
+      if (total != null && received < total) {
+        throw Exception(
+          'Tải chưa trọn vẹn: nhận \$received/\$total byte, hãy thử lại',
+        );
+      }
+      if (expectedSize != null && received != expectedSize) {
+        throw Exception(
+          'Bản tải về thiếu dữ liệu (nhận \$received, cần \$expectedSize), '
+          'hãy thử lại',
+        );
+      }
+      final raf = await file.open();
+      try {
+        final head = await raf.read(2);
+        if (head.length < 2 || head[0] != 0x50 || head[1] != 0x4B) {
+          throw Exception('File tải về không phải bản cài đặt hợp lệ');
+        }
+      } finally {
+        await raf.close();
       }
       return savePath;
     } catch (_) {
@@ -169,6 +200,8 @@ class _UpdateDialogState extends State<_UpdateDialog>
   // Đã bấm "Cài đặt" (mở trình cài hệ thống hoặc mở trang tải): nếu cài không
   // xong thì lần mở app sau PHẢI hỏi lại — không ghi nhớ bản đã hỏi.
   bool _installAttempted = false;
+  // Đã bắn intent mở trình cài hệ thống ít nhất một lần.
+  bool _installOpened = false;
   int _received = 0;
   int? _total;
   String? _apkPath;
@@ -276,17 +309,23 @@ class _UpdateDialogState extends State<_UpdateDialog>
       final path = p.join(dir.path, 'story_reader_update.apk');
       _client = http.Client();
       var lastUi = 0;
-      await AppUpdater.downloadApk(widget.update.url, path, (r, t) {
-        if (r == t || r - lastUi >= _uiStep) {
-          lastUi = r;
-          if (mounted) {
-            setState(() {
-              _received = r;
-              _total = t;
-            });
+      await AppUpdater.downloadApk(
+        widget.update.url,
+        path,
+        (r, t) {
+          if (r == t || r - lastUi >= _uiStep) {
+            lastUi = r;
+            if (mounted) {
+              setState(() {
+                _received = r;
+                _total = t;
+              });
+            }
           }
-        }
-      }, client: _client);
+        },
+        client: _client,
+        expectedSize: widget.update.expectedSize,
+      );
       if (!mounted) return;
       setState(() {
         _downloading = false;
@@ -317,7 +356,13 @@ class _UpdateDialogState extends State<_UpdateDialog>
       );
       if (!mounted) return;
       if (ok == true) {
-        Navigator.pop(context);
+        // KHÔNG đóng dialog: giữ lại trạng thái 'đã mở trình cài' — nếu trình
+        // cài hệ thống không hiện (file lỗi trên một số máy), người dùng bấm
+        // Cài đặt để mở lại mà không phải tải lại cả file.
+        setState(() {
+          _installOpened = true;
+          _error = null;
+        });
       } else {
         // Native đã mở sẵn màn hình cấp quyền; giữ dialog để bấm lại.
         setState(() {
@@ -378,7 +423,10 @@ class _UpdateDialogState extends State<_UpdateDialog>
         child: Center(child: CircularProgressIndicator(strokeWidth: 2)),
       );
     }
-    if (widget.update.directApk && !_canInstall && !_downloaded && _error == null) {
+    if (widget.update.directApk &&
+        !_canInstall &&
+        !_downloaded &&
+        _error == null) {
       return Column(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -419,6 +467,12 @@ class _UpdateDialogState extends State<_UpdateDialog>
       );
     }
     if (_error != null && !_downloaded) return Text(_error!);
+    if (_installOpened) {
+      return Text(
+        'Đã mở trình cài đặt hệ thống. Nếu không thấy cửa sổ cài, bấm Cài '
+        'đặt để mở lại. Sau khi cài xong, mở lại Story Reader để dùng bản mới.',
+      );
+    }
     if (_downloaded) {
       return Text(
         _error ?? 'Đã tải xong bản cài đặt. Bấm Cài đặt để cài lên máy.',

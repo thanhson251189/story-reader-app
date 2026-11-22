@@ -34,9 +34,12 @@ void main() {
   });
 
   test('downloadApk ghi đủ file và báo tiến độ tới byte cuối', () async {
-    final data = Uint8List.fromList(
-      List.generate(300000, (i) => i % 251),
-    );
+    // File APK = ZIP: bắt đầu bằng chữ ký 'PK' (downloadApk kiểm tra).
+    final data = Uint8List.fromList([
+      0x50,
+      0x4B,
+      ...List.generate(299998, (i) => i % 251),
+    ]);
     server.listen((req) async {
       req.response.contentLength = data.length;
       await req.response.addStream(Stream.value(data));
@@ -118,19 +121,88 @@ void main() {
     expect(await File(path).exists(), false);
   });
 
-  test('cleanupLeftoverApk xoá thư mục update còn sót từ lần cài trước', () async {
-    final updateDir = Directory(p.join(tmp.path, 'update'))
-      ..createSync(recursive: true);
-    File(p.join(updateDir.path, 'story_reader_update.apk'))
-        .writeAsStringSync('apk giả');
+  test(
+    'cleanupLeftoverApk xoá thư mục update còn sót từ lần cài trước',
+    () async {
+      final updateDir = Directory(p.join(tmp.path, 'update'))
+        ..createSync(recursive: true);
+      File(p.join(updateDir.path, 'story_reader_update.apk'))
+          .writeAsStringSync('apk giả');
 
-    await AppUpdater.cleanupLeftoverApk();
+      await AppUpdater.cleanupLeftoverApk();
 
-    expect(updateDir.existsSync(), false);
-  });
+      expect(updateDir.existsSync(), false);
+    },
+  );
 
   test('cleanupLeftoverApk không lỗi khi chưa có file nào để xoá', () async {
     await AppUpdater.cleanupLeftoverApk();
     await AppUpdater.cleanupLeftoverApk();
+  });
+
+  test('downloadApk: stream chunked kết thúc sớm + expectedSize lệch → ném lỗi, xoá file', () async {
+    // Server gửi 500 byte KHÔNG khai báo content-length (HTTP/1.1 → chunked)
+    // rồi kết thúc bình thường: stream không báo lỗi nhưng file cụt so với
+    // dung lượng GitHub — bắt buộc phải bắt được qua expectedSize.
+    final data = Uint8List.fromList(List.generate(500, (i) => 0x41));
+    server.listen((req) async {
+      await req.response.addStream(Stream.value(data));
+      await req.response.close();
+    });
+    final path = p.join(tmp.path, 'app.apk');
+    await expectLater(
+      AppUpdater.downloadApk(
+        'http://127.0.0.1:${server.port}/app.apk',
+        path,
+        (_, _) {},
+        expectedSize: 60 * 1024 * 1024,
+      ),
+      throwsException,
+    );
+    expect(await File(path).exists(), false);
+  });
+
+  test(
+    'downloadApk: file không phải APK (thiếu chữ ký PK) → ném lỗi, xoá file',
+    () async {
+      final data = Uint8List.fromList(List.generate(1000, (i) => 0x41));
+      server.listen((req) async {
+        req.response.contentLength = data.length;
+        await req.response.addStream(Stream.value(data));
+        await req.response.close();
+      });
+      final path = p.join(tmp.path, 'app.apk');
+      await expectLater(
+        AppUpdater.downloadApk(
+          'http://127.0.0.1:${server.port}/app.apk',
+          path,
+          (_, _) {},
+        ),
+        throwsException,
+      );
+      expect(await File(path).exists(), false);
+    },
+  );
+
+  test('downloadApk: file APK hợp lệ (PK, đủ size) → tải ok', () async {
+    final data = Uint8List.fromList([
+      0x50,
+      0x4B,
+      ...List.generate(1000, (i) => 0x41),
+    ]);
+    server.listen((req) async {
+      req.response.contentLength = data.length;
+      await req.response.addStream(Stream.value(data));
+      await req.response.close();
+    });
+    final path = p.join(tmp.path, 'app.apk');
+    final out = await AppUpdater.downloadApk(
+      'http://127.0.0.1:${server.port}/app.apk',
+      path,
+      (_, _) {},
+      expectedSize: data.length,
+    );
+    expect(out, path);
+    expect(await File(path).exists(), true);
   });
 }
