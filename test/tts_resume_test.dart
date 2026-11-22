@@ -527,4 +527,81 @@ void main() {
     ja.playing.complete();
     await waitUntil(() => player.playing == false, maxMs: 4000);
   });
+
+  test('bấm Play trong lúc tải chương kế thì chương mới phát khi tải xong', () async {
+    final c2 = ChapterContent(
+      url: chapterUrl(2),
+      title: 'Chương 2',
+      paragraphs: ['Đoạn hai.'],
+    );
+    final c1 = ChapterContent(
+      url: chapterUrl(1),
+      title: 'Chương 1',
+      paragraphs: ['Đoạn một.'],
+      nextUrl: chapterUrl(2),
+    );
+    db.cached[c2.url] = c2;
+    db.slowUrls.add(c2.url);
+    await player.start(c1);
+    await waitUntil(() => ja.players.any((p) => p.calls.contains('play')));
+
+    // Hết chương 1 → TTS tải chương 2 (chậm 100ms)...
+    ja.playing.complete();
+    await Future<void>.delayed(const Duration(milliseconds: 30));
+    expect(player.loading, isTrue);
+
+    // ...user bấm Play giữa lúc tải: KHÔNG được phát nhầm chương cũ (bắt
+    // sự đó không synth lại đoạn chương cũ).
+    final synthBefore = synthTexts.length;
+    await player.resume();
+    await Future<void>.delayed(const Duration(milliseconds: 40));
+    expect(
+      synthTexts.length,
+      synthBefore,
+      reason: 'phát nhầm chương cũ là synth lại đoạn cũ ngay lập tức',
+    );
+
+    // Tải xong: chương mới nạp và phát luôn — ý định Play không bị nuốt.
+    await waitUntil(() => player.chapter?.url == c2.url, maxMs: 4000);
+    expect(player.playing, isTrue);
+    await waitUntil(() => synthTexts.contains('Đoạn hai.'), maxMs: 4000);
+    expect(player.currentChunk!.text, 'Đoạn hai.');
+  });
+
+  test('bấm Play chờ tải rồi dừng hẳn thì không tự bật lại tiếng', () async {
+    final c2 = ChapterContent(
+      url: chapterUrl(2),
+      title: 'Chương 2',
+      paragraphs: ['Đoạn hai.'],
+    );
+    final c1 = ChapterContent(
+      url: chapterUrl(1),
+      title: 'Chương 1',
+      paragraphs: ['Đoạn một.'],
+      nextUrl: chapterUrl(2),
+    );
+    db.cached[c2.url] = c2;
+    db.slowUrls.add(c2.url);
+    await player.start(c1);
+    await waitUntil(() => ja.players.any((p) => p.calls.contains('play')));
+
+    ja.playing.complete();
+    await Future<void>.delayed(const Duration(milliseconds: 30));
+    expect(player.loading, isTrue);
+
+    // Bấm Play (nhớ ý định) rồi dừng hẳn (mở chương khác, vuốt tắt thông
+    // báo): ý định Play phải bị xoá, tải xong vẫn dừng. Chờ theo CHƯƠNG được
+    // nạp chứ không phải loading — stop() tự đặt loading=false ngay khi đang
+    // tải, chưa đủ nghĩa "tải xong".
+    await player.resume();
+    await player.stop();
+    await waitUntil(() => player.chapter?.url == c2.url, maxMs: 4000);
+    expect(player.playing, isFalse);
+    await Future<void>.delayed(const Duration(milliseconds: 60));
+    expect(
+      synthTexts.contains('Đoạn hai.'),
+      isFalse,
+      reason: 'dừng hẳn rồi thì không synth phát chương mới',
+    );
+  });
 }

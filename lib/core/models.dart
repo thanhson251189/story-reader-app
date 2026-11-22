@@ -178,7 +178,12 @@ class BookUrl {
 /// wikisource không suy được kiểu này (nơi mở đã biết thì truyền thẳng).
 String storyUrlFromChapter(String url) {
   if (url.startsWith('book:')) return BookUrl.storyOf(url);
-  final uri = Uri.parse(url).removeFragment();
+  // URL rác (không parse được) thì trả nguyên xi thay vì ném: nơi gọi dùng
+  // kết quả này cho touchLibrary/tìm mục lục — có kết quả lạ vẫn tốt hơn
+  // văng exception giữa đường nạp chương.
+  final parsed = Uri.tryParse(url);
+  if (parsed == null) return url;
+  final uri = parsed.removeFragment();
   // Bỏ segment rỗng do dấu '/' cuối để không cắt nhầm vào tên chương.
   final segs = uri.pathSegments.where((s) => s.isNotEmpty).toList();
   if (segs.isNotEmpty) segs.removeLast();

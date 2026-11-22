@@ -88,17 +88,33 @@ class SourceRegistry {
       final res = await http
           .get(Uri.parse(url))
           .timeout(const Duration(seconds: 10));
-      if (res.statusCode == 200) {
-        raw = res.body;
-        await db.setSetting('registryIndexCache', raw);
-      }
+      if (res.statusCode == 200) raw = res.body;
     } catch (_) {}
-    raw ??= await db.getSetting('registryIndexCache');
-    if (raw == null) return [];
-    final j = jsonDecode(raw) as Map<String, dynamic>;
-    return (j['sources'] as List? ?? [])
-        .map((e) => SourceEntry.fromJson(Map<String, dynamic>.from(e as Map)))
-        .toList();
+    if (raw != null) {
+      final entries = parseIndex(raw);
+      if (entries != null) {
+        // Chỉ ghi đè cache khi body đọc được: proxy chặn trả HTML mà đè mất
+        // cache tốt thì lần mất mạng sau không còn danh sách nguồn nào.
+        await db.setSetting('registryIndexCache', raw);
+        return entries;
+      }
+      raw = null;
+    }
+    final cached = await db.getSetting('registryIndexCache');
+    return cached == null ? const [] : (parseIndex(cached) ?? const []);
+  }
+
+  /// Body JSON danh sách nguồn → danh sách entry; hỏng thì trả null thay vì
+  /// ném (người gọi chỉ cần thấy "không tải được danh sách" là đủ).
+  static List<SourceEntry>? parseIndex(String raw) {
+    try {
+      final j = jsonDecode(raw) as Map<String, dynamic>;
+      return (j['sources'] as List? ?? [])
+          .map((e) => SourceEntry.fromJson(Map<String, dynamic>.from(e as Map)))
+          .toList();
+    } catch (_) {
+      return null;
+    }
   }
 
   Future<String> appVersion() async =>
@@ -151,10 +167,21 @@ class SourceRegistry {
     saved.entries.where((e) => (e.value as Map)['domain'] != domain),
   );
 
+  /// Đọc bản đồ adapter đã cài từ settings; dữ liệu hỏng (JSON sai) trả về
+  /// rỗng thay vì ném — restoreInstalled chạy trước runApp, ném ở đây là app
+  /// không bao giờ mở lại được cho tới khi người dùng xoá dữ liệu. Map trả
+  /// về phải chỉnh sửa được: install() ghi thêm nguồn mới vào nó.
+  static Map<String, dynamic> readSaved(String? raw) {
+    if (raw == null || raw.isEmpty) return {};
+    try {
+      return Map<String, dynamic>.from(jsonDecode(raw) as Map);
+    } catch (_) {
+      return {};
+    }
+  }
+
   Future<void> uninstall(String domain) async {
-    final saved = Map<String, dynamic>.from(
-      jsonDecode(await db.getSetting('installedAdapters') ?? '{}') as Map,
-    );
+    final saved = readSaved(await db.getSetting('installedAdapters'));
     await db.setSetting(
       'installedAdapters',
       jsonEncode(savedWithout(saved, domain)),
@@ -173,9 +200,7 @@ class SourceRegistry {
     if (res.statusCode != 200) throw Exception('HTTP ${res.statusCode}');
     final json = jsonDecode(res.body) as Map<String, dynamic>;
     adapters.mergeRemote([withBuiltinSearch(SourceAdapter.fromJson(json))]);
-    final saved = Map<String, dynamic>.from(
-      jsonDecode(await db.getSetting('installedAdapters') ?? '{}') as Map,
-    );
+    final saved = readSaved(await db.getSetting('installedAdapters'));
     saved[e.id] = json;
     await db.setSetting('installedAdapters', jsonEncode(saved));
   }
@@ -202,17 +227,19 @@ class SourceRegistry {
     AppDb db,
     AdapterRepository adapters,
   ) async {
-    final raw = await db.getSetting('installedAdapters');
-    if (raw == null) return;
-    final saved = jsonDecode(raw) as Map<String, dynamic>;
-    adapters.mergeRemote(
-      saved.values
-          .map(
-            (e) => withBuiltinSearch(
-              SourceAdapter.fromJson(Map<String, dynamic>.from(e as Map)),
-            ),
-          )
-          .toList(),
-    );
+    final saved = readSaved(await db.getSetting('installedAdapters'));
+    final loaded = <SourceAdapter>[];
+    for (final e in saved.values) {
+      try {
+        loaded.add(
+          withBuiltinSearch(
+            SourceAdapter.fromJson(Map<String, dynamic>.from(e as Map)),
+          ),
+        );
+      } catch (_) {
+        // Một nguồn hỏng không được chặn các nguồn lành còn lại.
+      }
+    }
+    adapters.mergeRemote(loaded);
   }
 }

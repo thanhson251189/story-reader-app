@@ -482,10 +482,15 @@ class WebFetcher {
       const Duration(seconds: 45),
       () => finish(null, TimeoutException('Quá thời gian tải trang')),
     );
-    await wv.run();
     try {
+      await wv.run();
       return await completer.future;
     } finally {
+      // run() ném lỗi (máy yếu, engine WebView lỗi thoáng qua) cũng phải dọn:
+      // không dispose là leak, còn Timer 45s sau đó completeError lên
+      // completer không ai nghe thì thành lỗi ngầm unhandled.
+      done = true;
+      timeout.cancel();
       try {
         await wv.dispose();
       } catch (_) {}

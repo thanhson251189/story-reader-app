@@ -45,6 +45,18 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> with RouteAware {
   bool _volPage = true;
   static const _volChannel = MethodChannel('story_reader/volume_keys');
   bool _volKeysEnabled = false;
+
+  // Màn đọc đang mở xếp chồng lên nhau (mở chương khác qua mục lục là đè
+  // thêm một màn đọc nữa). Phím âm lượng phục vụ màn đọc TRÊN CÙNG: handler
+  // cấp lớp gắn một lần rồi điều phối qua đỉnh ngăn xếp, không lệ thuộc thứ
+  // tự dispose giữa các màn đọc — trước đây màn đọc trên xoá handler chung
+  // lúc dispose làm phím âm lượng chết hẳn ở màn đọc dưới khi quay về.
+  static final List<_ReaderScreenState> _openReaders = [];
+
+  static Future<dynamic> _onVolumeKey(MethodCall call) async {
+    if (_openReaders.isEmpty) return null;
+    return _openReaders.last._onNativeKey(call);
+  }
   bool _isTopRoute = true;
   List<GlobalKey> _paraKeys = [];
   int _lastSpokenPara = -1;
@@ -69,7 +81,10 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> with RouteAware {
     _player = ref.read(ttsPlayerProvider);
     _player.addListener(_onPlayer);
     _scroll.addListener(_onScroll);
-    _volChannel.setMethodCallHandler(_onNativeKey);
+    _openReaders.add(this);
+    if (_openReaders.length == 1) {
+      _volChannel.setMethodCallHandler(_onVolumeKey);
+    }
     _init();
   }
 
@@ -384,6 +399,10 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> with RouteAware {
       _error = null;
       _loading = false;
     });
+    // Hai việc _load có mà trước đây đường WebView thiếu: nhãn "Chương x/y"
+    // bị stale, và không tải trước chương kế sau khi vượt chặn thủ công.
+    unawaited(_updateProgress(filled.url));
+    unawaited(ref.read(chapterPrefetcherProvider).prefetch(filled.nextUrl));
   }
 
   // Nguồn yêu cầu tài khoản (adapter khai báo loginUrl): hiện nút đăng nhập
@@ -665,6 +684,8 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> with RouteAware {
                     tooltip: 'Tải lại danh sách',
                     onPressed: () async {
                       await _player.reloadVoices();
+                      // Sheet có thể đã đóng trong lúc chờ engine trả giọng.
+                      if (!ctx.mounted) return;
                       setV(() {});
                       onChange();
                     },
@@ -719,6 +740,9 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> with RouteAware {
                                   final ok = await _player.selectVoice(v);
                                   onChange();
                                   if (!ok) {
+                                    // Sheet có thể đã đóng trong lúc chờ
+                                    // engine đổi giọng — setV lúc đó là lỗi.
+                                    if (!ctx.mounted) return;
                                     setV(() => busy = null);
                                     if (mounted) {
                                       ScaffoldMessenger.of(context)
@@ -858,9 +882,12 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> with RouteAware {
                         : () async {
                             setSheet(() => previewing = true);
                             final file = await _player.previewVoice();
-                            if (!mounted) return;
+                            // Synth mất vài giây: sheet có thể đã đóng giữa
+                            // chừng — setSheet trên StatefulBuilder đã dispose
+                            // là lỗi (giống bug dialog đã sửa ở 1.0.35).
+                            if (!ctx.mounted) return;
                             setSheet(() => previewing = false);
-                            ScaffoldMessenger.of(context).showSnackBar(
+                            ScaffoldMessenger.of(ctx).showSnackBar(
                               SnackBar(
                                 content: Text(
                                   file == null
@@ -1049,8 +1076,16 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> with RouteAware {
   @override
   void dispose() {
     routeObserver.unsubscribe(this);
-    _volChannel.setMethodCallHandler(null);
-    _volChannel.invokeMethod('setEnabled', false);
+    _openReaders.remove(this);
+    if (_openReaders.isEmpty) {
+      _volChannel.setMethodCallHandler(null);
+      _volChannel.invokeMethod('setEnabled', false);
+    } else {
+      // Màn đọc trên vừa bị gỡ: màn đọc dưới thành màn trên cùng — đồng bộ
+      // lại cờ phím âm lượng theo trạng thái của nó (didPopNext có thể đã
+      // chạy trước hoặc sau dispose, thứ tự nào cũng đúng).
+      _openReaders.last._syncVolKeys();
+    }
     _player.removeListener(_onPlayer);
     _saveTimer?.cancel();
     _flashTimer?.cancel();

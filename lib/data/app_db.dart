@@ -132,19 +132,32 @@ class AppDb {
 
   Future<void> cacheChapter(ChapterContent c) => cacheChapters([c]);
 
+  // Giới hạn số biến trong một mệnh đề IN (SQLite máy cũ còn giới hạn 999).
+  static const _pinQueryBatch = 500;
+
   Future<void> cacheChapters(List<ChapterContent> list) async {
+    if (list.isEmpty) return;
     final db = await database;
+    // REPLACE xoá hẳn row cũ nên ghim mất; đọc ghim hiện có để giữ lại khi
+    // ghi đè chương đã ghim (refresh cache cũ, nghe lại...). Đọc MỘT lượt
+    // thay vì từng chương: nhập sách dài vài nghìn chương mà query riêng từng
+    // cái là nhập chậm thêm nhiều giây trên máy yếu.
+    final pinnedUrls = <String>{};
+    final urls = list.map((c) => c.url).toList();
+    for (var i = 0; i < urls.length; i += _pinQueryBatch) {
+      final end = i + _pinQueryBatch > urls.length ? urls.length : i + _pinQueryBatch;
+      final chunk = urls.sublist(i, end);
+      final ph = List.filled(chunk.length, '?').join(',');
+      final rows = await db.query(
+        'chapter_cache',
+        columns: ['url'],
+        where: 'pinned = 1 AND url IN ($ph)',
+        whereArgs: chunk,
+      );
+      pinnedUrls.addAll(rows.map((r) => r['url'] as String));
+    }
     final batch = db.batch();
     for (final c in list) {
-      // REPLACE xoá hẳn row cũ nên ghim mất; đọc ghim hiện có để giữ lại khi
-      // tải lại chương đã ghim (refresh cache cũ, nghe lại...).
-      final old = await db.query(
-        'chapter_cache',
-        columns: ['pinned'],
-        where: 'url = ?',
-        whereArgs: [c.url],
-        limit: 1,
-      );
       batch.insert('chapter_cache', {
         'url': c.url,
         'title': c.title,
@@ -152,7 +165,7 @@ class AppDb {
         'next_url': c.nextUrl,
         'prev_url': c.prevUrl,
         'fetched_at': DateTime.now().millisecondsSinceEpoch,
-        'pinned': old.isEmpty ? 0 : old.first['pinned'],
+        'pinned': pinnedUrls.contains(c.url) ? 1 : 0,
       }, conflictAlgorithm: ConflictAlgorithm.replace);
     }
     await batch.commit(noResult: true);

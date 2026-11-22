@@ -54,6 +54,9 @@ class TtsPlayer extends ChangeNotifier {
   Completer<void>? _resumeWait;
   Completer<void>? _chunkDone;
   Completer<void>? _synthIdle;
+  // Bấm Play trên thông báo khi TTS đang tải chương kế: không phát ngay (sẽ
+  // nhầm chương cũ vài giây) mà nhớ ý định, chương mới tải xong phát luôn.
+  bool _playAfterLoad = false;
 
   TtsPlayer({
     required this.db,
@@ -231,6 +234,9 @@ class TtsPlayer extends ChangeNotifier {
 
   Future<void> start(ChapterContent c, {int paraIndex = 0}) async {
     _gen++;
+    // start() là một lệnh phát mới từ nơi gọi — ý định chờ khi tải đã được
+    // nơi đó biểu đạt trực tiếp, xoá cờ cũ để không còn ý định stale.
+    _playAfterLoad = false;
     final gen = _gen;
     _signalResume();
     _chunkDone?.complete();
@@ -409,10 +415,14 @@ class TtsPlayer extends ChangeNotifier {
         await stop();
         return;
       }
+      // Bấm Play giữa lúc tải chương kế: nạp xong phát luôn chương mới thay
+      // vì nuốt ý định Play của người nghe.
+      final wantPlay = _playAfterLoad;
+      _playAfterLoad = false;
       // Trong lúc tải chương kế user có thể đã dừng (pause, hoặc reader gọi
       // stop khi mở chương khác) — nạp chương mới ở trạng thái dừng, không
       // tự bật lại tiếng sau khi đã bị dừng.
-      if (!playing) {
+      if (!playing && !wantPlay) {
         chapter = c;
         chunks = chunkify(c);
         _index = 0;
@@ -462,7 +472,15 @@ class TtsPlayer extends ChangeNotifier {
   }
 
   Future<void> resume() async {
-    if (playing || chunks.isEmpty) return;
+    if (playing) return;
+    // Bấm Play (nút media/thông báo) trong lúc đang tải chương kế: nếu start
+    // ngay là phát nhầm chương cũ vài giây rồi mới tự chuyển. Nhớ ý định,
+    // chương mới tải xong thì phát luôn đúng chương đó.
+    if (loading) {
+      _playAfterLoad = true;
+      return;
+    }
+    if (chunks.isEmpty) return;
     final c = chapter;
     if (c == null) return;
     // Phát lại từ đầu đoạn văn đang nghe dở thay vì nối giữa chunk:
@@ -474,6 +492,8 @@ class TtsPlayer extends ChangeNotifier {
     _gen++;
     playing = false;
     loading = false;
+    // Dừng là ý định rõ ràng: ý định Play chờ khi tải không còn giá trị.
+    _playAfterLoad = false;
     _signalResume();
     _chunkDone?.complete();
     _chunkDone = null;
@@ -570,7 +590,11 @@ class TtsPlayer extends ChangeNotifier {
         _notify();
         return;
       }
-      if (wasPlaying) {
+      // Bấm Play giữa lúc tải chương (ý định đã nhớ): phát luôn chương mới
+      // dù trước đó đang dừng.
+      final wantPlay = _playAfterLoad;
+      _playAfterLoad = false;
+      if (wasPlaying || wantPlay) {
         await start(c);
       } else {
         chapter = c;

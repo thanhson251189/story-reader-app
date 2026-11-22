@@ -1,6 +1,7 @@
 import 'dart:io';
 import 'dart:math';
 
+import 'package:flutter/foundation.dart';
 import 'package:image/image.dart' as img;
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
@@ -29,6 +30,11 @@ class BookImporter {
 
   BookImporter(this.db, {this.maxBytes = maxImportBytes});
 
+  /// Điểm vào isolate cho compute: LocalBook.parse nhận 3 tham số rời trong
+  /// khi compute truyền một message duy nhất.
+  static Future<LocalBook> _parseBook((String, Uint8List, String) args) =>
+      LocalBook.parse(args.$1, args.$2, args.$3);
+
   Future<BookImportResult> importFile(String path) async {
     final ext = p.extension(path).toLowerCase().replaceFirst('.', '');
     // Chặn sớm trước khi đọc cả file vào bộ nhớ (FilePicker cho chọn loại nào).
@@ -48,7 +54,10 @@ class BookImporter {
     }
     final bytes = await file.readAsBytes();
     final name = p.basenameWithoutExtension(path);
-    final book = await LocalBook.parse(ext, bytes, name);
+    // Parse sách (EPUB/MOBI/FB2/TXT) là CPU nặng với file vài chục MB: chạy
+    // isolate riêng để màn hình không khựng — thanh tiến độ vẫn chạy được,
+    // máy yếu không tưởng app treo.
+    final book = await compute(_parseBook, (ext, bytes, name));
     if (book.chapters.isEmpty) throw FormatException('Không đọc được nội dung sách');
 
     final id = _newId();

@@ -144,4 +144,50 @@ void main() {
     expect(intact.prevUrl, 'https://s.com/truyen/c-1');
     await (await db.database).close();
   });
+
+  test('cacheChapters giữ ghim khi ghi đè và không ghim nhầm chương mới', () async {
+    final db = AppDb(fileName: 'db_pin_batch_test.db');
+    final u1 = 'https://p.test/chuong-1';
+    final u2 = 'https://p.test/chuong-2';
+    await db.cacheChapter(ChapterContent(url: u1, title: 'C1', paragraphs: ['a']));
+    await db.pinChapter(u1);
+    // Ghi đè chương đã ghim cùng lúc với chương mới chưa từng có (như nạp
+    // lại 1 chương + tải trước chèn vào): ghim cũ phải giữ, mới phải 0.
+    await db.cacheChapters([
+      ChapterContent(url: u1, title: 'C1 mới', paragraphs: ['a2']),
+      ChapterContent(url: u2, title: 'C2', paragraphs: ['b']),
+    ]);
+    expect((await db.getCachedChapter(u1))!.title, 'C1 mới');
+    expect(await db.pinnedWebCount(), 1);
+    // Xoá dữ liệu tải sẵn: chương ghim còn, chương thường mất.
+    await db.clearWebCache();
+    expect(await db.getCachedChapter(u1), isNotNull);
+    expect(await db.getCachedChapter(u2), isNull);
+    await (await db.database).close();
+  });
+
+  test('cacheChapters trên đợt >500 chương vẫn giữ ghim đúng (chia lô IN)', () async {
+    final db = AppDb(fileName: 'db_pin_batch_big_test.db');
+    String url(int i) => 'https://big.test/c-$i';
+    // Ghim 3 chương rải rác rồi ghi đè cả 1200 chương trong một lượt.
+    final pinned = <int>{0, 501, 1199};
+    for (final i in pinned) {
+      await db.cacheChapter(ChapterContent(url: url(i), title: 'C$i', paragraphs: ['x']));
+      await db.pinChapter(url(i));
+    }
+    await db.cacheChapters([
+      for (var i = 0; i < 1200; i++)
+        ChapterContent(url: url(i), title: 'C$i mới', paragraphs: ['y']),
+    ]);
+    final rows = await (await db.database).query(
+      'chapter_cache',
+      columns: ['url'],
+      where: 'pinned = 1',
+    );
+    expect(
+      rows.map((r) => r['url']).toSet(),
+      pinned.map((i) => url(i)).toSet(),
+    );
+    await (await db.database).close();
+  });
 }

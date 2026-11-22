@@ -272,6 +272,9 @@ class _UpdateDialogState extends State<_UpdateDialog> {
 
   @override
   void dispose() {
+    // Đóng hộp thoại giữa lúc tải (chạm ngoài, nút hệ thống) cũng phải ngắt
+    // tải: client không close là stream vẫn tải ngầm tới xong vô ích.
+    _client?.close();
     // Người dùng chần chừ (Để sau, Huỷ giữa lúc tải, đóng hộp thoại) thì ghi
     // nhớ bản đã hỏi để không hỏi lại mỗi lần mở app. ĐÃ bấm Cài đặt mà cài
     // không xong (hủy ở trình cài hệ thống...) thì KHÔNG ghi nhớ — lần mở app

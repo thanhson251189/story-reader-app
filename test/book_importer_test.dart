@@ -1,10 +1,18 @@
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:story_reader/data/app_db.dart';
 import 'package:story_reader/local/book_importer.dart';
 
 void main() {
+  setUpAll(() async {
+    // Test nhập sách chạm DB thật; compute() chạy isolate riêng nên FFI phải
+    // sẵn trong isolate chính trước khi importFile chạy.
+    sqfliteFfiInit();
+    databaseFactory = databaseFactoryFfi;
+  });
+
   test('BookImporter chặn sớm đuôi không hỗ trợ, không đọc file', () async {
     // File không tồn tại: nếu guard đọc file trước khi kiểm tra đuôi thì
     // test này lỗi IO thay vì FormatException.
@@ -38,6 +46,32 @@ void main() {
           contains('quá lớn'),
         ),
       ),
+    );
+  });
+
+  test('Nhập TXT qua isolate riêng: mục lục, cache và thư viện đủ', () async {
+    final dir = await Directory.systemTemp.createTemp('book_iso_test');
+    addTearDown(() => dir.delete(recursive: true));
+    // Khối dài hơn 3000 ký tự để bộ tách đoạn cắt theo dòng: tiêu đề "Chương N"
+    // đứng riêng thành một đoạn và được nhận là đầu chương.
+    final path = '${dir.path}/sach thu.txt';
+    await File(path).writeAsString(
+      'Chương 1\n${'Nội dung chương một. ' * 200}\n\n'
+      'Chương 2\n${'Nội dung chương hai. ' * 200}\n',
+    );
+    final db = AppDb(fileName: 'book_importer_iso_test.db');
+    final result = await BookImporter(db).importFile(path);
+    expect(result.chapters, 2);
+    final toc = await db.getToc(result.storyUrl);
+    expect(toc.map((c) => c.title), ['Chương 1', 'Chương 2']);
+    final first = await db.getCachedChapter('${result.storyUrl}:0');
+    expect(first!.paragraphs.join(' '), contains('chương một'));
+    final last = await db.getCachedChapter('${result.storyUrl}:1');
+    expect(last!.paragraphs.join(' '), contains('chương hai'));
+    final lib = await db.getLibrary();
+    expect(
+      lib.where((e) => e['story_url'] == result.storyUrl),
+      hasLength(1),
     );
   });
 }
