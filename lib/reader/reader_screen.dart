@@ -40,8 +40,13 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> with RouteAware {
   // Bản gốc TRƯỚC khi áp sửa từ: thêm cụm từ mới lúc đang đọc (bôi đen →
   // "Đổi từ") cần áp lại từ bản gốc, không phải chồng sửa lên bản đã sửa.
   ChapterContent? _contentRaw;
-  // Text đang bôi đen (onSelectionChanged của SelectionArea báo về).
+  // Text đang bôi đen (onSelectionChanged của SelectionArea báo về). Thanh
+  // lệnh Copy/Đổi từ/Dịch của app tự vẽ theo trạng thái này thay vì dùng
+  // toolbar tự động của SDK — trên máy thật selection thành công nhưng
+  // toolbar của SDK có lúc không hiện, còn callback này luôn chạy.
+  final GlobalKey<SelectionAreaState> _selectionAreaKey = GlobalKey();
   String? _selectedText;
+  bool _selectionBarVisible = false;
   bool _loading = true;
   String? _error;
   String? _failedUrl;
@@ -1184,7 +1189,13 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> with RouteAware {
           ),
         ],
       ),
-      body: _buildBody(bg, fg),
+      body: Stack(
+        children: [
+          _buildBody(bg, fg),
+          if (_selectionBarVisible)
+            Positioned(left: 16, right: 16, bottom: 12, child: _selectionBar()),
+        ],
+      ),
       bottomNavigationBar: c == null
           ? null
           : SafeArea(
@@ -1320,8 +1331,21 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> with RouteAware {
           // (thêm vào danh sách sửa lỗi), Dịch (Google Translate). Chỉ có
           // kéo ngang để chuyển chương nên không giành gesture với chọn text.
           child: SelectionArea(
-            onSelectionChanged: (sel) => _selectedText = sel?.plainText,
-            contextMenuBuilder: _selectionMenu,
+            key: _selectionAreaKey,
+            // Tắt toolbar mặc định của SDK (menu hệ thống) — hành động chạy
+            // qua thanh lệnh riêng của app ở đáy màn.
+            contextMenuBuilder: (_, _) => const SizedBox.shrink(),
+            onSelectionChanged: (sel) {
+              // Lưu thẳng không setState: chọn chữ bằng kéo handle báo liên
+              // tục — chỉ setState khi thanh lệnh cần hiện/ẩn.
+              _selectedText = (sel == null || sel.plainText.isEmpty)
+                  ? null
+                  : sel.plainText;
+              final show = _selectedText != null;
+              if (show != _selectionBarVisible) {
+                setState(() => _selectionBarVisible = show);
+              }
+            },
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
@@ -1363,42 +1387,67 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> with RouteAware {
     );
   }
 
-  // ---- Bôi đen text khi đọc: menu Copy / Đổi từ / Dịch ----
+  // ---- Bôi đen text khi đọc: thanh lệnh Copy / Đổi từ / Dịch ----
 
-  Widget _selectionMenu(BuildContext context, SelectableRegionState state) {
-    return AdaptiveTextSelectionToolbar.buttonItems(
-      anchors: TextSelectionToolbarAnchors(
-        primaryAnchor: state.selectionEndpoints.first.point,
-        secondaryAnchor: state.selectionEndpoints.last.point,
+  /// Thanh lệnh hiện ở đáy màn khi có text đang bôi đen. Tự vẽ thay vì dùng
+  /// toolbar tự động của SDK (contextMenuBuilder): trên máy thật selection
+  /// thành công mà toolbar của SDK có lúc không xuất hiện.
+  Widget _selectionBar() {
+    return Material(
+      color: Theme.of(context).colorScheme.primaryContainer,
+      borderRadius: BorderRadius.circular(14),
+      elevation: 6,
+      child: Row(
+        children: [
+          Expanded(
+            child: TextButton.icon(
+              onPressed: _copySelected,
+              icon: const Icon(Icons.copy_all, size: 20),
+              label: const Text('Copy'),
+            ),
+          ),
+          Expanded(
+            child: TextButton.icon(
+              onPressed: _fixSelected,
+              icon: const Icon(Icons.edit_note, size: 20),
+              label: const Text('Đổi từ'),
+            ),
+          ),
+          Expanded(
+            child: TextButton.icon(
+              onPressed: _translateSelected,
+              icon: const Icon(Icons.translate, size: 20),
+              label: const Text('Dịch'),
+            ),
+          ),
+          IconButton(
+            tooltip: 'Bỏ chọn',
+            onPressed: _clearSelection,
+            icon: const Icon(Icons.close),
+          ),
+        ],
       ),
-      buttonItems: [
-        ContextMenuButtonItem(
-          label: 'Copy',
-          onPressed: () {
-            final text = _selectedText ?? '';
-            if (text.isNotEmpty) {
-              Clipboard.setData(ClipboardData(text: text));
-            }
-            state.clearSelection();
-          },
-        ),
-        ContextMenuButtonItem(
-          label: 'Đổi từ',
-          onPressed: () => _fixSelected(state),
-        ),
-        ContextMenuButtonItem(
-          label: 'Dịch',
-          onPressed: () => _translateSelected(state),
-        ),
-      ],
     );
+  }
+
+  void _clearSelection() =>
+      _selectionAreaKey.currentState?.selectableRegion.clearSelection();
+
+  Future<void> _copySelected() async {
+    final text = (_selectedText ?? '').trim();
+    if (text.isEmpty) return;
+    await Clipboard.setData(ClipboardData(text: text));
+    _clearSelection();
+    if (!mounted) return;
+    ScaffoldMessenger.of(context)
+        .showSnackBar(const SnackBar(content: Text('Đã copy vào clipboard')));
   }
 
   /// Đổi từ: thêm vào danh sách sửa lỗi với cụm từ đang bôi đen, lưu xong áp
   /// lại bản sửa NGAY cho chương đang mở (không phải mở lại chương).
-  Future<void> _fixSelected(SelectableRegionState state) async {
+  Future<void> _fixSelected() async {
     final text = (_selectedText ?? '').trim();
-    state.clearSelection();
+    _clearSelection();
     if (text.isEmpty || !mounted) return;
     final ok = await showWordFixEditor(
       context,
@@ -1418,9 +1467,9 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> with RouteAware {
   }
 
   /// Dịch: mở Google Translate với text đang bôi đen (trình duyệt ngoài).
-  Future<void> _translateSelected(SelectableRegionState state) async {
+  Future<void> _translateSelected() async {
     final text = (_selectedText ?? '').trim();
-    state.clearSelection();
+    _clearSelection();
     if (text.isEmpty || !mounted) return;
     try {
       await launchUrl(

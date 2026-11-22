@@ -133,6 +133,34 @@ void main() {
     expect(find.text('Dịch'), findsOneWidget);
   });
 
+  testWidgets('Cuộn sâu xuống giữa chương dài, nhấn giữ vẫn hiện menu', (
+    tester,
+  ) async {
+    final db = FakeAppDb();
+    db.cache['https://x.test/c/1'] = ChapterContent(
+      url: 'https://x.test/c/1',
+      title: 'Chương 1',
+      paragraphs: List.generate(40, (j) => 'Đoạn số $j. ' * 8),
+    );
+    await pumpReader(tester, db);
+
+    // Cuộn tới giữa chương như người dùng đọc tới đoạn sâu.
+    await tester.fling(
+      find.byType(SingleChildScrollView),
+      const Offset(0, -2000),
+      1000,
+    );
+    await tester.pumpAndSettle();
+
+    await tester.longPress(find.textContaining('Đoạn số 20'));
+    await tester.pumpAndSettle();
+
+    // Thanh lệnh hiện ở đáy màn, độc lập với vị trí cuộn.
+    expect(find.text('Copy'), findsOneWidget);
+    expect(find.text('Đổi từ'), findsOneWidget);
+    expect(find.text('Dịch'), findsOneWidget);
+  });
+
   testWidgets('Đổi từ: hộp thoại điền sẵn, lưu xong chương áp ngay', (
     tester,
   ) async {
@@ -158,9 +186,11 @@ void main() {
     await tester.pumpAndSettle();
 
     // Chương đang mở áp bản sửa NGAY (không phải mở lại chương), và cặp
-    // cụm từ đã vào DB để các lần mở sau dùng chung.
+    // cụm từ đã vào DB để các lần mở sau dùng chung. Bỏ chọn xong thanh
+    // lệnh cũng tự ẩn.
     expect(find.text('Hắn giết người rồi bỏ trốn.'), findsOneWidget);
     expect(find.text('Hắn gi ết người rồi bỏ trốn.'), findsNothing);
     expect(await db.getWordFixes(), contains(('gi ết', 'giết')));
+    expect(find.text('Copy'), findsNothing);
   });
 }
