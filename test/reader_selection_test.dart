@@ -190,9 +190,13 @@ void main() {
     expect(find.text('Dịch'), findsOneWidget);
     expect(find.text('Đánh dấu'), findsOneWidget);
 
-    // Menu dọc nằm CẠNH chỗ bôi đen, không phải ở đáy màn như bản cũ.
+    // Menu dọc nằm DƯỚI chỗ bôi đen (không đè lên vùng chọn), không phải ở
+    // đáy màn như bản cũ.
     final press = tester.getCenter(find.textContaining('gi ết'));
     final menu = tester.getRect(find.byKey(const Key('selection_menu')));
+    // ignore: avoid_print
+    print('DEBUG press=$press menu=$menu');
+    expect(menu.top, greaterThan(press.dy), reason: 'menu đè lên vùng chọn');
     expect(
       (menu.center - press).distance,
       lessThan(240),

@@ -1286,6 +1286,7 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> with RouteAware {
         ],
       ),
       body: Stack(
+        fit: StackFit.expand,
         key: _bodyStackKey,
         children: [
           // Listener bị động: ghi lại điểm chạm xuống để đặt menu dọc
@@ -1488,11 +1489,10 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> with RouteAware {
 
   // ---- Bôi đen text khi đọc: menu dọc Copy / Đổi từ / Dịch / Đánh dấu ----
 
-  /// Góc đặt menu dọc (tọa độ GLOBAL cho Overlay): NGAY TRÊN vùng chọn
-  /// (đụng đỉnh body thì chuyển xuống dưới), ngang ưu tiên bên phải chữ
-  /// chọn, hết chỗ sang trái. Phải cách vùng chọn một khoảng vì núm kéo
-  /// selection nằm cùng lớp Overlay — menu chạm vào núm là núm ăn mất cú
-  /// bấm vào menu (bug đã gặp).
+  /// Góc đặt menu dọc (tọa độ GLOBAL cho Overlay): NGAY DƯỚI vùng chọn để
+  /// không đè lên chữ đang bôi đen (chọn gần đáy body thì chuyển lên trên),
+  /// ngang ưu tiên bên phải chữ chọn, hết chỗ sang trái. Menu nằm trong root
+  /// overlay nên đè được lên núm kéo selection, không bị núm ăn mất cú bấm.
   Offset _menuGlobalOrigin() {
     const menuW = 188.0;
     const menuH = 4 * 48.0 + 8;
@@ -1512,8 +1512,11 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> with RouteAware {
         double.infinity,
       ),
     );
-    var y = p.dy - menuH - 28;
-    if (y < bodyOrigin.dy + 8) y = p.dy + 56;
+    // Dưới vùng chọn: cách ~56px để né núm kéo handle dưới cuối selection.
+    var y = p.dy + 56;
+    if (y + menuH > bodyOrigin.dy + bodySize.height - 8) {
+      y = p.dy - menuH - 28;
+    }
     y = y.clamp(
       bodyOrigin.dy + 8,
       (bodyOrigin.dy + bodySize.height - menuH - 8).clamp(
