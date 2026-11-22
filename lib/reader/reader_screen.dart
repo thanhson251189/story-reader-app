@@ -1529,28 +1529,68 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen>
 
   // ---- Bôi đen text khi đọc: menu dọc Copy / Đổi từ / Dịch / Đánh dấu ----
 
-  /// Vị trí thanh lệnh: menu NGANG nằm sát vùng chữ bôi đen — bôi đen ở
-  /// NỬA TRÊN body thì menu nằm ngay DƯỚI vùng chọn, bôi đen ở NỬA DƯỚI thì
-  /// menu nằm ngay TRÊN (như các app đọc truyện thông dụng). Menu nằm trong
-  /// root overlay nên đè được lên núm kéo selection, không bị núm ăn cú bấm.
+  /// Vị trí thanh lệnh: menu NGANG nằm sát HỘP của vùng chữ bôi đen (tính
+  /// từ đoạn chứa dòng đầu tới đoạn chứa dòng cuối của text chọn — selection
+  /// nhiều dòng thì hộp phủ hết các dòng). Chọn ở nửa trên body thì menu nằm
+  /// ngay DƯỚI hộp, nửa dưới thì nằm ngay TRÊN (như các app đọc truyện mẫu).
+  /// Menu nằm trong root overlay nên đè được lên núm kéo selection, không
+  /// bị núm ăn cú bấm. Tra không ra hộp (selection lạ) thì dùng điểm chạm.
   ({Offset origin, bool below, double caretDx, double width}) _menuLayout() {
     const menuH = 54.0;
     final bodyBox =
         _bodyStackKey.currentContext?.findRenderObject() as RenderBox?;
     final bodyOrigin = bodyBox?.localToGlobal(Offset.zero) ?? Offset.zero;
     final bodySize = bodyBox?.size ?? MediaQuery.of(context).size;
-    final menuW = (bodySize.width - 16).clamp(0.0, 356.0);
-    final p = bodyOrigin + (_pointerDownLocal ?? Offset.zero);
     final bodyBottom = bodyOrigin.dy + bodySize.height;
-    final below = p.dy < bodyOrigin.dy + bodySize.height / 2;
-    var y = below ? p.dy + 44 : p.dy - menuH - 16;
-    if (below && y + menuH > bodyBottom - 8) y = p.dy - menuH - 16;
-    if (!below && y < bodyOrigin.dy + 8) y = p.dy + 44;
+
+    // Hộp vùng chọn: selection NGẮN (1-2 dòng) thì neo quanh dòng chạm;
+    // selection DÀI (>60 ký tự — phủ nhiều dòng/nhiều đoạn như bôi đen cả
+    // đoạn) thì tính hộp từ đoạn chứa phần đầu tới đoạn chứa phần cuối của
+    // text chọn — menu phải nằm ngoài toàn bộ hộp, không cắm giữa các dòng
+    // đã bôi đen (bug user chụp màn: menu nằm giữa selection 5 dòng).
+    final p = bodyOrigin + (_pointerDownLocal ?? Offset.zero);
+    double selTop = p.dy - 20;
+    double selBottom = p.dy + 20;
+    final sel = (_selectedText ?? '').trim();
+    if (sel.length > 60) {
+      final probeStart = sel.substring(0, 40);
+      final probeEnd = sel.substring(sel.length - 40);
+      int? first;
+      int? last;
+      final c = _content;
+      if (c != null) {
+        for (var i = 0; i < c.paragraphs.length; i++) {
+          final para = c.paragraphs[i];
+          if (first == null && para.contains(probeStart)) first = i;
+          if (para.contains(probeEnd)) last = i;
+        }
+      }
+      if (first != null && last != null && first <= last) {
+        final startBox =
+            _paraKeys[first].currentContext?.findRenderObject() as RenderBox?;
+        final endBox =
+            _paraKeys[last].currentContext?.findRenderObject() as RenderBox?;
+        if (startBox != null && endBox != null) {
+          selTop = startBox.localToGlobal(Offset.zero).dy;
+          selBottom = endBox.localToGlobal(Offset.zero).dy + endBox.size.height;
+        }
+      }
+    }
+
+    final menuW = (bodySize.width - 16).clamp(0.0, 356.0);
+    final selMid = (selTop + selBottom) / 2;
+    final below = selMid < bodyOrigin.dy + bodySize.height / 2;
+    var y = below ? selBottom + 32 : selTop - menuH - 14;
+    if (below && y + menuH > bodyBottom - 8) y = selTop - menuH - 14;
+    if (!below && y < bodyOrigin.dy + 8) y = selBottom + 32;
     y = y.clamp(
       bodyOrigin.dy + 8,
       (bodyBottom - menuH - 8).clamp(bodyOrigin.dy + 8, double.infinity),
     );
-    var x = p.dx - menuW / 2;
+    // Ngang: căn giữa theo điểm chạm (chữ bôi đen thường quanh điểm đó).
+    final pressX =
+        bodyOrigin.dx + (_pointerDownLocal?.dx ?? bodySize.width / 2);
+    var x = pressX - menuW / 2;
     x = x.clamp(
       bodyOrigin.dx + 8,
       (bodyOrigin.dx + bodySize.width - menuW - 8).clamp(
@@ -1558,7 +1598,7 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen>
         double.infinity,
       ),
     );
-    final caretDx = (p.dx - x - 6.5).clamp(10.0, menuW - 24.0);
+    final caretDx = (pressX - x - 6.5).clamp(10.0, menuW - 24.0);
     return (origin: Offset(x, y), below: below, caretDx: caretDx, width: menuW);
   }
 
