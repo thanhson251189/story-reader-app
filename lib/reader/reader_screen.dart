@@ -74,7 +74,8 @@ class ReaderScreen extends ConsumerStatefulWidget {
   ConsumerState<ReaderScreen> createState() => _ReaderScreenState();
 }
 
-class _ReaderScreenState extends ConsumerState<ReaderScreen> with RouteAware {
+class _ReaderScreenState extends ConsumerState<ReaderScreen>
+    with RouteAware, WidgetsBindingObserver {
   final _scroll = ScrollController();
   Timer? _saveTimer;
   ChapterContent? _content;
@@ -104,6 +105,21 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> with RouteAware {
   void _hideSelectionMenu() {
     _selectionMenuEntry?.remove();
     _selectionMenuEntry = null;
+  }
+
+  /// Gỡ toàn bộ trạng thái bôi đen (menu overlay + text chọn + điểm neo).
+  /// Menu nằm trong ROOT OVERLAY nên KHÔNG tự gỡ theo widget tree:
+  /// onSelectionChanged chỉ fire khi selection ĐỔI — route mới đẩy lên hay
+  /// SelectionArea bị unmount (chương đổi) đều không fire, menu cũ treo lơ
+  /// lửng trên nội dung không còn tồn tại (bug xác nhận bằng test). Nơi gọi:
+  /// rời route (didPushNext), nạp chương mới, TTS tự sang chương kế.
+  void _dismissSelection() {
+    // Clear trước: selection vẫn còn mounted thì callback tự gỡ menu + xoá
+    // text; mấy dòng sau là lưới an toàn cho trường hợp không fire được.
+    _clearSelection();
+    _hideSelectionMenu();
+    _selectedText = null;
+    _pointerDownLocal = null;
   }
 
   bool _loading = true;
@@ -150,6 +166,7 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> with RouteAware {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _player = ref.read(ttsPlayerProvider);
     _player.addListener(_onPlayer);
     _scroll.addListener(_onScroll);
@@ -159,6 +176,13 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> with RouteAware {
       _volChannel.setMethodCallHandler(_onVolumeKey);
     }
     _init();
+  }
+
+  @override
+  void didChangeMetrics() {
+    // Xoay màn hình / bàn phím bật tắt: menu bôi đen neo theo toạ độ cũ sẽ
+    // sai chỗ — dựng lại theo toạ độ mới của body.
+    _selectionMenuEntry?.markNeedsBuild();
   }
 
   Future<void> _init() async {
@@ -216,6 +240,9 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> with RouteAware {
   @override
   void didPushNext() {
     _isTopRoute = false;
+    // Menu bôi đen nằm trong root overlay: không gỡ thì nó đè lên màn mới
+    // (mục lục, hẹn giờ, cài đặt đọc, màn đọc mở từ bookmark chương khác).
+    _dismissSelection();
     _syncVolKeys();
   }
 
@@ -238,6 +265,9 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> with RouteAware {
     // và mọi notify (hẹn giờ tắt, đổi giọng...) không được kéo reader lùi chương.
     if (_player.playing && pc != null && pc.url != _content?.url && !_loading) {
       final old = _content;
+      // Chương đổi dưới chân menu bôi đen: gỡ ngay, không để menu cũ neo vào
+      // text của chương vừa kết thúc.
+      _dismissSelection();
       _saveTimer?.cancel();
       if (old != null && _scroll.hasClients) {
         ref.read(appDbProvider).savePosition(old.url, _scroll.offset);
@@ -294,6 +324,10 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> with RouteAware {
       widget.storyUrl ?? storyUrlFromChapter(chapterUrl);
 
   Future<void> _load(String url, {bool useCache = true}) async {
+    // Chương sắp đổi: gỡ menu bôi đen trước — selection cũ neo vào text cũ,
+    // không gỡ thì menu treo trên chương mới (SelectionArea unmount không
+    // fire onSelectionChanged).
+    _dismissSelection();
     if (_content != null && _scroll.hasClients) {
       await ref.read(appDbProvider).savePosition(_content!.url, _scroll.offset);
     }
@@ -693,7 +727,11 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> with RouteAware {
                             subtitle: Text('Đoạn ${i + 1}'),
                             onTap: () {
                               Navigator.pop(ctx);
-                              _gotoParagraph(i);
+                              // Kết quả tính trên chương lúc mở sheet: nếu
+                              // nghe đọc đã tự sang chương kế trong lúc sheet
+                              // mở thì index cũ áp vào chương mới là nhảy
+                              // sai đoạn — chỉ nhảy khi còn đúng chương.
+                              if (_content?.url == c.url) _gotoParagraph(i);
                             },
                           ),
                       ],
@@ -1181,6 +1219,7 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> with RouteAware {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _hideSelectionMenu();
     routeObserver.unsubscribe(this);
     _openReaders.remove(this);
@@ -1766,7 +1805,9 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> with RouteAware {
                       onPressed: () async {
                         await db.removeBookmark(b['id'] as int);
                         items.removeWhere((x) => x['id'] == b['id']);
-                        setSheet(() {});
+                        // Sheet có thể đã đóng trong lúc chờ DB — setSheet
+                        // trên StatefulBuilder đã dispose là lỗi.
+                        if (ctx.mounted) setSheet(() {});
                       },
                     ),
                     onTap: () {

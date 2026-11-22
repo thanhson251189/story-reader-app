@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -97,8 +99,15 @@ class FakeAppDb extends AppDb {
 
   @override
   Future<void> removeBookmark(int id) async {
+    // Cổng chặn xoá giữa chừng: test chen hành động của user (đóng sheet)
+    // vào giữa await để kiểm tra guard setSheet trên sheet đã đóng.
+    final gate = bookmarkRemoveGate;
+    if (gate != null) await gate.future;
     _bookmarkRows.removeWhere((b) => b['id'] == id);
   }
+
+  /// Không null thì removeBookmark chờ cổng này mở mới hoàn tất.
+  Completer<void>? bookmarkRemoveGate;
 }
 
 class FakeTtsPlayer extends ChangeNotifier implements TtsPlayer {
@@ -118,6 +127,17 @@ class FakeTtsPlayer extends ChangeNotifier implements TtsPlayer {
   int get currentParaIndex => -1;
   @override
   SpeakChunk? get currentChunk => null;
+
+  void emit() => notifyListeners();
+
+  @override
+  void setSleepTimer(int minutes) {}
+
+  @override
+  void cancelSleepTimer() {}
+
+  @override
+  int get remainingSleepMinutes => 0;
 
   @override
   Future<void> start(ChapterContent c, {int paraIndex = 0}) async {}
@@ -147,6 +167,7 @@ Future<void> pumpReader(
   WidgetTester tester,
   AppDb db, {
   int? initialParagraph,
+  FakeTtsPlayer? tts,
 }) async {
   tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
     const MethodChannel('story_reader/volume_keys'),
@@ -156,12 +177,15 @@ Future<void> pumpReader(
     ProviderScope(
       overrides: [
         appDbProvider.overrideWithValue(db),
-        ttsPlayerProvider.overrideWithValue(FakeTtsPlayer()),
+        ttsPlayerProvider.overrideWithValue(tts ?? FakeTtsPlayer()),
         chapterPrefetcherProvider.overrideWithValue(NoopPrefetcher()),
         adapterRepoProvider.overrideWithValue(AdapterRepository([])),
         webFetcherProvider.overrideWithValue(WebFetcher()),
       ],
       child: MaterialApp(
+        // RouteAware của màn đọc cần observer để biết route mới đẩy lên —
+        // thiếu là didPushNext không fire, test menu treo không chạy được.
+        navigatorObservers: [routeObserver],
         home: ReaderScreen(
           url: 'https://x.test/c/1',
           initialParagraph: initialParagraph,
@@ -434,5 +458,191 @@ void main() {
     final tf = tester.widget<TextField>(find.byType(TextField));
     expect(tf.controller!.text, isNotEmpty);
     expect(find.textContaining('đoạn khớp'), findsOneWidget);
+  });
+
+  testWidgets('Bôi đen rồi mở màn khác: menu không treo trên màn mới', (
+    tester,
+  ) async {
+    final db = FakeAppDb();
+    db.cache['https://x.test/c/1'] = ChapterContent(
+      url: 'https://x.test/c/1',
+      title: 'Chương 1',
+      paragraphs: ['Hắn gi ết người rồi bỏ trốn.', 'Đoạn hai bình thường.'],
+    );
+    await pumpReader(tester, db);
+
+    await tester.longPress(find.textContaining('gi ết'));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('selection_menu')), findsOneWidget);
+
+    // Mở route mới đè lên (sheet hẹn giờ là một route) — menu nằm trong root
+    // overlay, không tự gỡ theo widget tree: phải bị gỡ khi rời route.
+    await tester.tap(find.byTooltip('Hẹn giờ tắt'));
+    await tester.pumpAndSettle();
+    expect(
+      find.byKey(const Key('selection_menu')),
+      findsNothing,
+      reason: 'menu overlay treo trên route mới',
+    );
+
+    // Quay về màn đọc: menu cũng KHÔNG quay lại (selection đã dọn sạch).
+    await tester.tap(find.text('15 phút'));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('selection_menu')), findsNothing);
+  });
+
+  testWidgets('Bôi đen rồi nghe hết chương tự chuyển: menu không treo trên chương mới', (
+    tester,
+  ) async {
+    final db = FakeAppDb();
+    final c1 = ChapterContent(
+      url: 'https://x.test/c/1',
+      title: 'Chương 1',
+      paragraphs: ['Hắn gi ết người rồi bỏ trốn.', 'Đoạn hai bình thường.'],
+    );
+    final c2 = ChapterContent(
+      url: 'https://x.test/c/2',
+      title: 'Chương 2',
+      paragraphs: ['Đoạn mới của chương hai.'],
+    );
+    db.cache[c1.url] = c1;
+    db.cache[c2.url] = c2;
+    final player = FakeTtsPlayer()
+      ..chapter = c1
+      ..playing = true;
+    await pumpReader(tester, db, tts: player);
+
+    await tester.longPress(find.textContaining('gi ết'));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('selection_menu')), findsOneWidget);
+
+    // TTS hết chương tự sang chương kế: reader đi theo chương mới, menu cũ
+    // neo vào text chương cũ phải bị gỡ ngay.
+    player.chapter = c2;
+    player.emit();
+    await tester.pumpAndSettle();
+
+    expect(find.text('Chương 2'), findsWidgets);
+    expect(
+      find.byKey(const Key('selection_menu')),
+      findsNothing,
+      reason: 'menu overlay treo trên chương mới',
+    );
+  });
+
+  testWidgets('Xoá đánh dấu rồi đóng sheet giữa lúc chờ DB: không ném lỗi', (
+    tester,
+  ) async {
+    final db = FakeAppDb();
+    db.cache['https://x.test/c/1'] = ChapterContent(
+      url: 'https://x.test/c/1',
+      title: 'Chương 1',
+      paragraphs: ['Hắn gi ết người rồi bỏ trốn.', 'Đoạn hai bình thường.'],
+    );
+    await db.toggleBookmark(
+      storyUrl: 'https://x.test/c',
+      chapterUrl: 'https://x.test/c/1',
+      chapterTitle: 'Chương 1',
+      paraIndex: 0,
+      snippet: 'Hắn gi ết người rồi bỏ trốn.',
+    );
+    await pumpReader(tester, db);
+
+    await tester.tap(find.byTooltip('Đoạn đã đánh dấu'));
+    await tester.pumpAndSettle();
+    expect(find.text('Chương 1 · Đoạn 1'), findsOneWidget);
+
+    // Bấm xoá: DB chặn giữa chừng bằng cổng — trong lúc chờ, user đóng sheet.
+    final gate = Completer<void>();
+    db.bookmarkRemoveGate = gate;
+    await tester.tap(find.byTooltip('Xoá đánh dấu'));
+    await tester.pump();
+    tester.state<NavigatorState>(find.byType(Navigator)).pop();
+    await tester.pump();
+    gate.complete();
+    await tester.pumpAndSettle();
+
+    // Xoá vẫn hoàn tất ở DB; quan trọng nhất: KHÔNG có lỗi setSheet-sau-
+    // dispose văng lên framework.
+    expect(tester.takeException(), isNull);
+    expect(await db.getBookmarks('https://x.test/c'), isEmpty);
+  });
+
+  testWidgets('TTS đổi chương trong lúc sheet tìm mở: bấm kết quả không nhảy sai đoạn', (
+    tester,
+  ) async {
+    final db = FakeAppDb();
+    final player = FakeTtsPlayer()
+      ..chapter = ChapterContent(
+        url: 'https://x.test/c/1',
+        title: 'Chương 1',
+        paragraphs: [for (var i = 0; i < 10; i++) 'Đoạn $i của chương 1.'],
+        nextUrl: 'https://x.test/c/2',
+      )
+      ..playing = true;
+    db.cache['https://x.test/c/1'] = player.chapter!;
+    db.cache['https://x.test/c/2'] = ChapterContent(
+      url: 'https://x.test/c/2',
+      title: 'Chương 2',
+      paragraphs: [for (var i = 0; i < 10; i++) 'Đoạn $i của chương 2.'],
+    );
+    await pumpReader(tester, db, tts: player);
+
+    await tester.tap(find.byTooltip('Tìm trong chương'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField), 'Đoạn 5');
+    await tester.pumpAndSettle();
+    expect(find.textContaining('đoạn khớp'), findsOneWidget);
+
+    // Nghe đọc hết chương tự sang chương kế trong lúc sheet còn mở.
+    player.chapter = db.cache['https://x.test/c/2'];
+    player.emit();
+    await tester.pumpAndSettle();
+
+    // Bấm kết quả tính cho chương 1: chỉ đóng sheet, KHÔNG nhảy tới đoạn 5
+    // của chương 2 (nhảy là lôi người dùng tới sai đoạn).
+    await tester.tap(find.textContaining('Đoạn 5 của chương 1'));
+    await tester.pumpAndSettle();
+
+    expect(tester.takeException(), isNull);
+    expect(find.text('Chương 2'), findsWidgets);
+    // Không nhảy: đoạn 0 vẫn nằm ở đầu màn (nhảy là đoạn 5 lên đầu).
+    final top = tester.getRect(find.textContaining('Đoạn 0 của chương 2'));
+    expect(
+      top.top,
+      lessThan(300),
+      reason: 'nhảy sai theo index chương cũ: $top',
+    );
+  });
+
+  testWidgets('Xoay màn hình khi menu đang mở: menu dựng lại đúng trong body', (
+    tester,
+  ) async {
+    final db = FakeAppDb();
+    db.cache['https://x.test/c/1'] = ChapterContent(
+      url: 'https://x.test/c/1',
+      title: 'Chương 1',
+      paragraphs: ['Hắn gi ết người rồi bỏ trốn.', 'Đoạn hai bình thường.'],
+    );
+    await pumpReader(tester, db);
+
+    await tester.longPress(find.textContaining('gi ết'));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('selection_menu')), findsOneWidget);
+
+    // Xoay ngang: menu phải được dựng lại theo toạ độ mới, nằm trọn trong màn.
+    tester.view.physicalSize = Size(1200 * tester.view.devicePixelRatio, 600 * tester.view.devicePixelRatio);
+    addTearDown(tester.view.resetPhysicalSize);
+    await tester.pumpAndSettle();
+
+    expect(tester.takeException(), isNull);
+    final menu = tester.getRect(find.byKey(const Key('selection_menu')));
+    final screenW =
+        tester.view.physicalSize.width / tester.view.devicePixelRatio;
+    final screenH =
+        tester.view.physicalSize.height / tester.view.devicePixelRatio;
+    expect(menu.left, greaterThanOrEqualTo(0));
+    expect(menu.right, lessThanOrEqualTo(screenW));
+    expect(menu.bottom, lessThanOrEqualTo(screenH));
   });
 }
