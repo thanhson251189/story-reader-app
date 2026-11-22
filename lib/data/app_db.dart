@@ -22,9 +22,15 @@ class AppDb {
   // từ web (lỗi mạng thì vẫn dùng bản cũ, không chặn người đọc).
   static const staleCacheDays = 7;
 
+  // Bảng đánh dấu đoạn (bookmark): mỗi dòng = 1 đoạn được người dùng ghim
+  // trong truyện đang đọc. UNIQUE để toggle và phục hồi sao lưu không sinh
+  // dòng trùng.
+  static const _createBookmarksSql =
+      'CREATE TABLE bookmarks(id INTEGER PRIMARY KEY AUTOINCREMENT, story_url TEXT NOT NULL, chapter_url TEXT NOT NULL, chapter_title TEXT NOT NULL, para_index INTEGER NOT NULL, snippet TEXT NOT NULL, created_at INTEGER NOT NULL, UNIQUE(story_url, chapter_url, para_index))';
+
   Future<Database> get database async => _db ??= await openDatabase(
     p.join(await getDatabasesPath(), fileName),
-    version: 6,
+    version: 7,
     onCreate: (db, v) async {
       await db.execute(
         'CREATE TABLE positions(url TEXT PRIMARY KEY, offset REAL NOT NULL, updated_at INTEGER NOT NULL)',
@@ -41,8 +47,10 @@ class AppDb {
       await db.execute(
         'CREATE TABLE toc(story_url TEXT NOT NULL, chapter_url TEXT NOT NULL, title TEXT NOT NULL, idx INTEGER NOT NULL, PRIMARY KEY(story_url, chapter_url))',
       );
+      await db.execute(_createBookmarksSql);
     },
     onUpgrade: (db, from, to) async {
+      if (from < 7) await db.execute(_createBookmarksSql);
       if (from < 3) await db.execute('DROP TABLE IF EXISTS local_books');
       if (from < 4) {
         await db.execute(
@@ -339,6 +347,7 @@ class AppDb {
     final db = await database;
     await db.delete('library', where: 'story_url = ?', whereArgs: [storyUrl]);
     await db.delete('toc', where: 'story_url = ?', whereArgs: [storyUrl]);
+    await db.delete('bookmarks', where: 'story_url = ?', whereArgs: [storyUrl]);
     if (storyUrl.startsWith('book:')) {
       await db.delete(
         'chapter_cache',
@@ -346,6 +355,51 @@ class AppDb {
         whereArgs: ['$storyUrl:%'],
       );
     }
+  }
+
+  // ---- Đánh dấu đoạn (bookmark) ----
+
+  /// Toggle đánh dấu một đoạn: đang có thì XOÁ, chưa có thì THÊM. Trả về
+  /// true nếu SAU lệnh gọi đoạn đang được đánh dấu.
+  Future<bool> toggleBookmark({
+    required String storyUrl,
+    required String chapterUrl,
+    required String chapterTitle,
+    required int paraIndex,
+    required String snippet,
+  }) async {
+    final db = await database;
+    final removed = await db.delete(
+      'bookmarks',
+      where: 'story_url = ? AND chapter_url = ? AND para_index = ?',
+      whereArgs: [storyUrl, chapterUrl, paraIndex],
+    );
+    if (removed > 0) return false;
+    await db.insert('bookmarks', {
+      'story_url': storyUrl,
+      'chapter_url': chapterUrl,
+      'chapter_title': chapterTitle,
+      'para_index': paraIndex,
+      'snippet': snippet,
+      'created_at': DateTime.now().millisecondsSinceEpoch,
+    });
+    return true;
+  }
+
+  /// Danh sách đánh dấu của một truyện, mới nhất lên đầu.
+  Future<List<Map<String, dynamic>>> getBookmarks(String storyUrl) async {
+    final db = await database;
+    return db.query(
+      'bookmarks',
+      where: 'story_url = ?',
+      whereArgs: [storyUrl],
+      orderBy: 'created_at DESC, id DESC',
+    );
+  }
+
+  Future<void> removeBookmark(int id) async {
+    final db = await database;
+    await db.delete('bookmarks', where: 'id = ?', whereArgs: [id]);
   }
 
   Future<void> saveToc(String storyUrl, List<ChapterRef> chapters) async {

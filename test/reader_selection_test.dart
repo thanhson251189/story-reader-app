@@ -51,6 +51,54 @@ class FakeAppDb extends AppDb {
 
   @override
   Future<List<ChapterRef>> getToc(String storyUrl) async => const [];
+
+  // ---- Đánh dấu đoạn (giả, trong bộ nhớ) ----
+  int _bookmarkId = 0;
+  final List<Map<String, dynamic>> _bookmarkRows = [];
+
+  @override
+  Future<bool> toggleBookmark({
+    required String storyUrl,
+    required String chapterUrl,
+    required String chapterTitle,
+    required int paraIndex,
+    required String snippet,
+  }) async {
+    bool same(Map<String, dynamic> b) =>
+        b['story_url'] == storyUrl &&
+        b['chapter_url'] == chapterUrl &&
+        b['para_index'] == paraIndex;
+    final existed = _bookmarkRows.any(same);
+    _bookmarkRows.removeWhere(same);
+    if (existed) return false;
+    _bookmarkRows.add({
+      'id': ++_bookmarkId,
+      'story_url': storyUrl,
+      'chapter_url': chapterUrl,
+      'chapter_title': chapterTitle,
+      'para_index': paraIndex,
+      'snippet': snippet,
+      'created_at': _bookmarkId,
+    });
+    return true;
+  }
+
+  @override
+  Future<List<Map<String, dynamic>>> getBookmarks(String storyUrl) async {
+    final rows =
+        [
+          for (final b in _bookmarkRows)
+            if (b['story_url'] == storyUrl) Map<String, dynamic>.from(b),
+        ]..sort(
+          (a, b) => (b['created_at'] as int).compareTo(a['created_at'] as int),
+        );
+    return rows;
+  }
+
+  @override
+  Future<void> removeBookmark(int id) async {
+    _bookmarkRows.removeWhere((b) => b['id'] == id);
+  }
 }
 
 class FakeTtsPlayer extends ChangeNotifier implements TtsPlayer {
@@ -95,7 +143,11 @@ class NoopPrefetcher implements ChapterPrefetcher {
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }
 
-Future<void> pumpReader(WidgetTester tester, AppDb db) async {
+Future<void> pumpReader(
+  WidgetTester tester,
+  AppDb db, {
+  int? initialParagraph,
+}) async {
   tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
     const MethodChannel('story_reader/volume_keys'),
     (call) async => null,
@@ -109,7 +161,12 @@ Future<void> pumpReader(WidgetTester tester, AppDb db) async {
         adapterRepoProvider.overrideWithValue(AdapterRepository([])),
         webFetcherProvider.overrideWithValue(WebFetcher()),
       ],
-      child: const MaterialApp(home: ReaderScreen(url: 'https://x.test/c/1')),
+      child: MaterialApp(
+        home: ReaderScreen(
+          url: 'https://x.test/c/1',
+          initialParagraph: initialParagraph,
+        ),
+      ),
     ),
   );
   await tester.pumpAndSettle();
@@ -131,6 +188,16 @@ void main() {
     expect(find.text('Copy'), findsOneWidget);
     expect(find.text('Đổi từ'), findsOneWidget);
     expect(find.text('Dịch'), findsOneWidget);
+    expect(find.text('Đánh dấu'), findsOneWidget);
+
+    // Menu dọc nằm CẠNH chỗ bôi đen, không phải ở đáy màn như bản cũ.
+    final press = tester.getCenter(find.textContaining('gi ết'));
+    final menu = tester.getRect(find.byKey(const Key('selection_menu')));
+    expect(
+      (menu.center - press).distance,
+      lessThan(240),
+      reason: 'menu lệch xa chỗ chọn: press=$press menu=$menu',
+    );
   });
 
   testWidgets('Cuộn sâu xuống giữa chương dài, nhấn giữ vẫn hiện menu', (
@@ -175,9 +242,18 @@ void main() {
 
     await tester.longPress(find.textContaining('gi ết'));
     await tester.pumpAndSettle();
+    // ignore: avoid_print
+    print(
+      'DEBUG bubble=${tester.getRect(find.byKey(const Key('selection_menu')))}',
+    );
+    // ignore: avoid_print
+    print('DEBUG doi_tu=${tester.getRect(find.text('Đổi từ'))}');
     await tester.tap(find.text('Đổi từ'));
     await tester.pumpAndSettle();
-
+    // ignore: avoid_print
+    print(
+      'DEBUG bubble_sau=${find.byKey(const Key('selection_menu')).evaluate().isNotEmpty ? tester.getRect(find.byKey(const Key('selection_menu'))) : 'gone'}',
+    );
     // Hộp thoại sửa lỗi mở với cụm từ sai điền sẵn text vừa bôi đen.
     expect(find.text('Thêm cụm từ'), findsOneWidget);
     await tester.enterText(find.byType(TextField).at(0), 'gi ết');
@@ -220,8 +296,13 @@ void main() {
     // (bug đã gặp: sheet không nhính theo viewInsets nên bị trùm hết).
     expect(find.text('Nhập từ khoá để tìm trong chương'), findsOneWidget);
     final hint = tester.getRect(find.text('Nhập từ khoá để tìm trong chương'));
-    final screenH = tester.view.physicalSize.height / tester.view.devicePixelRatio;
-    expect(hint.bottom, lessThan(screenH - 300), reason: 'sheet bị bàn phím đè: $hint');
+    final screenH =
+        tester.view.physicalSize.height / tester.view.devicePixelRatio;
+    expect(
+      hint.bottom,
+      lessThan(screenH - 300),
+      reason: 'sheet bị bàn phím đè: $hint',
+    );
   });
 
   testWidgets('Kết quả tìm kiếm tô màu phần khớp từ khoá', (tester) async {
@@ -253,5 +334,84 @@ void main() {
         if (s.style?.backgroundColor != null) s.text,
     ];
     expect(highlighted, ['cần']);
+  });
+
+  testWidgets('Đánh dấu đoạn: lưu DB, vào danh sách, xoá được', (tester) async {
+    final db = FakeAppDb();
+    db.cache['https://x.test/c/1'] = ChapterContent(
+      url: 'https://x.test/c/1',
+      title: 'Chương 1',
+      paragraphs: ['Hắn gi ết người rồi bỏ trốn.', 'Đoạn hai bình thường.'],
+    );
+    await pumpReader(tester, db);
+
+    await tester.longPress(find.textContaining('gi ết'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Đánh dấu'));
+    await tester.pumpAndSettle();
+
+    // Đã lưu + snackbar xác nhận; menu thu lại sau khi chọn.
+    expect(find.text('Đã đánh dấu đoạn 1'), findsOneWidget);
+    expect(find.text('Copy'), findsNothing);
+    final marks = await db.getBookmarks('https://x.test/c');
+    expect(marks.length, 1);
+    expect(marks.single['para_index'], 0);
+
+    // Danh sách đánh dấu: snippet + nhãn chương/đoạn.
+    await tester.tap(find.byTooltip('Đoạn đã đánh dấu'));
+    await tester.pumpAndSettle();
+    expect(find.text('Đoạn đã đánh dấu'), findsOneWidget);
+    expect(find.textContaining('Hắn gi ết người'), findsNWidgets(2));
+    expect(find.text('Chương 1 · Đoạn 1'), findsOneWidget);
+
+    // Xoá đánh dấu khỏi danh sách → DB rỗng, sheet báo rỗng.
+    await tester.tap(find.byTooltip('Xoá đánh dấu'));
+    await tester.pumpAndSettle();
+    expect(await db.getBookmarks('https://x.test/c'), isEmpty);
+    expect(find.textContaining('Chưa có đoạn nào'), findsOneWidget);
+  });
+
+  testWidgets('Bấm dòng đánh dấu cùng chương: nhảy tới đoạn, sheet đóng', (
+    tester,
+  ) async {
+    final db = FakeAppDb();
+    db.cache['https://x.test/c/1'] = ChapterContent(
+      url: 'https://x.test/c/1',
+      title: 'Chương 1',
+      paragraphs: List.generate(40, (j) => 'Đoạn số $j. ' * 8),
+    );
+    await db.toggleBookmark(
+      storyUrl: 'https://x.test/c',
+      chapterUrl: 'https://x.test/c/1',
+      chapterTitle: 'Chương 1',
+      paraIndex: 30,
+      snippet: 'Đoạn số 30.',
+    );
+    await pumpReader(tester, db);
+
+    await tester.tap(find.byTooltip('Đoạn đã đánh dấu'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Chương 1 · Đoạn 31'));
+    await tester.pumpAndSettle();
+
+    // Sheet đóng, chương cuộn tới đoạn 30 (nháy sáng đang bật).
+    expect(find.text('Đoạn đã đánh dấu'), findsNothing);
+    final r = tester.getRect(find.textContaining('Đoạn số 30. '));
+    expect(r.top, lessThan(300), reason: 'không cuộn tới đoạn 30: $r');
+  });
+
+  testWidgets('Mở màn với initialParagraph: nhảy thẳng tới đoạn', (
+    tester,
+  ) async {
+    final db = FakeAppDb();
+    db.cache['https://x.test/c/1'] = ChapterContent(
+      url: 'https://x.test/c/1',
+      title: 'Chương 1',
+      paragraphs: List.generate(40, (j) => 'Đoạn số $j. ' * 8),
+    );
+    await pumpReader(tester, db, initialParagraph: 25);
+
+    final r = tester.getRect(find.textContaining('Đoạn số 25. '));
+    expect(r.top, lessThan(300), reason: 'không nhảy tới đoạn 25: $r');
   });
 }

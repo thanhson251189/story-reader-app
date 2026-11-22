@@ -20,7 +20,15 @@ import 'toc_screen.dart';
 class ReaderScreen extends ConsumerStatefulWidget {
   final String url;
   final String? storyUrl;
-  const ReaderScreen({super.key, required this.url, this.storyUrl});
+
+  /// Mở màn là nhảy thẳng tới đoạn này (từ danh sách đánh dấu đoạn).
+  final int? initialParagraph;
+  const ReaderScreen({
+    super.key,
+    required this.url,
+    this.storyUrl,
+    this.initialParagraph,
+  });
 
   /// Đoạn văn có chứa từ khoá (không phân biệt hoa thường, dấu tiếng Việt).
   static bool paragraphMatches(String text, String query) {
@@ -72,13 +80,31 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> with RouteAware {
   // Bản gốc TRƯỚC khi áp sửa từ: thêm cụm từ mới lúc đang đọc (bôi đen →
   // "Đổi từ") cần áp lại từ bản gốc, không phải chồng sửa lên bản đã sửa.
   ChapterContent? _contentRaw;
-  // Text đang bôi đen (onSelectionChanged của SelectionArea báo về). Thanh
-  // lệnh Copy/Đổi từ/Dịch của app tự vẽ theo trạng thái này thay vì dùng
-  // toolbar tự động của SDK — trên máy thật selection thành công nhưng
-  // toolbar của SDK có lúc không hiện, còn callback này luôn chạy.
+  // Text đang bôi đen (onSelectionChanged của SelectionArea báo về). Menu
+  // Copy/Đổi từ/Dịch/Đánh dấu của app tự vẽ trong ROOT OVERLAY theo trạng
+  // thái này thay vì dùng toolbar tự động của SDK — trên máy thật selection
+  // thành công nhưng toolbar của SDK có lúc không hiện, còn callback này
+  // luôn chạy. Menu trong overlay đè lên được cả núm kéo selection.
   final GlobalKey<SelectionAreaState> _selectionAreaKey = GlobalKey();
+  final GlobalKey _bodyStackKey = GlobalKey();
+  OverlayEntry? _selectionMenuEntry;
   String? _selectedText;
-  bool _selectionBarVisible = false;
+  // Điểm chạm xuống (tọa độ trong body) — gốc đặt menu dọc cạnh chỗ chọn.
+  Offset? _pointerDownLocal;
+  // Đoạn cần nhảy tới ngay khi mở màn (từ danh sách đánh dấu đoạn).
+  int? _pendingInitialPara;
+
+  void _showSelectionMenu() {
+    _hideSelectionMenu();
+    _selectionMenuEntry = OverlayEntry(builder: (_) => _selectionMenuBubble());
+    Overlay.of(context, rootOverlay: true).insert(_selectionMenuEntry!);
+  }
+
+  void _hideSelectionMenu() {
+    _selectionMenuEntry?.remove();
+    _selectionMenuEntry = null;
+  }
+
   bool _loading = true;
   String? _error;
   String? _failedUrl;
@@ -126,6 +152,7 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> with RouteAware {
     _player = ref.read(ttsPlayerProvider);
     _player.addListener(_onPlayer);
     _scroll.addListener(_onScroll);
+    _pendingInitialPara = widget.initialParagraph;
     _openReaders.add(this);
     if (_openReaders.length == 1) {
       _volChannel.setMethodCallHandler(_onVolumeKey);
@@ -333,6 +360,14 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> with RouteAware {
         _loading = false;
       });
       WidgetsBinding.instance.addPostFrameCallback((_) {
+        // Mở từ danh sách đánh dấu: nhảy thẳng tới đoạn đã đánh dấu thay vì
+        // vị trí đọc cũ. Ưu tiên cao hơn vị trí đã lưu.
+        final para = _pendingInitialPara;
+        _pendingInitialPara = null;
+        if (para != null && para < _paraKeys.length) {
+          _gotoParagraph(para);
+          return;
+        }
         if (_scroll.hasClients) {
           _scroll.jumpTo(
             (saved ?? 0)
@@ -580,11 +615,8 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> with RouteAware {
             padding: EdgeInsets.only(bottom: insets),
             child: ConstrainedBox(
               constraints: BoxConstraints(
-                maxHeight:
-                    (MediaQuery.of(ctx).size.height * 0.8 - insets).clamp(
-                  220.0,
-                  MediaQuery.of(ctx).size.height * 0.8,
-                ),
+                maxHeight: (MediaQuery.of(ctx).size.height * 0.8 - insets)
+                    .clamp(220.0, MediaQuery.of(ctx).size.height * 0.8),
               ),
               child: Column(
                 mainAxisSize: MainAxisSize.min,
@@ -1148,6 +1180,7 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> with RouteAware {
 
   @override
   void dispose() {
+    _hideSelectionMenu();
     routeObserver.unsubscribe(this);
     _openReaders.remove(this);
     if (_openReaders.isEmpty) {
@@ -1208,6 +1241,12 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> with RouteAware {
             ),
           if (c != null)
             IconButton(
+              icon: const Icon(Icons.collections_bookmark_outlined),
+              onPressed: _loading ? null : _openBookmarks,
+              tooltip: 'Đoạn đã đánh dấu',
+            ),
+          if (c != null)
+            IconButton(
               icon: const Icon(Icons.list),
               onPressed: () => Navigator.push(
                 context,
@@ -1247,10 +1286,14 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> with RouteAware {
         ],
       ),
       body: Stack(
+        key: _bodyStackKey,
         children: [
-          _buildBody(bg, fg),
-          if (_selectionBarVisible)
-            Positioned(left: 16, right: 16, bottom: 12, child: _selectionBar()),
+          // Listener bị động: ghi lại điểm chạm xuống để đặt menu dọc
+          // cạnh chỗ bôi đen (không tranh gesture với cuộn/kéo ngang).
+          Listener(
+            onPointerDown: (e) => _pointerDownLocal = e.position,
+            child: _buildBody(bg, fg),
+          ),
         ],
       ),
       bottomNavigationBar: c == null
@@ -1390,17 +1433,16 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> with RouteAware {
           child: SelectionArea(
             key: _selectionAreaKey,
             // Tắt toolbar mặc định của SDK (menu hệ thống) — hành động chạy
-            // qua thanh lệnh riêng của app ở đáy màn.
+            // qua menu dọc riêng của app cạnh chỗ bôi đen.
             contextMenuBuilder: (_, _) => const SizedBox.shrink(),
             onSelectionChanged: (sel) {
-              // Lưu thẳng không setState: chọn chữ bằng kéo handle báo liên
-              // tục — chỉ setState khi thanh lệnh cần hiện/ẩn.
               _selectedText = (sel == null || sel.plainText.isEmpty)
                   ? null
                   : sel.plainText;
-              final show = _selectedText != null;
-              if (show != _selectionBarVisible) {
-                setState(() => _selectionBarVisible = show);
+              if (_selectedText != null) {
+                _showSelectionMenu();
+              } else {
+                _hideSelectionMenu();
               }
             },
             child: Column(
@@ -1444,45 +1486,92 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> with RouteAware {
     );
   }
 
-  // ---- Bôi đen text khi đọc: thanh lệnh Copy / Đổi từ / Dịch ----
+  // ---- Bôi đen text khi đọc: menu dọc Copy / Đổi từ / Dịch / Đánh dấu ----
 
-  /// Thanh lệnh hiện ở đáy màn khi có text đang bôi đen. Tự vẽ thay vì dùng
-  /// toolbar tự động của SDK (contextMenuBuilder): trên máy thật selection
-  /// thành công mà toolbar của SDK có lúc không xuất hiện.
-  Widget _selectionBar() {
-    return Material(
-      color: Theme.of(context).colorScheme.primaryContainer,
-      borderRadius: BorderRadius.circular(14),
-      elevation: 6,
-      child: Row(
-        children: [
-          Expanded(
-            child: TextButton.icon(
-              onPressed: _copySelected,
-              icon: const Icon(Icons.copy_all, size: 20),
-              label: const Text('Copy'),
-            ),
+  /// Góc đặt menu dọc (tọa độ GLOBAL cho Overlay): NGAY TRÊN vùng chọn
+  /// (đụng đỉnh body thì chuyển xuống dưới), ngang ưu tiên bên phải chữ
+  /// chọn, hết chỗ sang trái. Phải cách vùng chọn một khoảng vì núm kéo
+  /// selection nằm cùng lớp Overlay — menu chạm vào núm là núm ăn mất cú
+  /// bấm vào menu (bug đã gặp).
+  Offset _menuGlobalOrigin() {
+    const menuW = 188.0;
+    const menuH = 4 * 48.0 + 8;
+    final bodyBox =
+        _bodyStackKey.currentContext?.findRenderObject() as RenderBox?;
+    final bodyOrigin = bodyBox?.localToGlobal(Offset.zero) ?? Offset.zero;
+    final bodySize = bodyBox?.size ?? MediaQuery.of(context).size;
+    final p = bodyOrigin + (_pointerDownLocal ?? Offset.zero);
+    var x = p.dx + 24;
+    if (x + menuW > bodyOrigin.dx + bodySize.width - 8) {
+      x = p.dx - 24 - menuW;
+    }
+    x = x.clamp(
+      bodyOrigin.dx + 8,
+      (bodyOrigin.dx + bodySize.width - menuW - 8).clamp(
+        bodyOrigin.dx + 8,
+        double.infinity,
+      ),
+    );
+    var y = p.dy - menuH - 28;
+    if (y < bodyOrigin.dy + 8) y = p.dy + 56;
+    y = y.clamp(
+      bodyOrigin.dy + 8,
+      (bodyOrigin.dy + bodySize.height - menuH - 8).clamp(
+        bodyOrigin.dy + 8,
+        double.infinity,
+      ),
+    );
+    return Offset(x, y);
+  }
+
+  Widget _selectionMenuBubble() {
+    final origin = _menuGlobalOrigin();
+    return Positioned(
+      left: origin.dx,
+      top: origin.dy,
+      child: Material(
+        key: const Key('selection_menu'),
+        color: Theme.of(context).colorScheme.primaryContainer,
+        borderRadius: BorderRadius.circular(12),
+        elevation: 6,
+        child: IntrinsicWidth(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              _menuRow(Icons.copy_all, 'Copy', _copySelected),
+              _menuRow(Icons.edit_note, 'Đổi từ', _fixSelected),
+              _menuRow(Icons.translate, 'Dịch', _translateSelected),
+              _menuRow(
+                Icons.bookmark_add_outlined,
+                'Đánh dấu',
+                _bookmarkSelected,
+              ),
+            ],
           ),
-          Expanded(
-            child: TextButton.icon(
-              onPressed: _fixSelected,
-              icon: const Icon(Icons.edit_note, size: 20),
-              label: const Text('Đổi từ'),
-            ),
+        ),
+      ),
+    );
+  }
+
+  Widget _menuRow(IconData icon, String label, VoidCallback onTap) {
+    // onTapDown thay vì onTap: menu có thể bị gỡ ngay giữa cú chạm (bấm vào
+    // menu cũng bị SelectionArea coi là "chạm ngoài vùng chọn" và xoá selection
+    // → unmount menu) — nếu chờ tap-up thì hành động bị nuốt mất.
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTapDown: (_) => onTap(),
+      child: SizedBox(
+        width: 180,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 13),
+          child: Row(
+            children: [
+              Icon(icon, size: 20),
+              const SizedBox(width: 12),
+              Text(label, style: Theme.of(context).textTheme.bodyMedium),
+            ],
           ),
-          Expanded(
-            child: TextButton.icon(
-              onPressed: _translateSelected,
-              icon: const Icon(Icons.translate, size: 20),
-              label: const Text('Dịch'),
-            ),
-          ),
-          IconButton(
-            tooltip: 'Bỏ chọn',
-            onPressed: _clearSelection,
-            icon: const Icon(Icons.close),
-          ),
-        ],
+        ),
       ),
     );
   }
@@ -1545,6 +1634,134 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> with RouteAware {
         );
       }
     }
+  }
+
+  /// Đánh dấu đoạn chứa text đang bôi đen (toggle: đã đánh dấu thì bỏ).
+  Future<void> _bookmarkSelected() async {
+    final sel = (_selectedText ?? '').trim();
+    _clearSelection();
+    final c = _content;
+    if (sel.isEmpty || c == null || !mounted) return;
+    // Chọn vắt qua nhiều đoạn thì lấy đoạn đầu: probe là dòng đầu của vùng
+    // chọn, tìm đoạn đầu tiên chứa nó.
+    final probe = sel.split('\n').first.trim();
+    int? idx;
+    for (var i = 0; i < c.paragraphs.length; i++) {
+      if (c.paragraphs[i].contains(probe)) {
+        idx = i;
+        break;
+      }
+    }
+    if (idx == null || !mounted) return;
+    final para = c.paragraphs[idx];
+    final added = await ref
+        .read(appDbProvider)
+        .toggleBookmark(
+          storyUrl: _storyUrlOf(c.url),
+          chapterUrl: c.url,
+          chapterTitle: c.title,
+          paraIndex: idx,
+          snippet: para.length > 140 ? '${para.substring(0, 140)}…' : para,
+        );
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          added
+              ? 'Đã đánh dấu đoạn ${idx + 1}'
+              : 'Đã bỏ đánh dấu đoạn ${idx + 1}',
+        ),
+      ),
+    );
+  }
+
+  /// Danh sách đánh dấu của truyện đang đọc: bấm dòng để nhảy tới đoạn, nút
+  /// xoá để bỏ đánh dấu.
+  Future<void> _openBookmarks() async {
+    final c = _content;
+    if (c == null || !mounted) return;
+    final storyUrl = _storyUrlOf(c.url);
+    final db = ref.read(appDbProvider);
+    final items = await db.getBookmarks(storyUrl);
+    if (!mounted) return;
+    await showModalBottomSheet(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setSheet) {
+          return SafeArea(
+            child: ListView(
+              shrinkWrap: true,
+              children: [
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 16, 16, 4),
+                  child: Text(
+                    'Đoạn đã đánh dấu',
+                    style: Theme.of(ctx).textTheme.titleMedium,
+                  ),
+                ),
+                if (items.isEmpty)
+                  Padding(
+                    padding: const EdgeInsets.all(16),
+                    child: Text(
+                      'Chưa có đoạn nào được đánh dấu. Bôi đen chữ khi đọc '
+                      'rồi bấm "Đánh dấu" để lưu đoạn cần quay lại.',
+                    ),
+                  ),
+                for (final b in items)
+                  ListTile(
+                    dense: true,
+                    title: Text(
+                      b['snippet'] as String? ?? '',
+                      maxLines: 3,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    subtitle: Text(
+                      '${b['chapter_title'] as String? ?? ''} · '
+                      'Đoạn ${(b['para_index'] as int? ?? 0) + 1}',
+                    ),
+                    trailing: IconButton(
+                      icon: const Icon(Icons.delete_outline),
+                      tooltip: 'Xoá đánh dấu',
+                      onPressed: () async {
+                        await db.removeBookmark(b['id'] as int);
+                        items.removeWhere((x) => x['id'] == b['id']);
+                        setSheet(() {});
+                      },
+                    ),
+                    onTap: () {
+                      Navigator.pop(ctx);
+                      _jumpToBookmark(b);
+                    },
+                  ),
+                const SizedBox(height: 8),
+              ],
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  void _jumpToBookmark(Map<String, dynamic> b) {
+    final chapterUrl = b['chapter_url'] as String?;
+    final para = b['para_index'] as int?;
+    if (chapterUrl == null || para == null || !mounted) return;
+    final c = _content;
+    if (c != null && c.url == chapterUrl) {
+      _gotoParagraph(para);
+      return;
+    }
+    // Chương khác: mở màn đọc mới và nhảy thẳng tới đoạn.
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => ReaderScreen(
+          url: chapterUrl,
+          storyUrl: _storyUrlOf(chapterUrl),
+          initialParagraph: para,
+        ),
+      ),
+    );
   }
 
   Widget _paragraph(

@@ -190,4 +190,74 @@ void main() {
     );
     await (await db.database).close();
   });
+
+  test('bookmark: toggle thêm rồi xoá, list mới nhất lên đầu', () async {
+    final db = AppDb();
+    final added1 = await db.toggleBookmark(
+      storyUrl: 's',
+      chapterUrl: 'c1',
+      chapterTitle: 'Chương 1',
+      paraIndex: 3,
+      snippet: 'đoạn A',
+    );
+    final added2 = await db.toggleBookmark(
+      storyUrl: 's',
+      chapterUrl: 'c2',
+      chapterTitle: 'Chương 2',
+      paraIndex: 1,
+      snippet: 'đoạn B',
+    );
+    expect(added1, isTrue);
+    expect(added2, isTrue);
+    final list = await db.getBookmarks('s');
+    expect(list.length, 2);
+    expect(list.first['chapter_url'], 'c2');
+
+    // Toggle lần nữa trên c1: xoá đánh dấu đó.
+    final added3 = await db.toggleBookmark(
+      storyUrl: 's',
+      chapterUrl: 'c1',
+      chapterTitle: 'Chương 1',
+      paraIndex: 3,
+      snippet: 'đoạn A',
+    );
+    expect(added3, isFalse);
+    final after = await db.getBookmarks('s');
+    expect(after.length, 1);
+    expect(after.single['chapter_url'], 'c2');
+    // Truyện khác không thấy đánh dấu của truyện 's'.
+    expect(await db.getBookmarks('other'), isEmpty);
+    await db.removeBookmark(after.single['id'] as int);
+    expect(await db.getBookmarks('s'), isEmpty);
+  });
+
+  test('bookmark: dedupe theo (story, chapter, para)', () async {
+    final db = AppDb();
+    await db.toggleBookmark(
+      storyUrl: 'sdup',
+      chapterUrl: 'cdup',
+      chapterTitle: 'C',
+      paraIndex: 2,
+      snippet: 'a',
+    );
+    await db.toggleBookmark(
+      storyUrl: 'sdup',
+      chapterUrl: 'cdup',
+      chapterTitle: 'C',
+      paraIndex: 2,
+      snippet: 'b',
+    );
+    expect(await db.getBookmarks('sdup'), isEmpty);
+    await db.toggleBookmark(
+      storyUrl: 'sdup',
+      chapterUrl: 'cdup',
+      chapterTitle: 'C',
+      paraIndex: 2,
+      snippet: 'b',
+    );
+    final list = await db.getBookmarks('sdup');
+    expect(list.single['snippet'], 'b');
+    await db.removeFromLibrary('sdup');
+    expect(await db.getBookmarks('sdup'), isEmpty);
+  });
 }

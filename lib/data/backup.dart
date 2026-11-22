@@ -25,6 +25,7 @@ class DataBackup {
       'library': await d.query('library'),
       'toc': await d.query('toc'),
       'positions': await d.query('positions'),
+      'bookmarks': await d.query('bookmarks'),
       'bookCache': await d.query('chapter_cache', where: "url LIKE 'book:%'"),
     };
   }
@@ -76,6 +77,19 @@ class DataBackup {
         conflictAlgorithm: ConflictAlgorithm.replace,
       );
     }
+
+    // Đánh dấu đoạn: bỏ id, dedupe theo (story, chapter, para) đã có UNIQUE —
+    // trùng với đánh dấu hiện có thì bỏ qua, không đè created_at mới hơn.
+    final batchBookmarks = d.batch();
+    for (final r in (data['bookmarks'] as List? ?? [])) {
+      final m = Map<String, dynamic>.from(r as Map)..remove('id');
+      batchBookmarks.insert(
+        'bookmarks',
+        m,
+        conflictAlgorithm: ConflictAlgorithm.ignore,
+      );
+    }
+    await batchBookmarks.commit(noResult: true);
 
     final chapters = <ChapterContent>[];
     for (final r in (data['bookCache'] as List? ?? [])) {
