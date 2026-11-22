@@ -187,21 +187,15 @@ void main() {
 
     expect(find.text('Copy'), findsOneWidget);
     expect(find.text('Đổi từ'), findsOneWidget);
+    expect(find.text('Tìm kiếm'), findsOneWidget);
     expect(find.text('Dịch'), findsOneWidget);
     expect(find.text('Đánh dấu'), findsOneWidget);
 
-    // Menu dọc nằm DƯỚI chỗ bôi đen (không đè lên vùng chọn), không phải ở
-    // đáy màn như bản cũ.
+    // Thanh ngang dock đáy body: chọn ở nửa trên màn thì thanh nằm dưới
+    // vùng chọn (không đè lên chữ bôi đen).
     final press = tester.getCenter(find.textContaining('gi ết'));
     final menu = tester.getRect(find.byKey(const Key('selection_menu')));
-    // ignore: avoid_print
-    print('DEBUG press=$press menu=$menu');
     expect(menu.top, greaterThan(press.dy), reason: 'menu đè lên vùng chọn');
-    expect(
-      (menu.center - press).distance,
-      lessThan(240),
-      reason: 'menu lệch xa chỗ chọn: press=$press menu=$menu',
-    );
   });
 
   testWidgets('Cuộn sâu xuống giữa chương dài, nhấn giữ vẫn hiện menu', (
@@ -417,5 +411,25 @@ void main() {
 
     final r = tester.getRect(find.textContaining('Đoạn số 25. '));
     expect(r.top, lessThan(300), reason: 'không nhảy tới đoạn 25: $r');
+  });
+
+  testWidgets('Tìm kiếm: mở sheet tìm với từ khoá là text bôi đen', (tester) async {
+    final db = FakeAppDb();
+    db.cache['https://x.test/c/1'] = ChapterContent(
+      url: 'https://x.test/c/1',
+      title: 'Chương 1',
+      paragraphs: ['Hắn gi ết người rồi bỏ trốn.', 'Đoạn hai bình thường.'],
+    );
+    await pumpReader(tester, db);
+
+    await tester.longPress(find.textContaining('gi ết'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Tìm kiếm'));
+    await tester.pumpAndSettle();
+
+    // Sheet tìm kiếm mở sẵn với từ khoá = text vừa bôi đen, có kết quả.
+    final tf = tester.widget<TextField>(find.byType(TextField));
+    expect(tf.controller!.text, isNotEmpty);
+    expect(find.textContaining('đoạn khớp'), findsOneWidget);
   });
 }

@@ -89,8 +89,6 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> with RouteAware {
   final GlobalKey _bodyStackKey = GlobalKey();
   OverlayEntry? _selectionMenuEntry;
   String? _selectedText;
-  // Điểm chạm xuống (tọa độ trong body) — gốc đặt menu dọc cạnh chỗ chọn.
-  Offset? _pointerDownLocal;
   // Đoạn cần nhảy tới ngay khi mở màn (từ danh sách đánh dấu đoạn).
   int? _pendingInitialPara;
 
@@ -1288,14 +1286,7 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> with RouteAware {
       body: Stack(
         fit: StackFit.expand,
         key: _bodyStackKey,
-        children: [
-          // Listener bị động: ghi lại điểm chạm xuống để đặt menu dọc
-          // cạnh chỗ bôi đen (không tranh gesture với cuộn/kéo ngang).
-          Listener(
-            onPointerDown: (e) => _pointerDownLocal = e.position,
-            child: _buildBody(bg, fg),
-          ),
-        ],
+        children: [_buildBody(bg, fg)],
       ),
       bottomNavigationBar: c == null
           ? null
@@ -1489,89 +1480,66 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> with RouteAware {
 
   // ---- Bôi đen text khi đọc: menu dọc Copy / Đổi từ / Dịch / Đánh dấu ----
 
-  /// Góc đặt menu dọc (tọa độ GLOBAL cho Overlay): NGAY DƯỚI vùng chọn để
-  /// không đè lên chữ đang bôi đen (chọn gần đáy body thì chuyển lên trên),
-  /// ngang ưu tiên bên phải chữ chọn, hết chỗ sang trái. Menu nằm trong root
-  /// overlay nên đè được lên núm kéo selection, không bị núm ăn mất cú bấm.
-  Offset _menuGlobalOrigin() {
-    const menuW = 188.0;
-    const menuH = 4 * 48.0 + 8;
+  /// Thanh lệnh ngang dock ở ĐÁY body (trên hàng nút điều khiển): không bao
+  /// giờ đè lên vùng chữ đang bôi đen ở bất kỳ vị trí chọn nào. Nút gọn
+  /// (icon 18 + nhãn nhỏ xếp dọc trong từng nút) để 5 nút vừa trên mọi máy.
+  Widget _selectionMenuBubble() {
     final bodyBox =
         _bodyStackKey.currentContext?.findRenderObject() as RenderBox?;
-    final bodyOrigin = bodyBox?.localToGlobal(Offset.zero) ?? Offset.zero;
-    final bodySize = bodyBox?.size ?? MediaQuery.of(context).size;
-    final p = bodyOrigin + (_pointerDownLocal ?? Offset.zero);
-    var x = p.dx + 24;
-    if (x + menuW > bodyOrigin.dx + bodySize.width - 8) {
-      x = p.dx - 24 - menuW;
-    }
-    x = x.clamp(
-      bodyOrigin.dx + 8,
-      (bodyOrigin.dx + bodySize.width - menuW - 8).clamp(
-        bodyOrigin.dx + 8,
-        double.infinity,
-      ),
+    final bodyBottom = bodyBox == null
+        ? MediaQuery.of(context).size.height
+        : bodyBox.localToGlobal(Offset.zero).dy + bodyBox.size.height;
+    final bottom = (MediaQuery.of(context).size.height - bodyBottom).clamp(
+      0.0,
+      double.infinity,
     );
-    // Dưới vùng chọn: cách ~56px để né núm kéo handle dưới cuối selection.
-    var y = p.dy + 56;
-    if (y + menuH > bodyOrigin.dy + bodySize.height - 8) {
-      y = p.dy - menuH - 28;
-    }
-    y = y.clamp(
-      bodyOrigin.dy + 8,
-      (bodyOrigin.dy + bodySize.height - menuH - 8).clamp(
-        bodyOrigin.dy + 8,
-        double.infinity,
-      ),
-    );
-    return Offset(x, y);
-  }
-
-  Widget _selectionMenuBubble() {
-    final origin = _menuGlobalOrigin();
     return Positioned(
-      left: origin.dx,
-      top: origin.dy,
+      left: 8,
+      right: 8,
+      bottom: bottom + 8,
       child: Material(
         key: const Key('selection_menu'),
         color: Theme.of(context).colorScheme.primaryContainer,
         borderRadius: BorderRadius.circular(12),
         elevation: 6,
-        child: IntrinsicWidth(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              _menuRow(Icons.copy_all, 'Copy', _copySelected),
-              _menuRow(Icons.edit_note, 'Đổi từ', _fixSelected),
-              _menuRow(Icons.translate, 'Dịch', _translateSelected),
-              _menuRow(
-                Icons.bookmark_add_outlined,
-                'Đánh dấu',
-                _bookmarkSelected,
-              ),
-            ],
-          ),
+        child: Row(
+          children: [
+            _menuButton(Icons.copy_all, 'Copy', _copySelected),
+            _menuButton(Icons.edit_note, 'Đổi từ', _fixSelected),
+            _menuButton(Icons.search, 'Tìm kiếm', _searchSelected),
+            _menuButton(Icons.translate, 'Dịch', _translateSelected),
+            _menuButton(
+              Icons.bookmark_add_outlined,
+              'Đánh dấu',
+              _bookmarkSelected,
+            ),
+          ],
         ),
       ),
     );
   }
 
-  Widget _menuRow(IconData icon, String label, VoidCallback onTap) {
+  Widget _menuButton(IconData icon, String label, VoidCallback onTap) {
     // onTapDown thay vì onTap: menu có thể bị gỡ ngay giữa cú chạm (bấm vào
     // menu cũng bị SelectionArea coi là "chạm ngoài vùng chọn" và xoá selection
     // → unmount menu) — nếu chờ tap-up thì hành động bị nuốt mất.
-    return GestureDetector(
-      behavior: HitTestBehavior.opaque,
-      onTapDown: (_) => onTap(),
-      child: SizedBox(
-        width: 180,
+    return Expanded(
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTapDown: (_) => onTap(),
         child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 13),
-          child: Row(
+          padding: const EdgeInsets.symmetric(vertical: 7),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
             children: [
-              Icon(icon, size: 20),
-              const SizedBox(width: 12),
-              Text(label, style: Theme.of(context).textTheme.bodyMedium),
+              Icon(icon, size: 18),
+              const SizedBox(height: 2),
+              Text(
+                label,
+                maxLines: 1,
+                overflow: TextOverflow.clip,
+                style: Theme.of(context).textTheme.bodySmall,
+              ),
             ],
           ),
         ),
@@ -1615,11 +1583,24 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> with RouteAware {
     });
   }
 
-  /// Dịch: mở Google Translate với text đang bôi đen (trình duyệt ngoài).
+  /// Tìm kiếm: mở sheet tìm trong chương với từ khoá là text đang bôi đen —
+  /// danh sách kết quả hiện luôn kèm phần khớp được tô màu.
+  Future<void> _searchSelected() async {
+    final text = (_selectedText ?? '').trim();
+    _clearSelection();
+    if (text.isEmpty || !mounted) return;
+    _searchCtrl.text = text;
+    _searchCtrl.selection = TextSelection.collapsed(offset: text.length);
+    _openSearch();
+  }
+
+  /// Dịch: copy text đang bôi đen vào clipboard rồi mở Google Translate
+  /// (trình duyệt ngoài) — text sẵn sàng dán vào bất kỳ công cụ dịch nào.
   Future<void> _translateSelected() async {
     final text = (_selectedText ?? '').trim();
     _clearSelection();
     if (text.isEmpty || !mounted) return;
+    await Clipboard.setData(ClipboardData(text: text));
     try {
       await launchUrl(
         Uri.parse(
