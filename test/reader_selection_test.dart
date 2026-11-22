@@ -191,11 +191,12 @@ void main() {
     expect(find.text('Dịch'), findsOneWidget);
     expect(find.text('Đánh dấu'), findsOneWidget);
 
-    // Thanh ngang dock đáy body: chọn ở nửa trên màn thì thanh nằm dưới
-    // vùng chọn (không đè lên chữ bôi đen).
+    // Chọn ở nửa trên body: menu nằm ngay DƯỚI vùng chọn, không đè lên
+    // điểm chữ đang bôi đen (như app đọc truyện mẫu).
     final press = tester.getCenter(find.textContaining('gi ết'));
     final menu = tester.getRect(find.byKey(const Key('selection_menu')));
     expect(menu.top, greaterThan(press.dy), reason: 'menu đè lên vùng chọn');
+    expect(menu.contains(press), isFalse, reason: 'menu đè lên điểm chọn');
   });
 
   testWidgets('Cuộn sâu xuống giữa chương dài, nhấn giữ vẫn hiện menu', (
@@ -220,7 +221,11 @@ void main() {
     await tester.longPress(find.textContaining('Đoạn số 20'));
     await tester.pumpAndSettle();
 
-    // Thanh lệnh hiện ở đáy màn, độc lập với vị trí cuộn.
+    // Menu sát vùng chọn: chọn ở nửa dưới thì menu nằm TRÊN vùng chọn —
+    // bằng mọi giá không đè lên điểm chữ đang bôi đen.
+    final press = tester.getCenter(find.textContaining('Đoạn số 20'));
+    final menu = tester.getRect(find.byKey(const Key('selection_menu')));
+    expect(menu.contains(press), isFalse, reason: 'menu đè lên điểm chọn');
     expect(find.text('Copy'), findsOneWidget);
     expect(find.text('Đổi từ'), findsOneWidget);
     expect(find.text('Dịch'), findsOneWidget);
@@ -240,10 +245,6 @@ void main() {
 
     await tester.longPress(find.textContaining('gi ết'));
     await tester.pumpAndSettle();
-    // ignore: avoid_print
-    print(
-      'DEBUG bubble=${tester.getRect(find.byKey(const Key('selection_menu')))}',
-    );
     // ignore: avoid_print
     print('DEBUG doi_tu=${tester.getRect(find.text('Đổi từ'))}');
     await tester.tap(find.text('Đổi từ'));
@@ -413,7 +414,9 @@ void main() {
     expect(r.top, lessThan(300), reason: 'không nhảy tới đoạn 25: $r');
   });
 
-  testWidgets('Tìm kiếm: mở sheet tìm với từ khoá là text bôi đen', (tester) async {
+  testWidgets('Tìm kiếm: mở sheet tìm với từ khoá là text bôi đen', (
+    tester,
+  ) async {
     final db = FakeAppDb();
     db.cache['https://x.test/c/1'] = ChapterContent(
       url: 'https://x.test/c/1',

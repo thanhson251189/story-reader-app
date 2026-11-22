@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
@@ -89,6 +90,8 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> with RouteAware {
   final GlobalKey _bodyStackKey = GlobalKey();
   OverlayEntry? _selectionMenuEntry;
   String? _selectedText;
+  // Điểm chạm xuống (tọa độ trong body) — neo menu sát vùng chữ bôi đen.
+  Offset? _pointerDownLocal;
   // Đoạn cần nhảy tới ngay khi mở màn (từ danh sách đánh dấu đoạn).
   int? _pendingInitialPara;
 
@@ -1286,7 +1289,14 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> with RouteAware {
       body: Stack(
         fit: StackFit.expand,
         key: _bodyStackKey,
-        children: [_buildBody(bg, fg)],
+        children: [
+          // Listener bị động: ghi lại điểm chạm xuống (local trong body) để
+          // neo menu cạnh vùng chọn (không tranh gesture với cuộn/kéo ngang).
+          Listener(
+            onPointerDown: (e) => _pointerDownLocal = e.localPosition,
+            child: _buildBody(bg, fg),
+          ),
+        ],
       ),
       bottomNavigationBar: c == null
           ? null
@@ -1480,41 +1490,88 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> with RouteAware {
 
   // ---- Bôi đen text khi đọc: menu dọc Copy / Đổi từ / Dịch / Đánh dấu ----
 
-  /// Thanh lệnh ngang dock ở ĐÁY body (trên hàng nút điều khiển): không bao
-  /// giờ đè lên vùng chữ đang bôi đen ở bất kỳ vị trí chọn nào. Nút gọn
-  /// (icon 18 + nhãn nhỏ xếp dọc trong từng nút) để 5 nút vừa trên mọi máy.
-  Widget _selectionMenuBubble() {
+  /// Vị trí thanh lệnh: menu NGANG nằm sát vùng chữ bôi đen — bôi đen ở
+  /// NỬA TRÊN body thì menu nằm ngay DƯỚI vùng chọn, bôi đen ở NỬA DƯỚI thì
+  /// menu nằm ngay TRÊN (như các app đọc truyện thông dụng). Menu nằm trong
+  /// root overlay nên đè được lên núm kéo selection, không bị núm ăn cú bấm.
+  ({Offset origin, bool below, double caretDx, double width}) _menuLayout() {
+    const menuH = 54.0;
     final bodyBox =
         _bodyStackKey.currentContext?.findRenderObject() as RenderBox?;
-    final bodyBottom = bodyBox == null
-        ? MediaQuery.of(context).size.height
-        : bodyBox.localToGlobal(Offset.zero).dy + bodyBox.size.height;
-    final bottom = (MediaQuery.of(context).size.height - bodyBottom).clamp(
-      0.0,
-      double.infinity,
+    final bodyOrigin = bodyBox?.localToGlobal(Offset.zero) ?? Offset.zero;
+    final bodySize = bodyBox?.size ?? MediaQuery.of(context).size;
+    final menuW = (bodySize.width - 16).clamp(0.0, 356.0);
+    final p = bodyOrigin + (_pointerDownLocal ?? Offset.zero);
+    final bodyBottom = bodyOrigin.dy + bodySize.height;
+    final below = p.dy < bodyOrigin.dy + bodySize.height / 2;
+    var y = below ? p.dy + 44 : p.dy - menuH - 16;
+    if (below && y + menuH > bodyBottom - 8) y = p.dy - menuH - 16;
+    if (!below && y < bodyOrigin.dy + 8) y = p.dy + 44;
+    y = y.clamp(
+      bodyOrigin.dy + 8,
+      (bodyBottom - menuH - 8).clamp(bodyOrigin.dy + 8, double.infinity),
     );
+    var x = p.dx - menuW / 2;
+    x = x.clamp(
+      bodyOrigin.dx + 8,
+      (bodyOrigin.dx + bodySize.width - menuW - 8).clamp(
+        bodyOrigin.dx + 8,
+        double.infinity,
+      ),
+    );
+    final caretDx = (p.dx - x - 6.5).clamp(10.0, menuW - 24.0);
+    return (origin: Offset(x, y), below: below, caretDx: caretDx, width: menuW);
+  }
+
+  /// Mũi tên nhỏ của menu hướng về vùng chữ đang bôi đen.
+  Widget _menuCaret(double dx, bool below) {
     return Positioned(
-      left: 8,
-      right: 8,
-      bottom: bottom + 8,
-      child: Material(
-        key: const Key('selection_menu'),
-        color: Theme.of(context).colorScheme.primaryContainer,
-        borderRadius: BorderRadius.circular(12),
-        elevation: 6,
-        child: Row(
-          children: [
-            _menuButton(Icons.copy_all, 'Copy', _copySelected),
-            _menuButton(Icons.edit_note, 'Đổi từ', _fixSelected),
-            _menuButton(Icons.search, 'Tìm kiếm', _searchSelected),
-            _menuButton(Icons.translate, 'Dịch', _translateSelected),
-            _menuButton(
-              Icons.bookmark_add_outlined,
-              'Đánh dấu',
-              _bookmarkSelected,
-            ),
-          ],
+      left: dx,
+      top: below ? -5.5 : null,
+      bottom: below ? null : -5.5,
+      child: Transform.rotate(
+        angle: math.pi / 4,
+        child: Container(
+          width: 13,
+          height: 13,
+          color: Theme.of(context).colorScheme.primaryContainer,
         ),
+      ),
+    );
+  }
+
+  Widget _selectionMenuBubble() {
+    final layout = _menuLayout();
+    return Positioned(
+      left: layout.origin.dx,
+      top: layout.origin.dy,
+      child: Stack(
+        clipBehavior: Clip.none,
+        children: [
+          Material(
+            key: const Key('selection_menu'),
+            color: Theme.of(context).colorScheme.primaryContainer,
+            borderRadius: BorderRadius.circular(12),
+            elevation: 6,
+            child: SizedBox(
+              width: layout.width,
+              child: Row(
+                children: [
+                  _menuButton(Icons.copy_all, 'Copy', _copySelected),
+                  _menuButton(Icons.edit_note, 'Đổi từ', _fixSelected),
+                  _menuButton(Icons.search, 'Tìm kiếm', _searchSelected),
+                  _menuButton(Icons.translate, 'Dịch', _translateSelected),
+                  _menuButton(
+                    Icons.bookmark_add_outlined,
+                    'Đánh dấu',
+                    _bookmarkSelected,
+                  ),
+                ],
+              ),
+            ),
+          ),
+          _menuCaret(layout.caretDx, layout.below),
+        ],
       ),
     );
   }
