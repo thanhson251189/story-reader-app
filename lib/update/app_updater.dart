@@ -177,6 +177,9 @@ class _UpdateDialogState extends State<_UpdateDialog>
   // để tải xong 60MB mới báo lỗi là phí cả mạng lẫn thời gian người dùng.
   bool _canInstall = true;
   bool _permChecked = false;
+  // Đã từng bấm "Cấp quyền": quay lại app sau khi bật quyền xong là TỰ TẢI
+  // luôn như bước Cấp quyền đã hứa — không bắt bấm nút tải thêm lần nữa.
+  bool _permRequested = false;
 
   @override
   void initState() {
@@ -191,8 +194,19 @@ class _UpdateDialogState extends State<_UpdateDialog>
     // Quay lại từ màn cấp quyền: tra lại quyền. Đã tải xong mà đủ quyền thì
     // tự cài luôn — người dùng không phải bấm Cài đặt thêm lần nữa.
     _checkInstallPermission().then((_) {
-      if (mounted && _canInstall && _downloaded && _apkPath != null) {
+      if (!mounted) return;
+      if (_canInstall && _downloaded && _apkPath != null) {
         _install();
+      } else if (_permRequested &&
+          _canInstall &&
+          !_downloading &&
+          !_downloaded) {
+        // Vừa bật quyền xong mà chưa tải: tự tải về và cài ngay đúng như
+        // bước Cấp quyền đã hứa. Chỉ tự động khi user ĐÃ chủ động bấm
+        // "Cấp quyền" (biểu lộ ý định cài) — quay lại app vì lý do khác
+        // thì vẫn đứng yên chờ.
+        _permRequested = false;
+        _start();
       }
     });
   }
@@ -218,6 +232,7 @@ class _UpdateDialogState extends State<_UpdateDialog>
   }
 
   Future<void> _openPermissionSettings() async {
+    _permRequested = true;
     try {
       await AppUpdater._installerChannel.invokeMethod(
         'openInstallPermissionSettings',
@@ -226,7 +241,10 @@ class _UpdateDialogState extends State<_UpdateDialog>
   }
 
   Future<void> _start() async {
-    if (!_canInstall) {
+    // Thiếu quyền cài chỉ chặn đường tải APK trực tiếp: release không kèm APK
+    // (mở trang tải qua trình duyệt) không cần quyền này — bắt cấp quyền là
+    // chặn oan cả nút "Mở trang tải".
+    if (widget.update.directApk && !_canInstall) {
       _openPermissionSettings();
       return;
     }
@@ -360,7 +378,7 @@ class _UpdateDialogState extends State<_UpdateDialog>
         child: Center(child: CircularProgressIndicator(strokeWidth: 2)),
       );
     }
-    if (!_canInstall && !_downloaded && _error == null) {
+    if (widget.update.directApk && !_canInstall && !_downloaded && _error == null) {
       return Column(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -421,7 +439,10 @@ class _UpdateDialogState extends State<_UpdateDialog>
       child: const Text('Để sau'),
     );
     if (!_permChecked) return [later];
-    if (!_canInstall && !_downloaded && _error == null) {
+    if (widget.update.directApk &&
+        !_canInstall &&
+        !_downloaded &&
+        _error == null) {
       return [
         later,
         FilledButton(

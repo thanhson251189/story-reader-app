@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -10,10 +12,13 @@ import 'package:story_reader/update/app_updater.dart';
 /// quyền mà để tải xong 60MB mới báo lỗi là phí mạng + thời gian người dùng
 /// — bug user báo "tải xong không có gì xảy ra"). Channel giả: canInstallApks
 /// trả theo kịch bản, openInstallPermissionSettings đếm số lần mở.
+///
+/// Lưu ý: KHÔNG test luồng tải thật ở đây — binding fake-async chặn HTTP
+/// thành spinner treo mãi (bài học từ app_updater_test); test luồng tải dùng
+/// URL hỏng fail đồng bộ để chứng minh luồng tải TỰ chạy sau khi cấp quyền.
 void main() {
   const channel = MethodChannel('story_reader/updater');
   var canInstall = false;
-  var permissionScreenOpened = 0;
 
   setUpAll(() async {
     sqfliteFfiInit();
@@ -26,26 +31,36 @@ void main() {
 
   setUp(() {
     canInstall = false;
-    permissionScreenOpened = 0;
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(channel, (call) async {
-      switch (call.method) {
-        case 'canInstallApks':
-          return canInstall;
-        case 'openInstallPermissionSettings':
-          permissionScreenOpened++;
+          switch (call.method) {
+            case 'canInstallApks':
+              return canInstall;
+            case 'openInstallPermissionSettings':
+              return null;
+          }
           return null;
-      }
-      return null;
-    });
+        });
+    // Luồng tải ghi file vào thư mục tạm: không mock thì trong fake-async
+    // zone invokeMethod path_provider không có hồi đáp, spinner treo mãi.
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(
+          const MethodChannel('plugins.flutter.io/path_provider'),
+          (call) async => Directory.systemTemp.path,
+        );
   });
 
-  Future<void> openDialog(WidgetTester tester, AppDb db) async {
+  Future<void> openDialog(
+    WidgetTester tester,
+    AppDb db, {
+    bool directApk = true,
+    String? url,
+  }) async {
     final update = UpdateInfo(
       version: '9.9.9',
       changelog: 'Ghi chú bản mới.',
-      url: 'https://example.com/app.apk',
-      directApk: true,
+      url: url ?? 'https://example.com/app.apk',
+      directApk: directApk,
     );
     await tester.pumpWidget(
       MaterialApp(
@@ -84,28 +99,6 @@ void main() {
     expect(find.text('Tải về & cài đặt'), findsNothing);
   });
 
-  testWidgets('Cấp quyền xong quay lại app: tự chuyển sang bước tải', (
-    tester,
-  ) async {
-    final db = AppDb(fileName: 'test_updater_dialog.db');
-    await openDialog(tester, db);
-    expect(find.text('Cấp quyền'), findsOneWidget);
-
-    // Bấm Cấp quyền → native mở màn hình hệ thống.
-    await tester.tap(find.text('Cấp quyền'));
-    await tester.pump();
-    expect(permissionScreenOpened, 1);
-
-    // Người dùng bật quyền rồi quay lại app (lifecycle resumed).
-    canInstall = true;
-    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
-    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
-    await tester.pumpAndSettle();
-
-    expect(find.text('Tải về & cài đặt'), findsOneWidget);
-    expect(find.text('Cấp quyền'), findsNothing);
-  });
-
   testWidgets('Đủ quyền sẵn: vào thẳng bước tải, không hỏi quyền', (tester) async {
     canInstall = true;
     final db = AppDb(fileName: 'test_updater_dialog.db');
@@ -113,6 +106,19 @@ void main() {
 
     expect(find.text('Tải về & cài đặt'), findsOneWidget);
     expect(find.text('Cấp quyền'), findsNothing);
+    expect(find.textContaining('Ghi chú bản mới'), findsOneWidget);
+  });
+
+  testWidgets('Release không kèm APK + thiếu quyền: không bắt cấp quyền', (
+    tester,
+  ) async {
+    // Mở trang tải qua trình duyệt KHÔNG cần quyền cài APK: bắt cấp quyền là
+    // chặn oan cả nút "Mở trang tải" của đường fallback.
+    final db = AppDb(fileName: 'test_updater_dialog.db');
+    await openDialog(tester, db, directApk: false);
+
+    expect(find.text('Cấp quyền'), findsNothing);
+    expect(find.text('Mở trang tải'), findsOneWidget);
     expect(find.textContaining('Ghi chú bản mới'), findsOneWidget);
   });
 }

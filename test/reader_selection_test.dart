@@ -197,6 +197,26 @@ Future<void> pumpReader(
 }
 
 void main() {
+  test('flattenForProbe dẹp xuống dòng để probe khớp paragraph đa dòng', () {
+    // Paragraph trong chương đã chuẩn hoá \s+→' ' (không còn '\n'); plainText
+    // selection nhiều dòng join bằng '\n' — không dẹp là contains thất bại và
+    // menu quay lại neo điểm chạm đè giữa các dòng đã bôi đen (bug 1.0.45
+    // chưa hết với selection nhiều dòng trong một đoạn).
+    final para =
+        'Câu đầu của đoạn văn dài. Câu kế tiếp nằm trên dòng kế sau khi '
+        'xuống hàng giữa hai câu.';
+    final sel = 'Câu đầu của đoạn văn dài.\nCâu kế tiếp nằm trên dòng kế';
+    expect(para.contains(sel), isFalse, reason: 'bản gốc chứa \n không khớp');
+    final flat = ReaderScreen.flattenForProbe(sel);
+    expect(flat.contains('\n'), isFalse);
+    expect(para.contains(flat), isTrue, reason: 'bản dẹp phải khớp paragraph');
+    // Nhiều xuống dòng / khoảng trắng lộn xộn vẫn dẹp về một khoảng trắng.
+    expect(
+      ReaderScreen.flattenForProbe('a \n\n  b\n\nc'),
+      'a b c',
+    );
+  });
+
   testWidgets('Bôi đen text → menu Copy/Đổi từ/Dịch hiện đủ', (tester) async {
     final db = FakeAppDb();
     db.cache['https://x.test/c/1'] = ChapterContent(
