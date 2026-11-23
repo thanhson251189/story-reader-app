@@ -125,7 +125,7 @@ class _TocScreenState extends ConsumerState<TocScreen> {
       if (!mounted) return;
       setState(() {
         _chapters = chapters;
-        _cached = cached;
+        _cached = cached.map(TocScreen.normUrl).toSet();
         _opened = opened.map(TocScreen.normUrl).toSet();
         _loading = false;
         _numbers = [
@@ -178,7 +178,7 @@ class _TocScreenState extends ConsumerState<TocScreen> {
     var i = start;
     while (i < _chapters.length && covered < count && !_dlCancel) {
       final url = _chapters[i].url;
-      if (_cached.contains(url)) {
+      if (_cached.contains(TocScreen.normUrl(url))) {
         // Đã có trong máy vẫn ghim, và tính vào N chương được yêu cầu. Không
         // tính thì "Tải 5 chương tiếp" bỏ qua chương có sẵn rồi tải thêm cho
         // đủ 5 chương mới — xa hơn đoạn user vừa xin.
@@ -198,7 +198,12 @@ class _TocScreenState extends ConsumerState<TocScreen> {
         await db.pinChapter(url);
         downloaded++;
         if (_dlCancel) {
-          if (mounted) setState(() => _cached.add(url));
+          if (mounted) {
+            setState(() {
+              _cached.add(TocScreen.normUrl(url));
+              _cached.add(TocScreen.normUrl(c.url));
+            });
+          }
           break;
         }
         covered++;
@@ -206,7 +211,8 @@ class _TocScreenState extends ConsumerState<TocScreen> {
         i++;
         if (mounted) {
           setState(() {
-            _cached.add(url);
+            _cached.add(TocScreen.normUrl(url));
+            _cached.add(TocScreen.normUrl(c.url));
             _dlDone = covered;
           });
         }
@@ -489,7 +495,7 @@ class _TocScreenState extends ConsumerState<TocScreen> {
                                               )
                                             : null),
                                 ),
-                                trailing: _cached.contains(c.url)
+                                trailing: _cached.contains(TocScreen.normUrl(c.url))
                                     ? const Icon(
                                         Icons.offline_pin,
                                         size: 18,

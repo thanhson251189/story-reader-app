@@ -604,4 +604,40 @@ void main() {
       reason: 'dừng hẳn rồi thì không synth phát chương mới',
     );
   });
+
+  test('bấm chương trước trong lúc tự sang chương kế thì không bị kéo về chương sau', () async {
+    final c0 = ChapterContent(
+      url: chapterUrl(0),
+      title: 'Chương 0',
+      paragraphs: const ['Chương trước.'],
+      nextUrl: chapterUrl(1),
+    );
+    final c2 = ChapterContent(
+      url: chapterUrl(2),
+      title: 'Chương 2',
+      paragraphs: const ['Chương sau.'],
+    );
+    final c1 = ChapterContent(
+      url: chapterUrl(1),
+      title: 'Chương 1',
+      paragraphs: const ['Đoạn một.'],
+      prevUrl: c0.url,
+      nextUrl: c2.url,
+    );
+    db.cached[c0.url] = c0;
+    db.cached[c2.url] = c2;
+    db.slowUrls.add(c2.url);
+    await player.start(c1);
+    await waitUntil(() => ja.players.any((p) => p.calls.contains('play')));
+
+    ja.playing.complete();
+    await Future<void>.delayed(const Duration(milliseconds: 30));
+    expect(player.loading, isTrue);
+
+    await player.prevChapter();
+    await waitUntil(() => player.loading == false);
+    await Future<void>.delayed(const Duration(milliseconds: 200));
+    expect(player.chapter?.url, c0.url);
+    expect(player.playing, isTrue);
+  });
 }

@@ -44,8 +44,19 @@ class AppUpdater {
     final res = await http
         .get(Uri.parse(repoApi))
         .timeout(const Duration(seconds: 10));
-    if (res.statusCode != 200) return null;
-    final j = jsonDecode(res.body) as Map<String, dynamic>;
+    // Không trả null khi HTTP lỗi: nút "Kiểm tra cập nhật" coi null là
+    // "đang dùng bản mới nhất" và báo sai khi GitHub từ chối hoặc sự cố.
+    return parseLatestRelease(res.statusCode, res.body, current);
+  }
+
+  /// null = không có bản mới hơn bản [current]. Mã HTTP khác 200 thì ném lỗi.
+  static UpdateInfo? parseLatestRelease(
+    int statusCode,
+    String body,
+    String current,
+  ) {
+    if (statusCode != 200) throw Exception('HTTP $statusCode');
+    final j = jsonDecode(body) as Map<String, dynamic>;
     final tag = (j['tag_name'] as String? ?? '').replaceFirst(
       RegExp(r'^v'),
       '',
@@ -107,12 +118,12 @@ class AppUpdater {
       }
       if (total != null && received < total) {
         throw Exception(
-          'Tải chưa trọn vẹn: nhận \$received/\$total byte, hãy thử lại',
+          'Tải chưa trọn vẹn: nhận $received/$total byte, hãy thử lại',
         );
       }
       if (expectedSize != null && received != expectedSize) {
         throw Exception(
-          'Bản tải về thiếu dữ liệu (nhận \$received, cần \$expectedSize), '
+          'Bản tải về thiếu dữ liệu (nhận $received, cần $expectedSize), '
           'hãy thử lại',
         );
       }

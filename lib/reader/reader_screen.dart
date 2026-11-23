@@ -32,6 +32,39 @@ class ReaderScreen extends ConsumerStatefulWidget {
     this.initialParagraph,
   });
 
+  /// Bản web mới ngắn hơn nhiều so với bản đã lưu: thường là trang đăng nhập,
+  /// trang chặn, hoặc trang chưa tải hết chữ. Không ghi đè bản đầy đủ.
+  /// Chương vốn đã ngắn (dưới 400 chữ) thì nhận bản mới — không có gì để giữ.
+  static bool shorterThanCached(ChapterContent cached, ChapterContent fresh) {
+    int len(ChapterContent c) =>
+        c.paragraphs.fold<int>(0, (n, p) => n + p.length);
+    final oldLen = len(cached);
+    if (oldLen < 400) return false;
+    return len(fresh) * 2 < oldLen;
+  }
+
+  /// Đoạn đánh dấu: ưu tiên đoạn người dùng đang chạm, không phải lần đầu câu
+  /// đó xuất hiện trong chương. [pressedIndex] null thì mới tìm từ đầu.
+  static int? bookmarkParagraphIndex(
+    List<String> paragraphs,
+    String selectedText, {
+    int? pressedIndex,
+  }) {
+    final probe = selectedText.trim().split('\n').first.trim();
+    if (probe.isEmpty) return null;
+    bool has(int i) =>
+        i >= 0 && i < paragraphs.length && paragraphs[i].contains(probe);
+    if (pressedIndex != null && has(pressedIndex)) return pressedIndex;
+    final start = pressedIndex == null || pressedIndex < 0 ? 0 : pressedIndex;
+    for (var i = start; i < paragraphs.length; i++) {
+      if (has(i)) return i;
+    }
+    for (var i = 0; i < start; i++) {
+      if (has(i)) return i;
+    }
+    return null;
+  }
+
   /// Đoạn văn có chứa từ khoá (không phân biệt hoa thường, dấu tiếng Việt).
   /// Khoảng trắng trong từ khoá — kể cả xuống dòng của selection nhiều dòng —
   /// được dẹp như nội dung chương. Từ khoá bắt đầu hoặc kết thúc bằng chữ/số
@@ -404,11 +437,13 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen>
     try {
       final db = ref.read(appDbProvider);
       ChapterContent? c;
+      var keptShorter = false;
       if (useCache) c = await db.getCachedChapter(url);
       if (c != null && !url.startsWith('book:')) {
         // Cache lâu hơn staleCacheDays coi là nội dung cũ: thử tải bản mới
         // từ web; lỗi mạng/chặn thì vẫn đọc bản cũ — đọc được chương cũ vẫn
-        // tốt hơn là báo lỗi đứng hình.
+        // tốt hơn là báo lỗi đứng hình. Bản mới ngắn hơn nhiều thì cũng giữ
+        // bản cũ: trang chặn/đăng nhập vẫn có vài đoạn chữ, không được ghi đè.
         try {
           final at = await db.chapterFetchedAt(url);
           final stale =
@@ -418,7 +453,14 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen>
           if (stale) {
             final adapter = ref.read(adapterRepoProvider).forUrl(url);
             if (adapter != null) {
-              c = await ref.read(webFetcherProvider).fetchChapter(url, adapter);
+              final fresh = await ref
+                  .read(webFetcherProvider)
+                  .fetchChapter(url, adapter);
+              if (ReaderScreen.shorterThanCached(c, fresh)) {
+                keptShorter = true;
+              } else {
+                c = fresh;
+              }
             }
           }
         } catch (_) {}
@@ -470,6 +512,19 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen>
         }
       });
       unawaited(_updateProgress(url));
+      if (keptShorter && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: const Text(
+              'Trang trả về ít chữ hơn nhiều so với bản đã lưu. Giữ bản trong máy.',
+            ),
+            action: SnackBarAction(
+              label: 'Tải lại',
+              onPressed: () => _load(url, useCache: false),
+            ),
+          ),
+        );
+      }
     } catch (e) {
       if (!mounted) return;
       setState(() {
@@ -1856,22 +1911,33 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen>
     }
   }
 
+  /// Đoạn dưới ngón tay lúc bôi đen. Chọn câu trùng với đoạn trước đó thì
+  /// đánh dấu đúng chỗ đang chạm, không nhảy lên lần xuất hiện đầu tiên.
+  int? _pressedParagraphIndex() {
+    final local = _pointerDownLocal;
+    final body = _bodyStackKey.currentContext?.findRenderObject() as RenderBox?;
+    if (local == null || body == null || !body.hasSize) return null;
+    final global = body.localToGlobal(local);
+    for (var i = 0; i < _paraKeys.length; i++) {
+      final box = _paraKeys[i].currentContext?.findRenderObject() as RenderBox?;
+      if (box == null || !box.hasSize) continue;
+      final rect = box.localToGlobal(Offset.zero) & box.size;
+      if (rect.inflate(8).contains(global)) return i;
+    }
+    return null;
+  }
+
   /// Đánh dấu đoạn chứa text đang bôi đen (toggle: đã đánh dấu thì bỏ).
   Future<void> _bookmarkSelected() async {
     final sel = (_selectedText ?? '').trim();
     _clearSelection();
     final c = _content;
     if (sel.isEmpty || c == null || !mounted) return;
-    // Chọn vắt qua nhiều đoạn thì lấy đoạn đầu: probe là dòng đầu của vùng
-    // chọn, tìm đoạn đầu tiên chứa nó.
-    final probe = sel.split('\n').first.trim();
-    int? idx;
-    for (var i = 0; i < c.paragraphs.length; i++) {
-      if (c.paragraphs[i].contains(probe)) {
-        idx = i;
-        break;
-      }
-    }
+    final idx = ReaderScreen.bookmarkParagraphIndex(
+      c.paragraphs,
+      sel,
+      pressedIndex: _pressedParagraphIndex(),
+    );
     if (idx == null || !mounted) return;
     final para = c.paragraphs[idx];
     final added = await ref
@@ -1969,7 +2035,7 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen>
     final para = b['para_index'] as int?;
     if (chapterUrl == null || para == null || !mounted) return;
     final c = _content;
-    if (c != null && c.url == chapterUrl) {
+    if (c != null && sameChapterUrl(c.url, chapterUrl)) {
       _gotoParagraph(para);
       return;
     }

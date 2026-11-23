@@ -125,13 +125,42 @@ class AppDb {
 
   Future<double?> getPosition(String url) async {
     final db = await database;
-    final rows = await db.query(
+    final exact = await db.query(
       'positions',
       where: 'url = ?',
       whereArgs: [url],
       limit: 1,
     );
-    return rows.isEmpty ? null : (rows.first['offset'] as num).toDouble();
+    if (exact.isNotEmpty) return (exact.first['offset'] as num).toDouble();
+    // Link mục lục và location.href hay lệch slash cuối / fragment / http.
+    // Vị trí được ghi theo link sau khi mở; lần mở sau dùng link mục lục.
+    final stored = await _positionByNormalizedUrl(db, url);
+    return stored == null ? null : (stored['offset'] as num).toDouble();
+  }
+
+  Future<Map<String, Object?>?> _positionByNormalizedUrl(
+    Database db,
+    String url,
+  ) async {
+    if (url.startsWith('book:')) return null;
+    final want = normalizeChapterUrl(url);
+    final rows = await db.query(
+      'positions',
+      columns: ['url', 'offset', 'updated_at'],
+    );
+    Map<String, Object?>? best;
+    var bestAt = -1;
+    for (final r in rows) {
+      final stored = r['url'] as String;
+      if (stored.startsWith('book:')) continue;
+      if (normalizeChapterUrl(stored) != want) continue;
+      final at = r['updated_at'] as int? ?? 0;
+      if (at >= bestAt) {
+        bestAt = at;
+        best = r;
+      }
+    }
+    return best;
   }
 
   /// Mọi URL chương đã từng mở (bảng positions) — dùng để đánh dấu chương
@@ -224,13 +253,18 @@ class AppDb {
 
   /// Ghim một chương web: không bị dọn cache, không bị xoá khi "Xoá dữ liệu
   /// tải sẵn". Đặt khi tải trước trong mục lục.
+  /// Khớp cả link lệch nhẹ (slash cuối, fragment): hàng cache ghi theo
+  /// location.href, còn mục lục ghim theo link đã bấm — ghim đúng key thì
+  /// cập nhật 0 dòng và chương bị dọn mất.
   Future<void> pinChapter(String url) async {
     final db = await database;
+    final key = await _cachedUrlKey(db, url);
+    if (key == null) return;
     await db.update(
       'chapter_cache',
       {'pinned': 1},
       where: 'url = ?',
-      whereArgs: [url],
+      whereArgs: [key],
     );
   }
 
@@ -247,11 +281,13 @@ class AppDb {
 
   Future<int?> chapterFetchedAt(String url) async {
     final db = await database;
+    final key = await _cachedUrlKey(db, url);
+    if (key == null) return null;
     final rows = await db.query(
       'chapter_cache',
       columns: ['fetched_at'],
       where: 'url = ?',
-      whereArgs: [url],
+      whereArgs: [key],
       limit: 1,
     );
     return rows.isEmpty ? null : rows.first['fetched_at'] as int;
@@ -279,12 +315,36 @@ class AppDb {
     );
   }
 
+  /// Key thật trong cache. Đúng nguyên văn thì dùng luôn; không thì khớp link
+  /// đã chuẩn hóa (bỏ slash cuối, fragment, hoa thường host, http/https).
+  Future<String?> _cachedUrlKey(Database db, String url) async {
+    final exact = await db.query(
+      'chapter_cache',
+      columns: ['url'],
+      where: 'url = ?',
+      whereArgs: [url],
+      limit: 1,
+    );
+    if (exact.isNotEmpty) return exact.first['url'] as String;
+    if (url.startsWith('book:')) return null;
+    final want = normalizeChapterUrl(url);
+    final rows = await db.query('chapter_cache', columns: ['url']);
+    for (final r in rows) {
+      final stored = r['url'] as String;
+      if (stored.startsWith('book:')) continue;
+      if (normalizeChapterUrl(stored) == want) return stored;
+    }
+    return null;
+  }
+
   Future<ChapterContent?> getCachedChapter(String url) async {
     final db = await database;
+    final key = await _cachedUrlKey(db, url);
+    if (key == null) return null;
     final rows = await db.query(
       'chapter_cache',
       where: 'url = ?',
-      whereArgs: [url],
+      whereArgs: [key],
       limit: 1,
     );
     if (rows.isEmpty) return null;

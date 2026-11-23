@@ -47,7 +47,7 @@ class LocalBook {
   }
 
   static final _heading = RegExp(
-    r'^(chương|hồi|quyển|phần|chapter|第)\s*[0-9ivxlcdm零〇一二三四五六七八九十百千]+\s*(章|节|回)?\s*([:：.\-–—]|$)',
+    r'^(chương|hồi|quyển|phần|chapter|第)\s*[0-9ivxlcdm零〇一二三四五六七八九十百千]+\s*(章|节|回)?(\s*[:：.\-–—]\s*\S.*|\s+\S.*)?$',
     caseSensitive: false,
   );
 
@@ -185,13 +185,20 @@ class LocalBook {
     return parts;
   }
 
+  static bool _isHeadingLine(String line) {
+    final t = line.replaceAll(RegExp(r'[ \t\u00A0]+'), ' ').trim();
+    return t.isNotEmpty && t.length <= 90 && _heading.hasMatch(t);
+  }
+
   static List<String> _textParagraphs(String text) {
     final out = <String>[];
     for (final block in text.split(RegExp(r'\n\s*\n'))) {
-      final lines = block.trim().isEmpty
-          ? const <String>[]
-          : (block.length > 3000 ? block.split('\n') : [block]);
-      for (final line in lines) {
+      final lines = block.split('\n');
+      // Kh\u1ED1i ng\u1EAFn th\u01B0\u1EDDng l\u00E0 m\u1ED9t \u0111o\u1EA1n. N\u1EBFu c\u00F3 d\u00F2ng ti\u00EAu \u0111\u1EC1 ("Ch\u01B0\u01A1ng 1 T\u00EAn")
+      // th\u00EC t\u00E1ch d\u00F2ng: kh\u00F4ng t\u00E1ch th\u00EC c\u1EA3 kh\u1ED1i th\u00E0nh m\u1ED9t \u0111o\u1EA1n, kh\u00F4ng nh\u1EADn \u0111\u1EA7u ch\u01B0\u01A1ng.
+      final splitLines = block.length > 3000 || lines.any(_isHeadingLine);
+      final parts = splitLines ? lines : [block];
+      for (final line in parts) {
         out.addAll(_clean(line.replaceAll(RegExp(r'[ \t\u00A0]+'), ' ')));
       }
     }

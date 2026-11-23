@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:story_reader/core/models.dart';
 import 'package:story_reader/reader/reader_screen.dart';
 
 void main() {
@@ -153,4 +154,34 @@ void main() {
       expect(plain(spans), [' hơn tại đeps hơn tại.']);
     },
   );
+
+  test('bookmarkParagraphIndex lấy đoạn đang chạm, không phải lần xuất hiện đầu', () {
+    const paras = ['anh nói ở đầu', 'đoạn giữa', 'anh nói ở cuối'];
+    expect(
+      ReaderScreen.bookmarkParagraphIndex(paras, 'anh nói', pressedIndex: 2),
+      2,
+    );
+    expect(ReaderScreen.bookmarkParagraphIndex(paras, 'anh nói'), 0);
+  });
+
+  test('shorterThanCached giữ chương dài khi trang trả bản cụt', () {
+    final full = ChapterContent(
+      url: 'https://x.test/c',
+      title: 'C',
+      paragraphs: [List.filled(500, 'a').join()],
+    );
+    final stub = ChapterContent(
+      url: 'https://x.test/c',
+      title: 'C',
+      paragraphs: const ['đăng nhập để đọc tiếp'],
+    );
+    final edited = ChapterContent(
+      url: 'https://x.test/c',
+      title: 'C',
+      paragraphs: [List.filled(400, 'b').join()],
+    );
+    expect(ReaderScreen.shorterThanCached(full, stub), isTrue);
+    expect(ReaderScreen.shorterThanCached(full, edited), isFalse);
+    expect(ReaderScreen.shorterThanCached(stub, full), isFalse);
+  });
 }

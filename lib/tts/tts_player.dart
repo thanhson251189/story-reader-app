@@ -55,6 +55,10 @@ class TtsPlayer extends ChangeNotifier {
   DateTime? sleepAt;
   bool _disposed = false;
   int _gen = 0;
+  // Chỉ tăng khi người dùng chọn một chương cụ thể (phát, nhảy chương).
+  // stop() tăng _gen để cắt tiếng nhưng không tăng cờ này: nghe hết chương
+  // rồi bấm dừng vẫn được nạp chương kế ở trạng thái dừng.
+  int _navGen = 0;
   Completer<void>? _resumeWait;
   Completer<void>? _chunkDone;
   Completer<void>? _synthIdle;
@@ -243,6 +247,7 @@ class TtsPlayer extends ChangeNotifier {
   }) async {
     if (storyUrl != null) _readingStoryUrl = storyUrl;
     _gen++;
+    _navGen++;
     // start() là một lệnh phát mới từ nơi gọi — ý định chờ khi tải đã được
     // nơi đó biểu đạt trực tiếp, xoá cờ cũ để không còn ý định stale.
     _playAfterLoad = false;
@@ -253,6 +258,9 @@ class TtsPlayer extends ChangeNotifier {
     await _audio.stop();
     await _preview.stop();
     await _tts.stop();
+    // Lệnh mới hơn (chuyển chương, dừng) đã tăng gen trong lúc chờ engine:
+    // không ghi đè chương người dùng vừa chọn.
+    if (gen != _gen) return;
     chapter = c;
     chunks = chunkify(c);
     _index = 0;
@@ -404,9 +412,11 @@ class TtsPlayer extends ChangeNotifier {
   }
 
   Future<void> _chapterDone() async {
+    final nav = _navGen;
     debugPrint('TTS chapter done: ${chapter?.title}');
     final next = chapter?.nextUrl;
     if (next == null) {
+      if (nav != _navGen) return;
       await stop();
       return;
     }
@@ -414,6 +424,11 @@ class TtsPlayer extends ChangeNotifier {
     _notify();
     try {
       final c = await _loadChapter(next);
+      // Bấm chương trước/sau (hoặc phát một chương khác) trong lúc tải: lệnh
+      // đó đã tăng _navGen. Không ghi chương tự chuyển đè lên chương vừa chọn,
+      // và không tắt cờ loading của lệnh mới. stop() không tăng _navGen — dừng
+      // nghe vẫn nạp chương kế ở trạng thái dừng.
+      if (nav != _navGen) return;
       loading = false;
       if (c == null) {
         // Đường _jumpTo (bấm chương trước/sau trên thông báo) có báo lỗi thì
@@ -428,9 +443,9 @@ class TtsPlayer extends ChangeNotifier {
       // vì nuốt ý định Play của người nghe.
       final wantPlay = _playAfterLoad;
       _playAfterLoad = false;
-      // Trong lúc tải chương kế user có thể đã dừng (pause, hoặc reader gọi
-      // stop khi mở chương khác) — nạp chương mới ở trạng thái dừng, không
-      // tự bật lại tiếng sau khi đã bị dừng.
+      if (nav != _navGen) return;
+      // Trong lúc tải chương kế user có thể đã tạm dừng — nạp chương mới ở
+      // trạng thái dừng, không tự bật lại tiếng.
       if (!playing && !wantPlay) {
         chapter = c;
         chunks = chunkify(c);
@@ -438,8 +453,10 @@ class TtsPlayer extends ChangeNotifier {
         _notify();
         return;
       }
+      if (nav != _navGen) return;
       await start(c);
     } catch (e) {
+      if (nav != _navGen) return;
       loading = false;
       lastError = 'Không tải được chương kế: ${friendlyError(e)}';
       await stop();
@@ -593,6 +610,7 @@ class TtsPlayer extends ChangeNotifier {
   Future<void> _jumpTo(String url) async {
     final wasPlaying = playing;
     _gen++;
+    _navGen++;
     playing = false;
     _signalResume();
     _chunkDone?.complete();

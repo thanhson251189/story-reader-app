@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
@@ -150,15 +151,20 @@ void main() {
       await req.response.close();
     });
     final path = p.join(tmp.path, 'app.apk');
-    await expectLater(
-      AppUpdater.downloadApk(
+    expect(await File(path).exists(), false);
+    try {
+      await AppUpdater.downloadApk(
         'http://127.0.0.1:${server.port}/app.apk',
         path,
         (_, _) {},
         expectedSize: 60 * 1024 * 1024,
-      ),
-      throwsException,
-    );
+      );
+      fail('phải ném lỗi');
+    } catch (e) {
+      expect(e.toString(), contains('500'));
+      expect(e.toString(), contains('${60 * 1024 * 1024}'));
+      expect(e.toString(), isNot(contains(r'$received')));
+    }
     expect(await File(path).exists(), false);
   });
 
@@ -204,5 +210,22 @@ void main() {
     );
     expect(out, path);
     expect(await File(path).exists(), true);
+  });
+
+  test('parseLatestRelease ném lỗi khi máy chủ không trả 200', () {
+    expect(
+      () => AppUpdater.parseLatestRelease(403, '{}', '1.0.0'),
+      throwsA(predicate<Object>((e) => e.toString().contains('HTTP 403'))),
+    );
+  });
+
+  test('parseLatestRelease trả null khi không có bản mới hơn', () {
+    final body = jsonEncode({
+      'tag_name': 'v1.0.0',
+      'body': '',
+      'html_url': 'https://example.com/rel',
+      'assets': <Object>[],
+    });
+    expect(AppUpdater.parseLatestRelease(200, body, '1.0.0'), isNull);
   });
 }

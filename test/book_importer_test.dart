@@ -1,9 +1,12 @@
+import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:story_reader/data/app_db.dart';
 import 'package:story_reader/local/book_importer.dart';
+import 'package:story_reader/local/local_book.dart';
 
 void main() {
   setUpAll(() async {
@@ -73,5 +76,36 @@ void main() {
       lib.where((e) => e['story_url'] == result.storyUrl),
       hasLength(1),
     );
+  });
+
+  test('TXT tách "Chương 1 Tên" không cần dấu hai chấm', () {
+    final book = LocalBook.txt(
+      Uint8List.fromList(
+        utf8.encode(
+          'Chương 1 Mở đầu\n'
+          'Nội dung một.\n'
+          '\n'
+          'Chương 2 Tiếp theo\n'
+          'Nội dung hai.\n',
+        ),
+      ),
+      'truyen.txt',
+    );
+    expect(book.chapters.map((c) => c.title), [
+      'Chương 1 Mở đầu',
+      'Chương 2 Tiếp theo',
+    ]);
+    expect(book.chapters[0].paragraphs, ['Nội dung một.']);
+    expect(book.chapters[1].paragraphs, ['Nội dung hai.']);
+  });
+
+  test('TXT không coi câu thường bắt đầu bằng Chương là đầu chương', () {
+    final book = LocalBook.txt(
+      Uint8List.fromList(
+        utf8.encode('Chương trình hôm nay rất dài và không có số.\n\nHết.\n'),
+      ),
+      'khong-chuong.txt',
+    );
+    expect(book.chapters, hasLength(1));
   });
 }

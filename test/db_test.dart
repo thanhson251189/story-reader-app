@@ -260,4 +260,41 @@ void main() {
     await db.removeFromLibrary('sdup');
     expect(await db.getBookmarks('sdup'), isEmpty);
   });
+
+  test('cache, vị trí đọc và ghim khớp khi link lệch slash hoặc http', () async {
+    const name = 'url_norm_lookup.db';
+    final path = p.join(await getDatabasesPath(), name);
+    if (await databaseFactory.databaseExists(path)) {
+      await databaseFactory.deleteDatabase(path);
+    }
+    final db = AppDb(fileName: name);
+    const stored = 'https://x.test/truyen/chuong-1/';
+    const opened = 'https://x.test/truyen/chuong-1';
+    await db.cacheChapter(
+      ChapterContent(
+        url: stored,
+        title: 'C1',
+        paragraphs: const ['nội dung đầy đủ'],
+      ),
+    );
+    await db.savePosition(stored, 120);
+
+    final hit = await db.getCachedChapter(opened);
+    expect(hit, isNotNull);
+    expect(hit!.paragraphs, ['nội dung đầy đủ']);
+    expect(await db.getCachedChapter('http://x.test/truyen/chuong-1'), isNotNull);
+    expect(await db.getPosition(opened), 120);
+    expect(await db.chapterFetchedAt(opened), isNotNull);
+
+    await db.pinChapter(opened);
+    expect(await db.pinnedWebCount(), 1);
+    await db.pruneChapterCache(keep: 0);
+    expect(await db.getCachedChapter(opened), isNotNull);
+
+    await db.cacheChapter(
+      ChapterContent(url: 'book:abc:0', title: 'B', paragraphs: const ['x']),
+    );
+    expect(await db.getCachedChapter('book:abc:1'), isNull);
+    await (await db.database).close();
+  });
 }
