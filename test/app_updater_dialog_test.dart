@@ -19,6 +19,7 @@ import 'package:story_reader/update/app_updater.dart';
 void main() {
   const channel = MethodChannel('story_reader/updater');
   var canInstall = false;
+  var settingsOpened = false;
 
   setUpAll(() async {
     sqfliteFfiInit();
@@ -31,13 +32,14 @@ void main() {
 
   setUp(() {
     canInstall = false;
+    settingsOpened = false;
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(channel, (call) async {
           switch (call.method) {
             case 'canInstallApks':
               return canInstall;
             case 'openInstallPermissionSettings':
-              return null;
+              return settingsOpened;
           }
           return null;
         });
@@ -68,11 +70,8 @@ void main() {
           body: Builder(
             builder: (ctx) => Center(
               child: TextButton(
-                onPressed: () => AppUpdater.showUpdateDialog(
-                  ctx,
-                  db: db,
-                  update: update,
-                ),
+                onPressed: () =>
+                    AppUpdater.showUpdateDialog(ctx, db: db, update: update),
                 child: const Text('open'),
               ),
             ),
@@ -99,7 +98,9 @@ void main() {
     expect(find.text('Tải về & cài đặt'), findsNothing);
   });
 
-  testWidgets('Đủ quyền sẵn: vào thẳng bước tải, không hỏi quyền', (tester) async {
+  testWidgets('Đủ quyền sẵn: vào thẳng bước tải, không hỏi quyền', (
+    tester,
+  ) async {
     canInstall = true;
     final db = AppDb(fileName: 'test_updater_dialog.db');
     await openDialog(tester, db);
@@ -120,5 +121,25 @@ void main() {
     expect(find.text('Cấp quyền'), findsNothing);
     expect(find.text('Mở trang tải'), findsOneWidget);
     expect(find.textContaining('Ghi chú bản mới'), findsOneWidget);
+  });
+
+  testWidgets('Không mở được màn cấp quyền thì có câu báo, không im lặng', (
+    tester,
+  ) async {
+    settingsOpened = false;
+    final db = AppDb(fileName: 'test_updater_dialog.db');
+    await openDialog(tester, db);
+
+    await tester.tap(find.text('Cấp quyền'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+
+    expect(
+      find.textContaining('Không mở được màn hình cấp quyền'),
+      findsOneWidget,
+    );
+    // Vẫn đứng ở bước cấp quyền để bấm lại, không nhảy sang tải.
+    expect(find.text('Cấp quyền'), findsOneWidget);
+    expect(find.text('Tải về & cài đặt'), findsNothing);
   });
 }

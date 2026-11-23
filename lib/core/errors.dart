@@ -7,6 +7,9 @@ import 'models.dart';
 /// cần làm. Mọi chỗ báo lỗi cho người dùng đều đi qua đây để không phun
 /// thuật ngữ ("adapter", "HTTP", tên exception...) ra màn hình.
 String friendlyError(Object e) {
+  if (e is IncompleteTocException) {
+    return e.toString();
+  }
   if (e is ChallengeException) {
     return 'Trang web đang chặn bot. Bấm "Mở WebView", chờ trang tải xong '
         'rồi bấm "Lấy nội dung".';

@@ -51,8 +51,7 @@ class MainActivity : AudioServiceActivity() {
                 }
                 "canInstallApks" -> result.success(canInstallApks())
                 "openInstallPermissionSettings" -> {
-                    openInstallPermissionSettings()
-                    result.success(null)
+                    result.success(openInstallPermissionSettings())
                 }
                 else -> result.notImplemented()
             }
@@ -65,15 +64,20 @@ class MainActivity : AudioServiceActivity() {
             packageManager.canRequestPackageInstalls()
 
     // Mở màn hình hệ thống cấp quyền cài ứng dụng không rõ nguồn cho app.
-    private fun openInstallPermissionSettings() {
-        try {
+    // false = máy không có màn đó hoặc không mở được — người dùng phải thấy
+    // câu báo, không được im lặng.
+    private fun openInstallPermissionSettings(): Boolean {
+        return try {
             startActivity(
                 Intent(
                     Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
                     Uri.parse("package:$packageName")
                 )
             )
-        } catch (_: Exception) {}
+            true
+        } catch (_: Exception) {
+            false
+        }
     }
 
     // Mở trình cài hệ thống cho APK đã tải về. targetSdk >= 24 bắt buộc dùng

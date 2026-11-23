@@ -127,7 +127,16 @@ class NovelInfo {
   final String? coverUrl;
   final List<ChapterRef> chapters;
 
-  NovelInfo({required this.title, this.coverUrl, required this.chapters});
+  /// false khi mục lục phân trang bị lỗi một trang: danh sách có thể thủng.
+  /// Nơi lưu phải giữ mục lục cũ, không ghi đè bằng danh sách thiếu.
+  final bool tocComplete;
+
+  NovelInfo({
+    required this.title,
+    this.coverUrl,
+    required this.chapters,
+    this.tocComplete = true,
+  });
 
   factory NovelInfo.fromJson(Map<String, dynamic> j) => NovelInfo(
     title: j['title'] as String? ?? '',
@@ -204,4 +213,18 @@ String normalizeChapterUrl(String url) {
   }
   final q = u.query.isEmpty ? '' : '?${u.query}';
   return '${u.host.toLowerCase()}$path$q';
+}
+
+/// Hai link chương có phải một chương không, bỏ khác biệt vô hại (slash cuối,
+/// fragment, hoa thường tên miền, http/https). Link sách trong máy so nguyên.
+bool sameChapterUrl(String? a, String? b) {
+  if (a == null || b == null) return a == b;
+  return normalizeChapterUrl(a) == normalizeChapterUrl(b);
+}
+
+/// Mục lục web tải chưa đủ trang. Nơi lưu phải giữ danh sách cũ.
+class IncompleteTocException implements Exception {
+  @override
+  String toString() =>
+      'Mục lục tải chưa đủ vì một trang bị lỗi. Danh sách chương cũ được giữ.';
 }

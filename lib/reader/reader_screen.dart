@@ -43,8 +43,7 @@ class ReaderScreen extends ConsumerStatefulWidget {
   /// khớp để probe tìm đoạn chứa phần đầu/cuối selection không thất bại với
   /// selection bôi đen cả đoạn nhiều dòng (khớp đúng vì wrap luôn xảy ra tại
   /// khoảng trắng nên bản dẹp vẫn trùng với bản gốc tại vị trí nối dòng).
-  static String flattenForProbe(String s) =>
-      s.replaceAll(RegExp(r'\s+'), ' ');
+  static String flattenForProbe(String s) => s.replaceAll(RegExp(r'\s+'), ' ');
 
   /// Tách [text] thành các TextSpan, chỗ khớp [query] (so sánh KHÔNG DẤU qua
   /// fold) mang [matchStyle], phần còn lại mang [baseStyle]. fold giữ nguyên
@@ -462,6 +461,7 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen>
       final info = await ref
           .read(webFetcherProvider)
           .fetchStory(storyUrl, adapter);
+      if (!info.tocComplete) throw IncompleteTocException();
       await ref
           .read(appDbProvider)
           .saveStoryInfo(storyUrl, info, lastChapterUrl: c.url);
@@ -1562,7 +1562,9 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen>
     final sel = (_selectedText ?? '').trim();
     if (sel.length > 60) {
       final probeStart = ReaderScreen.flattenForProbe(sel.substring(0, 40));
-      final probeEnd = ReaderScreen.flattenForProbe(sel.substring(sel.length - 40));
+      final probeEnd = ReaderScreen.flattenForProbe(
+        sel.substring(sel.length - 40),
+      );
       int? first;
       int? last;
       final c = _content;

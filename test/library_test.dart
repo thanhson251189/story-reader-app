@@ -17,6 +17,28 @@ void main() {
     );
   });
 
+  test(
+    'newBadge: link lệch slash cuối hoặc hoa thường không phải chương mới',
+    () {
+      expect(
+        LibraryScreen.newBadge(
+          'https://x/chuong-1035/',
+          'T',
+          'https://x/chuong-1035',
+        ),
+        null,
+      );
+      expect(
+        LibraryScreen.newBadge(
+          'https://X/chuong-1035#doc',
+          'T',
+          'http://x/chuong-1035',
+        ),
+        null,
+      );
+    },
+  );
+
   test('newBadge: có chương mới hơn chương đang đọc', () {
     expect(
       LibraryScreen.newBadge(
@@ -40,7 +62,10 @@ void main() {
       LibraryScreen.matchesQuery(item('Đại Đường Song Long'), 'song long'),
       isTrue,
     );
-    expect(LibraryScreen.matchesQuery(item('Vạn Cổ Thần Đế'), 'van co'), isTrue);
+    expect(
+      LibraryScreen.matchesQuery(item('Vạn Cổ Thần Đế'), 'van co'),
+      isTrue,
+    );
     expect(LibraryScreen.matchesQuery(item('Đại Đường'), 'nhật ký'), isFalse);
   });
 
@@ -51,22 +76,22 @@ void main() {
 
   test('hasNew: đúng với badge chương mới', () {
     expect(
-      LibraryScreen.hasNew(item('A', latest: 'https://x/2', last: 'https://x/1')),
+      LibraryScreen.hasNew(
+        item('A', latest: 'https://x/2', last: 'https://x/1'),
+      ),
       isTrue,
     );
     expect(
-      LibraryScreen.hasNew(item('A', latest: 'https://x/2', last: 'https://x/2')),
+      LibraryScreen.hasNew(
+        item('A', latest: 'https://x/2', last: 'https://x/2'),
+      ),
       isFalse,
     );
     expect(LibraryScreen.hasNew(item('A')), isFalse);
   });
 }
 
-Map<String, dynamic> item(
-  String title, {
-  String? latest,
-  String? last,
-}) => {
+Map<String, dynamic> item(String title, {String? latest, String? last}) => {
   'title': title,
   'latest_chapter_url': latest,
   'latest_chapter_title': null,

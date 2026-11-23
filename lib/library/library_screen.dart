@@ -20,7 +20,7 @@ class LibraryScreen extends ConsumerStatefulWidget {
     String? latestTitle,
     String? lastUrl,
   ) {
-    if (latestUrl == null || latestUrl == lastUrl) return null;
+    if (latestUrl == null || sameChapterUrl(latestUrl, lastUrl)) return null;
     final n = WebFetcher.trailingNumber(latestUrl);
     final label = n != null ? 'Chương $n' : (latestTitle ?? '').trim();
     return 'Mới: ${label.isEmpty ? 'chương mới' : label}';
@@ -68,23 +68,27 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
   List<Map<String, dynamic>> _display() {
     var items = _library;
     if (_query.trim().isNotEmpty) {
-      items = items.where((i) => LibraryScreen.matchesQuery(i, _query)).toList();
+      items = items
+          .where((i) => LibraryScreen.matchesQuery(i, _query))
+          .toList();
     }
     switch (_sort) {
       case 'title':
-        items = [...items]..sort(
-          (a, b) => TocScreen.fold(
-            LibraryScreen.title(a),
-          ).compareTo(TocScreen.fold(LibraryScreen.title(b))),
-        );
+        items = [...items]
+          ..sort(
+            (a, b) =>
+                TocScreen.fold(LibraryScreen.title(a))
+                    .compareTo(TocScreen.fold(LibraryScreen.title(b))),
+          );
       case 'newest':
-        items = [...items]..sort((a, b) {
-          final an = LibraryScreen.hasNew(a);
-          final bn = LibraryScreen.hasNew(b);
-          if (an != bn) return an ? -1 : 1;
-          // Dart sort không stable: nhóm cùng trạng thái phải so rõ thứ tự.
-          return (b['updated_at'] as int).compareTo(a['updated_at'] as int);
-        });
+        items = [...items]
+          ..sort((a, b) {
+            final an = LibraryScreen.hasNew(a);
+            final bn = LibraryScreen.hasNew(b);
+            if (an != bn) return an ? -1 : 1;
+            // Dart sort không stable: nhóm cùng trạng thái phải so rõ thứ tự.
+            return (b['updated_at'] as int).compareTo(a['updated_at'] as int);
+          });
     }
     return items;
   }
@@ -396,8 +400,9 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
                                   Center(
                                     child: Text(
                                       'Giữ một truyện để xoá khỏi thư viện',
-                                      style:
-                                          Theme.of(context).textTheme.bodySmall,
+                                      style: Theme.of(context)
+                                          .textTheme
+                                          .bodySmall,
                                     ),
                                   ),
                                 ],

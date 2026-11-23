@@ -493,6 +493,17 @@ class AppDb {
     }
   }
 
+  /// Ghi mục lục chỉ khi bản mới đủ trang và không ngắn hơn bản đang lưu.
+  /// Dùng cho kiểm tra ngầm và mở từ tìm kiếm: bản thiếu không được đè bản đủ.
+  /// Không đụng thư viện. Trả về true nếu đã ghi.
+  Future<bool> saveTocUnlessShorter(String storyUrl, NovelInfo info) async {
+    if (!info.tocComplete || info.chapters.isEmpty) return false;
+    final existing = await getToc(storyUrl);
+    if (existing.length > info.chapters.length) return false;
+    await saveToc(storyUrl, info.chapters);
+    return true;
+  }
+
   /// Ghi kết quả nạp một truyện: mục lục + (tuỳ chọn) đưa vào thư viện với
   /// chương đang đọc. Dùng chung cho nút "thêm vào thư viện" ở màn đọc, lần
   /// đầu nạp mục lục và kiểm tra chương mới — một quy tắc lưu duy nhất để
@@ -503,7 +514,11 @@ class AppDb {
     NovelInfo info, {
     String? lastChapterUrl,
   }) async {
-    await saveToc(storyUrl, info.chapters);
+    // Mục lục thiếu trang không được xoá danh sách đang có. Làm mới tay khi
+    // tải đủ vẫn ghi đè, kể cả khi trang web bỏ bớt chương.
+    if (info.tocComplete) {
+      await saveToc(storyUrl, info.chapters);
+    }
     if (lastChapterUrl != null) {
       await upsertLibrary(
         storyUrl: storyUrl,

@@ -99,6 +99,7 @@ class _TocScreenState extends ConsumerState<TocScreen> {
         final info = await ref
             .read(webFetcherProvider)
             .fetchStory(widget.storyUrl, adapter);
+        if (!info.tocComplete) throw IncompleteTocException();
         chapters = info.chapters;
         _title = info.title;
         await db.saveStoryInfo(
@@ -431,7 +432,8 @@ class _TocScreenState extends ConsumerState<TocScreen> {
                               // Chương đã từng mở: tô xám. Icon cached ưu tiên
                               // hơn vì chỉ dẫn chuyện có thể đọc offline.
                               final isRead =
-                                  !isCurrent && _opened.contains(TocScreen.normUrl(c.url));
+                                  !isCurrent &&
+                                  _opened.contains(TocScreen.normUrl(c.url));
                               return ListTile(
                                 dense: true,
                                 title: Text(

@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:html/parser.dart' as html_parser;
 import 'package:story_reader/core/models.dart';
@@ -58,7 +60,16 @@ void main() {
     ]);
     expect(cs[1].title, 'C2');
     expect(cs[2].title, 'Chương 3');
-    expect(WebFetcher.chaptersFromApi([{'items': []}], 'u{number}', 's'), isEmpty);
+    expect(
+      WebFetcher.chaptersFromApi(
+        [
+          {'items': []},
+        ],
+        'u{number}',
+        's',
+      ),
+      isEmpty,
+    );
   });
 
   test('novelFromApi resolve ảnh bìa tương đối, bỏ title trống', () {
@@ -71,7 +82,11 @@ void main() {
     expect(info!.title, 'Truyện A');
     expect(info.coverUrl, 'https://x.com/anh-bia/a.webp?v=1');
     expect(
-      WebFetcher.novelFromApi({'title': ' '}, chapters, Uri.parse('https://x.com')),
+      WebFetcher.novelFromApi(
+        {'title': ' '},
+        chapters,
+        Uri.parse('https://x.com'),
+      ),
       null,
     );
     final noCover = WebFetcher.novelFromApi(
@@ -103,9 +118,39 @@ void main() {
     final doc2 = html_parser.parse(
       '<a href="https://khac.com/truyen/pham-nhan-tu-tien-phan-1/?trang=9">',
     );
-    expect(
-      WebFetcher.maxTocPage(doc2, tpl, slug, Uri.parse(base)),
-      1,
-    );
+    expect(WebFetcher.maxTocPage(doc2, tpl, slug, Uri.parse(base)), 1);
+  });
+
+  test('trang mục lục lỗi không bị coi là trang trống', () async {
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    addTearDown(server.close);
+    final base = 'http://127.0.0.1:${server.port}';
+    server.listen((req) {
+      if (req.uri.queryParameters['trang'] == '2') {
+        req.response.statusCode = HttpStatus.internalServerError;
+        req.response.close();
+        return;
+      }
+      req.response.headers.contentType = ContentType.html;
+      req.response.write('''
+        <html><head><title>Foo | site</title></head><body>
+          <h1 class="name">Foo</h1>
+          <a class="chapter" href="/truyen/foo/chuong-1">Chương 1</a>
+          <a class="page" href="/truyen/foo?trang=2">2</a>
+        </body></html>
+      ''');
+      req.response.close();
+    });
+    final adapter = SourceAdapter.fromJson({
+      'domain': '127.0.0.1',
+      'tocPageUrl': '$base/truyen/{slug}?trang={page}',
+      'selectors': {'chapterList': 'a.chapter', 'storyTitle': 'h1.name'},
+    });
+
+    final info = await WebFetcher().fetchStory('$base/truyen/foo', adapter);
+
+    expect(info.tocComplete, isFalse);
+    expect(info.chapters, hasLength(1));
+    expect(info.chapters.single.title, 'Chương 1');
   });
 }

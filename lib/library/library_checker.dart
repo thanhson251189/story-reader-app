@@ -2,6 +2,7 @@ import 'package:flutter/foundation.dart';
 
 import '../adapters/adapter_repository.dart';
 import '../core/errors.dart';
+import '../core/models.dart';
 import '../data/app_db.dart';
 import '../fetcher/web_fetcher.dart';
 
@@ -19,6 +20,10 @@ class LibraryChecker {
   static bool _running = false;
   static bool get running => _running;
 
+  /// Nghỉ giữa các truyện khi kiểm tra ngầm, cùng lý do bộ tải chương nghỉ 5s:
+  /// tải liền một mạch dễ bị trang web chặn.
+  static const storyGap = Duration(seconds: 5);
+
   /// Tăng lên sau mỗi lần chạy xong để màn Thư viện đang mở nạp lại dữ liệu.
   static final ValueNotifier<int> revision = ValueNotifier<int>(0);
 
@@ -28,6 +33,7 @@ class LibraryChecker {
     required AdapterRepository repo,
     List<Map<String, dynamic>>? items,
     void Function(String progress)? onProgress,
+    Duration gap = storyGap,
   }) async {
     if (_running) return const LibraryCheckResult(0, []);
     _running = true;
@@ -39,6 +45,9 @@ class LibraryChecker {
       var fresh = 0;
       final warns = <String>[];
       for (var i = 0; i < targets.length; i++) {
+        if (i > 0 && gap > Duration.zero) {
+          await Future<void>.delayed(gap);
+        }
         final item = targets[i];
         final storyUrl = item['story_url'] as String;
         final title = item['title'] as String? ?? storyUrl;
@@ -54,12 +63,18 @@ class LibraryChecker {
             warns.add('$title: không lấy được mục lục');
             continue;
           }
+          // Bản thiếu hoặc ngắn hơn bản đang lưu: không ghi đè, không cập nhật
+          // "chương mới nhất" theo danh sách cụt (sẽ báo oan hoặc mất chương).
+          final saved = await db.saveTocUnlessShorter(storyUrl, info);
+          if (!saved) {
+            warns.add('$title: mục lục tải chưa đủ, giữ danh sách chương cũ');
+            continue;
+          }
           final last = info.chapters.last;
-          // Không truyền lastChapterUrl: chỉ làm mới mục lục và ghi chương
-          // mới nhất, không đụng dòng "đang đọc" của thư viện.
-          await db.saveStoryInfo(storyUrl, info);
           await db.setLatestChapter(storyUrl, last.url, last.title);
-          if (last.url != (item['last_chapter_url'] as String? ?? '')) fresh++;
+          if (!sameChapterUrl(last.url, item['last_chapter_url'] as String?)) {
+            fresh++;
+          }
         } catch (e) {
           warns.add('$title: ${friendlyError(e)}');
         }

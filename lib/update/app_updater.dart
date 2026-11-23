@@ -265,12 +265,31 @@ class _UpdateDialogState extends State<_UpdateDialog>
   }
 
   Future<void> _openPermissionSettings() async {
-    _permRequested = true;
+    var opened = false;
     try {
-      await AppUpdater._installerChannel.invokeMethod(
-        'openInstallPermissionSettings',
+      opened =
+          await AppUpdater._installerChannel.invokeMethod<bool>(
+            'openInstallPermissionSettings',
+          ) ??
+          false;
+    } catch (_) {
+      opened = false;
+    }
+    if (!mounted) return;
+    if (!opened) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Không mở được màn hình cấp quyền. Vào Cài đặt máy → Ứng dụng → '
+            'Story Reader, bật "Cho phép cài ứng dụng không rõ nguồn", rồi '
+            'quay lại bấm Cấp quyền.',
+          ),
+        ),
       );
-    } catch (_) {}
+      return;
+    }
+    // Chỉ nhớ ý định tự tải khi màn cấp quyền thật sự đã mở.
+    _permRequested = true;
   }
 
   Future<void> _start() async {

@@ -194,8 +194,9 @@ class WebFetcher {
   Future<Map<String, String>> _headersFor(String url) async {
     final headers = {'User-Agent': _ua};
     try {
-      final cookies = await CookieManager.instance()
-          .getCookies(url: WebUri(url));
+      final cookies = await CookieManager.instance().getCookies(
+        url: WebUri(url),
+      );
       final header = cookies
           .where((c) => c.name.isNotEmpty && c.value.isNotEmpty)
           .map((c) => '${c.name}=${c.value}')
@@ -313,6 +314,7 @@ class WebFetcher {
         : base.resolve(coverSrc).toString();
     final maxPage = maxTocPage(doc, tpl, slug, base);
     final all = <ChapterRef>[...chapters];
+    var complete = true;
     if (maxPage > 1) {
       const concurrency = 6;
       final pages = [for (var p = 2; p <= maxPage; p++) p];
@@ -328,7 +330,13 @@ class WebFetcher {
           ),
         );
         for (final r in results) {
-          all.addAll(r);
+          // null = trang lỗi sau khi thử lại. Không được coi là trang trống:
+          // ghi đè mục lục cũ bằng danh sách thiếu làm mất chương.
+          if (r == null) {
+            complete = false;
+          } else {
+            all.addAll(r);
+          }
         }
       }
     }
@@ -341,10 +349,13 @@ class WebFetcher {
       title: title,
       coverUrl: cover,
       chapters: sortChapters(unique),
+      tocComplete: complete,
     );
   }
 
-  Future<List<ChapterRef>> _pageChapters(
+  /// null = trang không tải được sau khi thử lại. Danh sách rỗng = trang mở
+  /// được nhưng không có link chương (không phải lỗi mạng).
+  Future<List<ChapterRef>?> _pageChapters(
     String url,
     String sel,
     Uri base,
@@ -355,7 +366,7 @@ class WebFetcher {
         return _chaptersFromDoc(await _getHtml(url), sel, base);
       } catch (_) {}
     }
-    return [];
+    return null;
   }
 
   static List<ChapterRef> _chaptersFromDoc(

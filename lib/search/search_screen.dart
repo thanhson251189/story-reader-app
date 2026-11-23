@@ -166,6 +166,9 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
         if (map == null || !mounted) return;
         info = WebFetcher.parseStory(map);
       }
+      // Lưu mục lục để vuốt/nghe sang chương kế trên trang không có nút
+      // chương sau. Không thêm vào thư viện. Bản thiếu hoặc ngắn hơn thì bỏ.
+      await ref.read(appDbProvider).saveTocUnlessShorter(r.url, info);
       final lib = await ref.read(appDbProvider).getLibrary();
       final last = lib
           .where((e) => e['story_url'] == r.url)
