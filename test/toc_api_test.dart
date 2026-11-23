@@ -153,4 +153,37 @@ void main() {
     expect(info.chapters, hasLength(1));
     expect(info.chapters.single.title, 'Chương 1');
   });
+
+  test('API dừng khi trang sau trống thì mục lục chưa đủ', () async {
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    addTearDown(server.close);
+    final base = 'http://127.0.0.1:${server.port}';
+    server.listen((req) {
+      req.response.headers.contentType = ContentType.json;
+      if (req.uri.path.endsWith('/chapters')) {
+        final page = req.uri.queryParameters['page'];
+        req.response.write(
+          page == '1'
+              ? '{"total":3,"items":[{"chapter_number":1,"title":"C1"}]}'
+              : '{"total":3,"items":[]}',
+        );
+      } else {
+        req.response.write('{"title":"Foo"}');
+      }
+      req.response.close();
+    });
+    final adapter = SourceAdapter.fromJson({
+      'domain': '127.0.0.1',
+      'tocApi': {
+        'novelUrl': '$base/api/{slug}',
+        'listUrl': '$base/api/{slug}/chapters?page={page}',
+        'chapterUrl': '$base/truyen/{slug}/chuong-{number}',
+      },
+    });
+
+    final info = await WebFetcher().fetchStory('$base/truyen/foo', adapter);
+
+    expect(info.tocComplete, isFalse);
+    expect(info.chapters, hasLength(1));
+  });
 }

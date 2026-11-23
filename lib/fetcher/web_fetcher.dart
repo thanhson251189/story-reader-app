@@ -236,10 +236,20 @@ class WebFetcher {
     } while (got < total && page <= 500);
     final chapters = chaptersFromApi(pages, api.chapterUrl, slug);
     if (chapters.isEmpty) return null;
-    return novelFromApi(
+    final info = novelFromApi(
       novel,
       chapters,
       Uri.parse(fillUrl(api.novelUrl, vars)),
+    );
+    if (info == null) return null;
+    // total = 0: API không nói tổng, không chặn lưu. got < total: dừng giữa
+    // chừng (hết trang trống hoặc chạm trần 500) — không được coi là đủ.
+    final complete = total <= 0 || got >= total;
+    return NovelInfo(
+      title: info.title,
+      coverUrl: info.coverUrl,
+      chapters: info.chapters,
+      tocComplete: complete,
     );
   }
 
@@ -436,7 +446,13 @@ class WebFetcher {
   }
 
   static int? trailingNumber(String url) {
-    final ms = RegExp(r'\d+').allMatches(url);
+    final raw = url.trim();
+    final u = Uri.tryParse(raw);
+    // Bỏ query và fragment: ?t=20241123 không được thắng số chương trong đường dẫn.
+    final path = (u == null || u.host.isEmpty)
+        ? raw.split('?').first.split('#').first
+        : u.path;
+    final ms = RegExp(r'\d+').allMatches(path);
     return ms.isEmpty ? null : int.tryParse(ms.last.group(0)!);
   }
 

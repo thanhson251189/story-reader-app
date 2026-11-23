@@ -451,6 +451,10 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen>
       final db = ref.read(appDbProvider);
       ChapterContent? c;
       var keptShorter = false;
+      // true khi đã gọi web (kể cả web trả bản cụt hoặc lỗi). Mở lại bản đã
+      // lưu thì false — không làm mới ngày tải, kẻo chương đọc hàng tuần không
+      // bao giờ được tải lại.
+      var attemptedRefresh = false;
       if (useCache) c = await db.getCachedChapter(url);
       if (c != null && !url.startsWith('book:')) {
         // Cache lâu hơn staleCacheDays coi là nội dung cũ: thử tải bản mới
@@ -466,14 +470,17 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen>
           if (stale) {
             final adapter = ref.read(adapterRepoProvider).forUrl(url);
             if (adapter != null) {
-              final fresh = await ref
-                  .read(webFetcherProvider)
-                  .fetchChapter(url, adapter);
-              if (ReaderScreen.shorterThanCached(c, fresh)) {
-                keptShorter = true;
-              } else {
-                c = fresh;
-              }
+              attemptedRefresh = true;
+              try {
+                final fresh = await ref
+                    .read(webFetcherProvider)
+                    .fetchChapter(url, adapter);
+                if (ReaderScreen.shorterThanCached(c, fresh)) {
+                  keptShorter = true;
+                } else {
+                  c = fresh;
+                }
+              } catch (_) {}
             }
           }
         } catch (_) {}
@@ -489,9 +496,10 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen>
           );
         }
         c = await ref.read(webFetcherProvider).fetchChapter(url, adapter);
+        attemptedRefresh = true;
       }
       final cc = await db.fillNav(c);
-      await db.cacheChapter(cc);
+      await db.cacheChapter(cc, touchFetchedAt: attemptedRefresh);
       // Sửa từ người dùng dạy cho phần HIỂN THỊ; cache giữ bản gốc (cache
       // bản đã sửa thì xoá cụm từ trong danh sách không khôi phục được).
       final fixed = await db.fixWords(cc, storyUrl: _storyUrlOf(url));

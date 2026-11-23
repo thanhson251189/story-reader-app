@@ -42,7 +42,7 @@ class FakeAppDb extends AppDb {
       toc[storyUrl] ?? const [];
 
   @override
-  Future<void> cacheChapter(ChapterContent c) async {
+  Future<void> cacheChapter(ChapterContent c, {bool touchFetchedAt = true}) async {
     cache[c.url] = c;
   }
 

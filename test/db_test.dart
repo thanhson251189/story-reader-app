@@ -16,50 +16,67 @@ void main() {
     }
   });
 
-  test('upsertLibrary giữ ô chương mới nhất + bìa khi ghi lại truyện đã có', () async {
-    final db = AppDb();
-    final storyUrl = 'https://x.test/truyen-a';
-    await db.upsertLibrary(
-      storyUrl: storyUrl,
-      title: 'Truyện A',
-      coverUrl: 'https://x.test/cover.png',
-      lastChapterUrl: 'https://x.test/truyen-a/chuong-1',
-    );
-    await db.setLatestChapter(
-      storyUrl,
-      'https://x.test/truyen-a/chuong-99',
-      'Chương 99',
-    );
+  test(
+    'upsertLibrary giữ ô chương mới nhất + bìa khi ghi lại truyện đã có',
+    () async {
+      final db = AppDb();
+      final storyUrl = 'https://x.test/truyen-a';
+      await db.upsertLibrary(
+        storyUrl: storyUrl,
+        title: 'Truyện A',
+        coverUrl: 'https://x.test/cover.png',
+        lastChapterUrl: 'https://x.test/truyen-a/chuong-1',
+      );
+      await db.setLatestChapter(
+        storyUrl,
+        'https://x.test/truyen-a/chuong-99',
+        'Chương 99',
+      );
 
-    // Mô phỏng "Làm mới mục lục": ghi lại truyện mà phần quét web không mang
-    // theo bìa và chương mới nhất. REPLACE không được phép nuốt 2 ô đó.
-    await db.saveStoryInfo(
-      storyUrl,
-      NovelInfo(title: 'Truyện A', coverUrl: null, chapters: [
-        ChapterRef(title: 'Chương 1', url: 'https://x.test/truyen-a/chuong-1'),
-      ]),
-      lastChapterUrl: 'https://x.test/truyen-a/chuong-1',
-    );
+      // Mô phỏng "Làm mới mục lục": ghi lại truyện mà phần quét web không mang
+      // theo bìa và chương mới nhất. REPLACE không được phép nuốt 2 ô đó.
+      await db.saveStoryInfo(
+        storyUrl,
+        NovelInfo(
+          title: 'Truyện A',
+          coverUrl: null,
+          chapters: [
+            ChapterRef(
+              title: 'Chương 1',
+              url: 'https://x.test/truyen-a/chuong-1',
+            ),
+          ],
+        ),
+        lastChapterUrl: 'https://x.test/truyen-a/chuong-1',
+      );
 
-    final rows = await db.getLibrary();
-    expect(rows, hasLength(1));
-    final row = rows.single;
-    expect(row['latest_chapter_url'], 'https://x.test/truyen-a/chuong-99');
-    expect(row['latest_chapter_title'], 'Chương 99');
-    expect(row['cover_url'], 'https://x.test/cover.png');
-    expect(row['last_chapter_url'], 'https://x.test/truyen-a/chuong-1');
-    await (await db.database).close();
-  });
+      final rows = await db.getLibrary();
+      expect(rows, hasLength(1));
+      final row = rows.single;
+      expect(row['latest_chapter_url'], 'https://x.test/truyen-a/chuong-99');
+      expect(row['latest_chapter_title'], 'Chương 99');
+      expect(row['cover_url'], 'https://x.test/cover.png');
+      expect(row['last_chapter_url'], 'https://x.test/truyen-a/chuong-1');
+      await (await db.database).close();
+    },
+  );
 
   test('saveStoryInfo lưu mục lục và library đúng cặp story', () async {
     final db = AppDb();
     final storyUrl = 'https://x.test/truyen-b';
     await db.saveStoryInfo(
       storyUrl,
-      NovelInfo(title: 'Truyện B', coverUrl: 'https://x.test/b.png', chapters: [
-        ChapterRef(title: 'Mở đầu', url: 'https://x.test/truyen-b/mo-dau'),
-        ChapterRef(title: 'Chương 1', url: 'https://x.test/truyen-b/chuong-1'),
-      ]),
+      NovelInfo(
+        title: 'Truyện B',
+        coverUrl: 'https://x.test/b.png',
+        chapters: [
+          ChapterRef(title: 'Mở đầu', url: 'https://x.test/truyen-b/mo-dau'),
+          ChapterRef(
+            title: 'Chương 1',
+            url: 'https://x.test/truyen-b/chuong-1',
+          ),
+        ],
+      ),
       lastChapterUrl: 'https://x.test/truyen-b/mo-dau',
     );
     final toc = await db.getToc(storyUrl);
@@ -76,11 +93,23 @@ void main() {
     const storyUrl = 'https://dammyy.cc/truyen-c.html';
     await db.saveStoryInfo(
       storyUrl,
-      NovelInfo(title: 'Truyện C', chapters: [
-        ChapterRef(title: 'C1', url: 'https://dammyy.cc/truyen-c/chuong-1.html'),
-        ChapterRef(title: 'C2', url: 'https://dammyy.cc/truyen-c/chuong-2.html'),
-        ChapterRef(title: 'C3', url: 'https://dammyy.cc/truyen-c/chuong-3.html'),
-      ]),
+      NovelInfo(
+        title: 'Truyện C',
+        chapters: [
+          ChapterRef(
+            title: 'C1',
+            url: 'https://dammyy.cc/truyen-c/chuong-1.html',
+          ),
+          ChapterRef(
+            title: 'C2',
+            url: 'https://dammyy.cc/truyen-c/chuong-2.html',
+          ),
+          ChapterRef(
+            title: 'C3',
+            url: 'https://dammyy.cc/truyen-c/chuong-3.html',
+          ),
+        ],
+      ),
     );
     expect(
       await db.chapterNeighbors('https://dammyy.cc/truyen-c/chuong-1.html'),
@@ -90,7 +119,7 @@ void main() {
       await db.chapterNeighbors('https://dammyy.cc/truyen-c/chuong-2.html'),
       (
         'https://dammyy.cc/truyen-c/chuong-1.html',
-        'https://dammyy.cc/truyen-c/chuong-3.html'
+        'https://dammyy.cc/truyen-c/chuong-3.html',
       ),
     );
     expect(
@@ -98,8 +127,10 @@ void main() {
       ('https://dammyy.cc/truyen-c/chuong-2.html', null),
     );
     // Chương không có trong mục lục nào: không suy được.
-    expect(await db.chapterNeighbors('https://dammyy.cc/khac/chuong-9.html'),
-        (null, null));
+    expect(await db.chapterNeighbors('https://dammyy.cc/khac/chuong-9.html'), (
+      null,
+      null,
+    ));
     await (await db.database).close();
   });
 
@@ -145,51 +176,61 @@ void main() {
     await (await db.database).close();
   });
 
-  test('cacheChapters giữ ghim khi ghi đè và không ghim nhầm chương mới', () async {
-    final db = AppDb(fileName: 'db_pin_batch_test.db');
-    final u1 = 'https://p.test/chuong-1';
-    final u2 = 'https://p.test/chuong-2';
-    await db.cacheChapter(ChapterContent(url: u1, title: 'C1', paragraphs: ['a']));
-    await db.pinChapter(u1);
-    // Ghi đè chương đã ghim cùng lúc với chương mới chưa từng có (như nạp
-    // lại 1 chương + tải trước chèn vào): ghim cũ phải giữ, mới phải 0.
-    await db.cacheChapters([
-      ChapterContent(url: u1, title: 'C1 mới', paragraphs: ['a2']),
-      ChapterContent(url: u2, title: 'C2', paragraphs: ['b']),
-    ]);
-    expect((await db.getCachedChapter(u1))!.title, 'C1 mới');
-    expect(await db.pinnedWebCount(), 1);
-    // Xoá dữ liệu tải sẵn: chương ghim còn, chương thường mất.
-    await db.clearWebCache();
-    expect(await db.getCachedChapter(u1), isNotNull);
-    expect(await db.getCachedChapter(u2), isNull);
-    await (await db.database).close();
-  });
+  test(
+    'cacheChapters giữ ghim khi ghi đè và không ghim nhầm chương mới',
+    () async {
+      final db = AppDb(fileName: 'db_pin_batch_test.db');
+      final u1 = 'https://p.test/chuong-1';
+      final u2 = 'https://p.test/chuong-2';
+      await db.cacheChapter(
+        ChapterContent(url: u1, title: 'C1', paragraphs: ['a']),
+      );
+      await db.pinChapter(u1);
+      // Ghi đè chương đã ghim cùng lúc với chương mới chưa từng có (như nạp
+      // lại 1 chương + tải trước chèn vào): ghim cũ phải giữ, mới phải 0.
+      await db.cacheChapters([
+        ChapterContent(url: u1, title: 'C1 mới', paragraphs: ['a2']),
+        ChapterContent(url: u2, title: 'C2', paragraphs: ['b']),
+      ]);
+      expect((await db.getCachedChapter(u1))!.title, 'C1 mới');
+      expect(await db.pinnedWebCount(), 1);
+      // Xoá dữ liệu tải sẵn: chương ghim còn, chương thường mất.
+      await db.clearWebCache();
+      expect(await db.getCachedChapter(u1), isNotNull);
+      expect(await db.getCachedChapter(u2), isNull);
+      await (await db.database).close();
+    },
+  );
 
-  test('cacheChapters trên đợt >500 chương vẫn giữ ghim đúng (chia lô IN)', () async {
-    final db = AppDb(fileName: 'db_pin_batch_big_test.db');
-    String url(int i) => 'https://big.test/c-$i';
-    // Ghim 3 chương rải rác rồi ghi đè cả 1200 chương trong một lượt.
-    final pinned = <int>{0, 501, 1199};
-    for (final i in pinned) {
-      await db.cacheChapter(ChapterContent(url: url(i), title: 'C$i', paragraphs: ['x']));
-      await db.pinChapter(url(i));
-    }
-    await db.cacheChapters([
-      for (var i = 0; i < 1200; i++)
-        ChapterContent(url: url(i), title: 'C$i mới', paragraphs: ['y']),
-    ]);
-    final rows = await (await db.database).query(
-      'chapter_cache',
-      columns: ['url'],
-      where: 'pinned = 1',
-    );
-    expect(
-      rows.map((r) => r['url']).toSet(),
-      pinned.map((i) => url(i)).toSet(),
-    );
-    await (await db.database).close();
-  });
+  test(
+    'cacheChapters trên đợt >500 chương vẫn giữ ghim đúng (chia lô IN)',
+    () async {
+      final db = AppDb(fileName: 'db_pin_batch_big_test.db');
+      String url(int i) => 'https://big.test/c-$i';
+      // Ghim 3 chương rải rác rồi ghi đè cả 1200 chương trong một lượt.
+      final pinned = <int>{0, 501, 1199};
+      for (final i in pinned) {
+        await db.cacheChapter(
+          ChapterContent(url: url(i), title: 'C$i', paragraphs: ['x']),
+        );
+        await db.pinChapter(url(i));
+      }
+      await db.cacheChapters([
+        for (var i = 0; i < 1200; i++)
+          ChapterContent(url: url(i), title: 'C$i mới', paragraphs: ['y']),
+      ]);
+      final rows = await (await db.database).query(
+        'chapter_cache',
+        columns: ['url'],
+        where: 'pinned = 1',
+      );
+      expect(
+        rows.map((r) => r['url']).toSet(),
+        pinned.map((i) => url(i)).toSet(),
+      );
+      await (await db.database).close();
+    },
+  );
 
   test('bookmark: toggle thêm rồi xoá, list mới nhất lên đầu', () async {
     final db = AppDb();
@@ -261,40 +302,102 @@ void main() {
     expect(await db.getBookmarks('sdup'), isEmpty);
   });
 
-  test('cache, vị trí đọc và ghim khớp khi link lệch slash hoặc http', () async {
-    const name = 'url_norm_lookup.db';
+  test(
+    'cache, vị trí đọc và ghim khớp khi link lệch slash hoặc http',
+    () async {
+      const name = 'url_norm_lookup.db';
+      final path = p.join(await getDatabasesPath(), name);
+      if (await databaseFactory.databaseExists(path)) {
+        await databaseFactory.deleteDatabase(path);
+      }
+      final db = AppDb(fileName: name);
+      const stored = 'https://x.test/truyen/chuong-1/';
+      const opened = 'https://x.test/truyen/chuong-1';
+      await db.cacheChapter(
+        ChapterContent(
+          url: stored,
+          title: 'C1',
+          paragraphs: const ['nội dung đầy đủ'],
+        ),
+      );
+      await db.savePosition(stored, 120);
+
+      final hit = await db.getCachedChapter(opened);
+      expect(hit, isNotNull);
+      expect(hit!.paragraphs, ['nội dung đầy đủ']);
+      expect(
+        await db.getCachedChapter('http://x.test/truyen/chuong-1'),
+        isNotNull,
+      );
+      expect(await db.getPosition(opened), 120);
+      expect(await db.chapterFetchedAt(opened), isNotNull);
+
+      await db.pinChapter(opened);
+      expect(await db.pinnedWebCount(), 1);
+      await db.pruneChapterCache(keep: 0);
+      expect(await db.getCachedChapter(opened), isNotNull);
+
+      await db.cacheChapter(
+        ChapterContent(url: 'book:abc:0', title: 'B', paragraphs: const ['x']),
+      );
+      expect(await db.getCachedChapter('book:abc:1'), isNull);
+      await (await db.database).close();
+    },
+  );
+
+  test('mở lại chương không làm mới ngày tải từ web', () async {
+    const name = 'db_stamp_test.db';
     final path = p.join(await getDatabasesPath(), name);
     if (await databaseFactory.databaseExists(path)) {
       await databaseFactory.deleteDatabase(path);
     }
     final db = AppDb(fileName: name);
-    const stored = 'https://x.test/truyen/chuong-1/';
-    const opened = 'https://x.test/truyen/chuong-1';
+    const url = 'https://stamp.test/chuong-1';
     await db.cacheChapter(
-      ChapterContent(
-        url: stored,
-        title: 'C1',
-        paragraphs: const ['nội dung đầy đủ'],
-      ),
+      ChapterContent(url: url, title: 'C', paragraphs: const ['a']),
     );
-    await db.savePosition(stored, 120);
-
-    final hit = await db.getCachedChapter(opened);
-    expect(hit, isNotNull);
-    expect(hit!.paragraphs, ['nội dung đầy đủ']);
-    expect(await db.getCachedChapter('http://x.test/truyen/chuong-1'), isNotNull);
-    expect(await db.getPosition(opened), 120);
-    expect(await db.chapterFetchedAt(opened), isNotNull);
-
-    await db.pinChapter(opened);
-    expect(await db.pinnedWebCount(), 1);
-    await db.pruneChapterCache(keep: 0);
-    expect(await db.getCachedChapter(opened), isNotNull);
-
+    final at = await db.chapterFetchedAt(url);
     await db.cacheChapter(
-      ChapterContent(url: 'book:abc:0', title: 'B', paragraphs: const ['x']),
+      ChapterContent(url: url, title: 'C', paragraphs: const ['a']),
+      touchFetchedAt: false,
     );
-    expect(await db.getCachedChapter('book:abc:1'), isNull);
+    expect(await db.chapterFetchedAt(url), at);
     await (await db.database).close();
   });
+
+  test(
+    'link truyện lệch slash vẫn cập nhật đang đọc và lấy được mục lục',
+    () async {
+      const name = 'db_story_key_test.db';
+      final path = p.join(await getDatabasesPath(), name);
+      if (await databaseFactory.databaseExists(path)) {
+        await databaseFactory.deleteDatabase(path);
+      }
+      final db = AppDb(fileName: name);
+      const stored = 'https://x.test/truyen/';
+      const opened = 'https://x.test/truyen';
+      await db.upsertLibrary(
+        storyUrl: stored,
+        title: 'Truyện',
+        lastChapterUrl: '$stored/chuong-1',
+      );
+      await db.saveToc(stored, [
+        ChapterRef(title: 'C1', url: 'https://x.test/truyen/chuong-1'),
+        ChapterRef(title: 'C2', url: 'https://x.test/truyen/chuong-2'),
+      ]);
+
+      await db.touchLibrary(opened, 'https://x.test/truyen/chuong-2');
+      final row = (await db.getLibrary()).single;
+      expect(row['story_url'], stored);
+      expect(row['last_chapter_url'], 'https://x.test/truyen/chuong-2');
+      expect(await db.getToc(opened), hasLength(2));
+
+      await db.savePosition('https://x.test/truyen/chuong-2', 40);
+      await db.removeFromLibrary(opened);
+      expect(await db.getLibrary(), isEmpty);
+      expect(await db.getToc(stored), isEmpty);
+      expect(await db.getPosition('https://x.test/truyen/chuong-2'), isNull);
+      await (await db.database).close();
+    },
+  );
 }

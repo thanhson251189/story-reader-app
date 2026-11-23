@@ -147,6 +147,92 @@ void main() {
     expect(res.warns, isEmpty);
   });
 
+  test('đang đọc dở không bị tính là có chương mới', () async {
+    final db = AppDb(fileName: fileName);
+    const story = 'https://x.test/truyen-do';
+    await db.upsertLibrary(
+      storyUrl: story,
+      title: 'Truyện dở',
+      lastChapterUrl: '$story/chuong-3',
+    );
+    await db.setLatestChapter(story, '$story/chuong-10', 'Chương 10');
+    await db.saveToc(story, [
+      for (var i = 1; i <= 10; i++)
+        ChapterRef(title: 'Chương $i', url: '$story/chuong-$i'),
+    ]);
+    final repo = AdapterRepository([
+      SourceAdapter.fromJson({'domain': 'x.test', 'selectors': {}}),
+    ]);
+    final fetcher = _ScriptFetcher()
+      ..next = NovelInfo(
+        title: 'Truyện dở',
+        chapters: [
+          for (var i = 1; i <= 10; i++)
+            ChapterRef(title: 'Chương $i', url: '$story/chuong-$i'),
+        ],
+      );
+
+    final res = await LibraryChecker.check(
+      db: db,
+      fetcher: fetcher,
+      repo: repo,
+      gap: Duration.zero,
+      items: [
+        {
+          'story_url': story,
+          'title': 'Truyện dở',
+          'last_chapter_url': '$story/chuong-3',
+          'latest_chapter_url': '$story/chuong-10',
+        },
+      ],
+    );
+
+    expect(res.fresh, 0);
+  });
+
+  test('chương cuối đổi so với lần kiểm tra trước thì tính là mới', () async {
+    final db = AppDb(fileName: fileName);
+    const story = 'https://x.test/truyen-moi-that';
+    await db.upsertLibrary(
+      storyUrl: story,
+      title: 'Truyện mới',
+      lastChapterUrl: '$story/chuong-10',
+    );
+    await db.setLatestChapter(story, '$story/chuong-10', 'Chương 10');
+    final repo = AdapterRepository([
+      SourceAdapter.fromJson({'domain': 'x.test', 'selectors': {}}),
+    ]);
+    final fetcher = _ScriptFetcher()
+      ..next = NovelInfo(
+        title: 'Truyện mới',
+        chapters: [
+          for (var i = 1; i <= 11; i++)
+            ChapterRef(title: 'Chương $i', url: '$story/chuong-$i'),
+        ],
+      );
+
+    final res = await LibraryChecker.check(
+      db: db,
+      fetcher: fetcher,
+      repo: repo,
+      gap: Duration.zero,
+      items: [
+        {
+          'story_url': story,
+          'title': 'Truyện mới',
+          'last_chapter_url': '$story/chuong-10',
+          'latest_chapter_url': '$story/chuong-10',
+        },
+      ],
+    );
+
+    expect(res.fresh, 1);
+    final row = (await db.getLibrary())
+        .where((r) => r['story_url'] == story)
+        .single;
+    expect(row['latest_chapter_url'], '$story/chuong-11');
+  });
+
   test('saveTocUnlessShorter không thêm truyện vào thư viện', () async {
     final db = AppDb(fileName: fileName);
     const story = 'https://x.test/truyen-tim';

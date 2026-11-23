@@ -195,10 +195,11 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
       // chương sau. Không thêm vào thư viện. Bản thiếu hoặc ngắn hơn thì bỏ.
       await ref.read(appDbProvider).saveTocUnlessShorter(r.url, info);
       final lib = await ref.read(appDbProvider).getLibrary();
-      final last = lib
-          .where((e) => e['story_url'] == r.url)
-          .map((e) => e['last_chapter_url'] as String?)
+      final saved = lib
+          .where((e) => sameChapterUrl(e['story_url'] as String?, r.url))
           .firstOrNull;
+      final storyUrl = saved?['story_url'] as String? ?? r.url;
+      final last = saved?['last_chapter_url'] as String?;
       // Trang không có danh sách chương thì mở thẳng nó như một chương.
       final url =
           last ?? (info.chapters.isEmpty ? r.url : info.chapters.first.url);
@@ -208,7 +209,7 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
         MaterialPageRoute(
           builder: (_) => ReaderScreen(
             url: url,
-            storyUrl: r.url,
+            storyUrl: storyUrl,
             storyTitle: info.title.trim().isEmpty ? r.title : info.title,
           ),
         ),

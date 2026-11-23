@@ -153,7 +153,7 @@ class _FakeAppDb extends AppDb {
   Future<ChapterContent> fillNav(ChapterContent c) async => c;
 
   @override
-  Future<void> cacheChapter(ChapterContent c) async {
+  Future<void> cacheChapter(ChapterContent c, {bool touchFetchedAt = true}) async {
     cache[c.url] = c;
   }
 

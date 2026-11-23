@@ -46,14 +46,14 @@ void main() {
         'T',
         'https://x/chuong-1029',
       ),
-      'Mới: Chương 1035',
+      'Chưa đọc: Chương 1035',
     );
   });
 
   test('newBadge: URL không đánh số thì dùng tiêu đề', () {
     expect(
       LibraryScreen.newBadge('https://x/abc', 'Thiên chương', 'https://x/old'),
-      'Mới: Thiên chương',
+      'Chưa đọc: Thiên chương',
     );
   });
 

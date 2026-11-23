@@ -35,7 +35,7 @@ class FakeAppDb extends AppDb {
   Future<int?> chapterFetchedAt(String url) async => null;
 
   @override
-  Future<void> cacheChapter(ChapterContent c) async {
+  Future<void> cacheChapter(ChapterContent c, {bool touchFetchedAt = true}) async {
     cache[c.url] = c;
   }
 

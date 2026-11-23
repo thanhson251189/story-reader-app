@@ -53,7 +53,7 @@ class AppDb {
 
   Future<Database> get database async => _db ??= await openDatabase(
     p.join(await getDatabasesPath(), fileName),
-    version: 7,
+    version: 8,
     onCreate: (db, v) async {
       await db.execute(
         'CREATE TABLE positions(url TEXT PRIMARY KEY, offset REAL NOT NULL, updated_at INTEGER NOT NULL)',
@@ -62,7 +62,7 @@ class AppDb {
         'CREATE TABLE settings(key TEXT PRIMARY KEY, value TEXT NOT NULL)',
       );
       await db.execute(
-        'CREATE TABLE chapter_cache(url TEXT PRIMARY KEY, title TEXT NOT NULL, content TEXT NOT NULL, next_url TEXT, prev_url TEXT, fetched_at INTEGER NOT NULL, pinned INTEGER NOT NULL DEFAULT 0)',
+        'CREATE TABLE chapter_cache(url TEXT PRIMARY KEY, title TEXT NOT NULL, content TEXT NOT NULL, next_url TEXT, prev_url TEXT, fetched_at INTEGER NOT NULL, pinned INTEGER NOT NULL DEFAULT 0, opened_at INTEGER NOT NULL DEFAULT 0)',
       );
       await db.execute(
         'CREATE TABLE library(story_url TEXT PRIMARY KEY, title TEXT NOT NULL, cover_url TEXT, last_chapter_url TEXT, latest_chapter_url TEXT, latest_chapter_title TEXT, updated_at INTEGER NOT NULL)',
@@ -74,6 +74,13 @@ class AppDb {
     },
     onUpgrade: (db, from, to) async {
       if (from < 7) await db.execute(_createBookmarksSql);
+      if (from < 8) {
+        // opened_at = lần mở/ghi gần nhất, để dọn cache không xóa chương vừa đọc.
+        // fetched_at giữ nghĩa "lần tải từ web" — mở lại không được làm mới mốc này.
+        await db.execute(
+          'ALTER TABLE chapter_cache ADD COLUMN opened_at INTEGER NOT NULL DEFAULT 0',
+        );
+      }
       if (from < 3) await db.execute('DROP TABLE IF EXISTS local_books');
       if (from < 4) {
         await db.execute(
@@ -190,12 +197,16 @@ class AppDb {
     return rows.isEmpty ? null : rows.first['value'] as String;
   }
 
-  Future<void> cacheChapter(ChapterContent c) => cacheChapters([c]);
+  Future<void> cacheChapter(ChapterContent c, {bool touchFetchedAt = true}) =>
+      cacheChapters([c], touchFetchedAt: touchFetchedAt);
 
   // Giới hạn số biến trong một mệnh đề IN (SQLite máy cũ còn giới hạn 999).
   static const _pinQueryBatch = 500;
 
-  Future<void> cacheChapters(List<ChapterContent> list) async {
+  Future<void> cacheChapters(
+    List<ChapterContent> list, {
+    bool touchFetchedAt = true,
+  }) async {
     if (list.isEmpty) return;
     final db = await database;
     // REPLACE xoá hẳn row cũ nên ghim mất; đọc ghim hiện có để giữ lại khi
@@ -203,6 +214,7 @@ class AppDb {
     // thay vì từng chương: nhập sách dài vài nghìn chương mà query riêng từng
     // cái là nhập chậm thêm nhiều giây trên máy yếu.
     final pinnedUrls = <String>{};
+    final fetchedAt = <String, int>{};
     final urls = list.map((c) => c.url).toList();
     for (var i = 0; i < urls.length; i += _pinQueryBatch) {
       final end = i + _pinQueryBatch > urls.length
@@ -212,33 +224,41 @@ class AppDb {
       final ph = List.filled(chunk.length, '?').join(',');
       final rows = await db.query(
         'chapter_cache',
-        columns: ['url'],
-        where: 'pinned = 1 AND url IN ($ph)',
+        columns: ['url', 'pinned', 'fetched_at'],
+        where: 'url IN ($ph)',
         whereArgs: chunk,
       );
-      pinnedUrls.addAll(rows.map((r) => r['url'] as String));
+      for (final r in rows) {
+        final url = r['url'] as String;
+        if (r['pinned'] == 1) pinnedUrls.add(url);
+        final at = r['fetched_at'];
+        if (at is int) fetchedAt[url] = at;
+      }
     }
+    final now = DateTime.now().millisecondsSinceEpoch;
     final batch = db.batch();
     for (final c in list) {
+      // touchFetchedAt false: mở lại bản đã lưu, không tính là vừa tải từ web.
+      // fetched_at giữ nguyên thì lần mở sau 7 ngày vẫn được làm mới.
       batch.insert('chapter_cache', {
         'url': c.url,
         'title': c.title,
         'content': jsonEncode(c.paragraphs),
         'next_url': c.nextUrl,
         'prev_url': c.prevUrl,
-        'fetched_at': DateTime.now().millisecondsSinceEpoch,
+        'fetched_at': touchFetchedAt ? now : (fetchedAt[c.url] ?? now),
         'pinned': pinnedUrls.contains(c.url) ? 1 : 0,
+        'opened_at': now,
       }, conflictAlgorithm: ConflictAlgorithm.replace);
     }
     await batch.commit(noResult: true);
     await pruneChapterCache();
   }
 
-  /// Giữ lại [keep] chương web mới nhất, xóa phần còn lại (theo rowid vì
-  /// fetched_at trùng nhau giữa các chương tải cùng lúc thì cứ theo thứ tự).
-  /// Chương sách trong máy (book:) và chương đã ghim không bị đụng tới —
-  /// sách nhập vào có thể dài hơn hạn mức nhiều lần, chương ghim là lựa chọn
-  /// đọc offline rõ ràng của người dùng.
+  /// Giữ lại [keep] chương web mới nhất, xóa phần còn lại. "Mới" tính theo lần
+  /// mở hoặc lần tải, lấy mốc muộn hơn — chương vừa đọc không bị dọn chỉ vì
+  /// lần tải từ web đã cũ. fetched_at trùng nhau thì theo thứ tự row.
+  /// Chương sách trong máy (book:) và chương đã ghim không bị đụng tới.
   Future<void> pruneChapterCache({int keep = maxCachedChapters}) async {
     final db = await database;
     await db.execute(
@@ -246,7 +266,7 @@ class AppDb {
       'AND rowid NOT IN '
       "(SELECT rowid FROM chapter_cache WHERE url NOT LIKE 'book:%' "
       'AND pinned = 0 '
-      'ORDER BY fetched_at DESC LIMIT ?)',
+      'ORDER BY MAX(fetched_at, opened_at) DESC LIMIT ?)',
       [keep],
     );
   }
@@ -364,6 +384,56 @@ class AppDb {
     return rows.map((r) => r['url'] as String).toSet();
   }
 
+  /// Khóa truyện đã lưu mà cùng một truyện với [storyUrl]. Khóa trong thư viện
+  /// đứng trước để ghi mới không tách đôi truyện chỉ vì lệch slash hoặc http.
+  /// Chưa có dòng nào thì trả về chính [storyUrl] để tạo mới.
+  Future<List<String>> _storyKeys(String storyUrl) async {
+    if (storyUrl.startsWith('book:')) return [storyUrl];
+    final db = await database;
+    final found = <String>[];
+    void add(String? stored) {
+      if (stored == null || stored.isEmpty || found.contains(stored)) return;
+      if (stored == storyUrl || sameChapterUrl(stored, storyUrl)) {
+        found.add(stored);
+      }
+    }
+
+    for (final table in const ['library', 'toc', 'bookmarks']) {
+      final rows = await db.query(
+        table,
+        columns: ['story_url'],
+        distinct: true,
+      );
+      for (final r in rows) {
+        add(r['story_url'] as String?);
+      }
+    }
+    if (found.isEmpty) return [storyUrl];
+    final lib = await db.query('library', columns: ['story_url']);
+    for (final r in lib) {
+      final s = r['story_url'] as String?;
+      if (s != null && found.contains(s)) {
+        return [s, ...found.where((k) => k != s)];
+      }
+    }
+    if (found.contains(storyUrl)) {
+      return [storyUrl, ...found.where((k) => k != storyUrl)];
+    }
+    return found;
+  }
+
+  bool _chapterOfStory(String chapterUrl, String storyUrl) {
+    if (storyUrl.startsWith('book:')) {
+      return chapterUrl == storyUrl || chapterUrl.startsWith('$storyUrl:');
+    }
+    if (sameChapterUrl(chapterUrl, storyUrl)) return true;
+    final base = storyUrl.endsWith('/') ? storyUrl : '$storyUrl/';
+    if (chapterUrl.startsWith(base)) return true;
+    final nb = normalizeChapterUrl(storyUrl);
+    final nc = normalizeChapterUrl(chapterUrl);
+    return nc == nb || nc.startsWith('$nb/');
+  }
+
   Future<void> upsertLibrary({
     required String storyUrl,
     required String title,
@@ -371,6 +441,8 @@ class AppDb {
     String? lastChapterUrl,
   }) async {
     final db = await database;
+    final keys = await _storyKeys(storyUrl);
+    final key = keys.first;
     // REPLACE xoá hẳn dòng cũ rồi ghi dòng mới: 2 ô "chương mới nhất" và bìa
     // không nằm trong dòng mới sẽ thành NULL — mất badge "Mới" khi làm mới
     // mục lục hay thêm lại truyện đã có. Đọc trước để giữ lại.
@@ -378,11 +450,11 @@ class AppDb {
       'library',
       columns: ['latest_chapter_url', 'latest_chapter_title', 'cover_url'],
       where: 'story_url = ?',
-      whereArgs: [storyUrl],
+      whereArgs: [key],
       limit: 1,
     );
     await db.insert('library', {
-      'story_url': storyUrl,
+      'story_url': key,
       'title': title,
       'cover_url': coverUrl ?? (old.isEmpty ? null : old.first['cover_url']),
       'last_chapter_url': lastChapterUrl,
@@ -392,6 +464,10 @@ class AppDb {
       },
       'updated_at': DateTime.now().millisecondsSinceEpoch,
     }, conflictAlgorithm: ConflictAlgorithm.replace);
+    for (final k in keys) {
+      if (k == key) continue;
+      await db.delete('library', where: 'story_url = ?', whereArgs: [k]);
+    }
   }
 
   Future<List<Map<String, dynamic>>> getLibrary() async {
@@ -412,6 +488,7 @@ class AppDb {
 
   Future<void> touchLibrary(String storyUrl, String chapterUrl) async {
     final db = await database;
+    final key = (await _storyKeys(storyUrl)).first;
     await db.update(
       'library',
       {
@@ -419,7 +496,7 @@ class AppDb {
         'updated_at': DateTime.now().millisecondsSinceEpoch,
       },
       where: 'story_url = ?',
-      whereArgs: [storyUrl],
+      whereArgs: [key],
     );
   }
 
@@ -429,25 +506,48 @@ class AppDb {
     String title,
   ) async {
     final db = await database;
+    final key = (await _storyKeys(storyUrl)).first;
     await db.update(
       'library',
       {'latest_chapter_url': url, 'latest_chapter_title': title},
       where: 'story_url = ?',
-      whereArgs: [storyUrl],
+      whereArgs: [key],
     );
   }
 
   Future<void> removeFromLibrary(String storyUrl) async {
     final db = await database;
-    await db.delete('library', where: 'story_url = ?', whereArgs: [storyUrl]);
-    await db.delete('toc', where: 'story_url = ?', whereArgs: [storyUrl]);
-    await db.delete('bookmarks', where: 'story_url = ?', whereArgs: [storyUrl]);
-    if (storyUrl.startsWith('book:')) {
-      await db.delete(
-        'chapter_cache',
-        where: 'url LIKE ?',
-        whereArgs: ['$storyUrl:%'],
+    final keys = await _storyKeys(storyUrl);
+    final chapterUrls = <String>[];
+    for (final key in keys) {
+      final rows = await db.query(
+        'toc',
+        columns: ['chapter_url'],
+        where: 'story_url = ?',
+        whereArgs: [key],
       );
+      chapterUrls.addAll(rows.map((r) => r['chapter_url'] as String));
+    }
+    final positions = await db.query('positions', columns: ['url']);
+    for (final r in positions) {
+      final url = r['url'] as String;
+      final inToc = chapterUrls.any((c) => c == url || sameChapterUrl(c, url));
+      final inStory = keys.any((k) => _chapterOfStory(url, k));
+      if (inToc || inStory) {
+        await db.delete('positions', where: 'url = ?', whereArgs: [url]);
+      }
+    }
+    for (final key in keys) {
+      await db.delete('library', where: 'story_url = ?', whereArgs: [key]);
+      await db.delete('toc', where: 'story_url = ?', whereArgs: [key]);
+      await db.delete('bookmarks', where: 'story_url = ?', whereArgs: [key]);
+      if (key.startsWith('book:')) {
+        await db.delete(
+          'chapter_cache',
+          where: 'url LIKE ?',
+          whereArgs: ['$key:%'],
+        );
+      }
     }
   }
 
@@ -463,14 +563,25 @@ class AppDb {
     required String snippet,
   }) async {
     final db = await database;
-    final removed = await db.delete(
+    final keys = await _storyKeys(storyUrl);
+    final rows = await db.query(
       'bookmarks',
-      where: 'story_url = ? AND chapter_url = ? AND para_index = ?',
-      whereArgs: [storyUrl, chapterUrl, paraIndex],
+      where: 'para_index = ?',
+      whereArgs: [paraIndex],
     );
-    if (removed > 0) return false;
+    for (final r in rows) {
+      final story = r['story_url'] as String? ?? '';
+      final chapter = r['chapter_url'] as String? ?? '';
+      final sameStory = keys.contains(story) || sameChapterUrl(story, storyUrl);
+      if (!sameStory) continue;
+      if (chapter != chapterUrl && !sameChapterUrl(chapter, chapterUrl)) {
+        continue;
+      }
+      await db.delete('bookmarks', where: 'id = ?', whereArgs: [r['id']]);
+      return false;
+    }
     await db.insert('bookmarks', {
-      'story_url': storyUrl,
+      'story_url': keys.first,
       'chapter_url': chapterUrl,
       'chapter_title': chapterTitle,
       'para_index': paraIndex,
@@ -480,15 +591,25 @@ class AppDb {
     return true;
   }
 
-  /// Danh sách đánh dấu của một truyện, mới nhất lên đầu.
+  /// Danh sách đánh dấu của một truyện, mới nhất lên đầu. Gộp cả dòng lưu dưới
+  /// link lệch nhẹ của cùng truyện.
   Future<List<Map<String, dynamic>>> getBookmarks(String storyUrl) async {
     final db = await database;
-    return db.query(
-      'bookmarks',
-      where: 'story_url = ?',
-      whereArgs: [storyUrl],
-      orderBy: 'created_at DESC, id DESC',
-    );
+    final keys = await _storyKeys(storyUrl);
+    final merged = <Map<String, dynamic>>[];
+    for (final key in keys) {
+      merged.addAll(
+        await db.query('bookmarks', where: 'story_url = ?', whereArgs: [key]),
+      );
+    }
+    merged.sort((a, b) {
+      final at = (a['created_at'] as int? ?? 0).compareTo(
+        b['created_at'] as int? ?? 0,
+      );
+      if (at != 0) return -at;
+      return ((a['id'] as int? ?? 0).compareTo(b['id'] as int? ?? 0)) * -1;
+    });
+    return merged;
   }
 
   Future<void> removeBookmark(int id) async {
@@ -498,12 +619,16 @@ class AppDb {
 
   Future<void> saveToc(String storyUrl, List<ChapterRef> chapters) async {
     final db = await database;
+    final keys = await _storyKeys(storyUrl);
+    final key = keys.first;
     await db.transaction((txn) async {
-      await txn.delete('toc', where: 'story_url = ?', whereArgs: [storyUrl]);
+      for (final k in keys) {
+        await txn.delete('toc', where: 'story_url = ?', whereArgs: [k]);
+      }
       final batch = txn.batch();
       for (var i = 0; i < chapters.length; i++) {
         batch.insert('toc', {
-          'story_url': storyUrl,
+          'story_url': key,
           'chapter_url': chapters[i].url,
           'title': chapters[i].title,
           'idx': i,
@@ -515,20 +640,26 @@ class AppDb {
 
   Future<List<ChapterRef>> getToc(String storyUrl) async {
     final db = await database;
-    final rows = await db.query(
-      'toc',
-      where: 'story_url = ?',
-      whereArgs: [storyUrl],
-      orderBy: 'idx ASC',
-    );
-    return rows
-        .map(
-          (r) => ChapterRef(
-            title: r['title'] as String,
-            url: r['chapter_url'] as String,
-          ),
-        )
-        .toList();
+    final keys = await _storyKeys(storyUrl);
+    List<ChapterRef> best = [];
+    for (final key in keys) {
+      final rows = await db.query(
+        'toc',
+        where: 'story_url = ?',
+        whereArgs: [key],
+        orderBy: 'idx ASC',
+      );
+      final list = rows
+          .map(
+            (r) => ChapterRef(
+              title: r['title'] as String,
+              url: r['chapter_url'] as String,
+            ),
+          )
+          .toList();
+      if (list.length > best.length) best = list;
+    }
+    return best;
   }
 
   /// Chương trước/sau của một URL chương suy từ mục lục đã lưu. Dùng làm dự

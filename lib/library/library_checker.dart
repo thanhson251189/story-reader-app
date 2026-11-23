@@ -130,10 +130,17 @@ class LibraryChecker {
             continue;
           }
           final last = info.chapters.last;
+          // "Có chương mới" = chương cuối trên web khác lần kiểm tra trước,
+          // không phải khác chương đang đọc. Đang đọc dở không được tính là
+          // vừa có chương mới mỗi lần mở app. Lần đầu chưa có mốc thì chỉ ghi
+          // mốc, không báo.
+          final prevLatest = item['latest_chapter_url'] as String?;
+          final isNew =
+              prevLatest != null &&
+              prevLatest.isNotEmpty &&
+              !sameChapterUrl(last.url, prevLatest);
           await db.setLatestChapter(storyUrl, last.url, last.title);
-          if (!sameChapterUrl(last.url, item['last_chapter_url'] as String?)) {
-            fresh++;
-          }
+          if (isNew) fresh++;
         } catch (e) {
           warns.add('$title: ${friendlyError(e)}');
         }

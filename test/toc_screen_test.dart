@@ -24,5 +24,6 @@ void main() {
       1035,
     );
     expect(WebFetcher.trailingNumber('https://x.com/khong-so'), null);
+    expect(WebFetcher.trailingNumber('https://x.com/chuong-12?t=20241123'), 12);
   });
 }

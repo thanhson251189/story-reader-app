@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../core/models.dart';
@@ -48,7 +47,6 @@ class ReadTab extends ConsumerStatefulWidget {
 }
 
 class _ReadTabState extends ConsumerState<ReadTab> {
-  final _urlCtrl = TextEditingController();
   String? _lastUrl;
   String? _lastTitle;
   List<Map<String, dynamic>> _library = [];
@@ -88,22 +86,11 @@ class _ReadTabState extends ConsumerState<ReadTab> {
     });
   }
 
-  Future<void> _importBook() async {
-    await pickAndImportBook(context, ref.read(appDbProvider));
-    if (mounted) await _loadLast();
-  }
-
   String _lastLabel() => ReadTab.continueLabel(
     lastUrl: _lastUrl!,
     savedTitle: _lastTitle,
     library: _library,
   );
-
-  @override
-  void dispose() {
-    _urlCtrl.dispose();
-    super.dispose();
-  }
 
   @override
   Widget build(BuildContext context) {
@@ -124,38 +111,6 @@ class _ReadTabState extends ConsumerState<ReadTab> {
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
-          TextField(
-            controller: _urlCtrl,
-            decoration: InputDecoration(
-              labelText: 'Link chương truyện',
-              hintText: 'https://...',
-              border: const OutlineInputBorder(),
-              suffixIcon: IconButton(
-                icon: const Icon(Icons.content_paste),
-                tooltip: 'Dán',
-                onPressed: () async {
-                  final data = await Clipboard.getData(Clipboard.kTextPlain);
-                  if (data?.text != null) _urlCtrl.text = data!.text!;
-                },
-              ),
-            ),
-            keyboardType: TextInputType.url,
-            autocorrect: false,
-            onSubmitted: _open,
-          ),
-          const SizedBox(height: 12),
-          FilledButton.icon(
-            onPressed: () => _open(_urlCtrl.text),
-            icon: const Icon(Icons.menu_book),
-            label: const Text('Mở truyện'),
-          ),
-          const SizedBox(height: 8),
-          OutlinedButton.icon(
-            onPressed: _importBook,
-            icon: const Icon(Icons.file_open_outlined),
-            label: const Text('Đọc file trong máy (EPUB, MOBI, FB2, TXT)'),
-          ),
-          const SizedBox(height: 24),
           if (_lastUrl != null) ...[
             Text('Đọc tiếp', style: Theme.of(context).textTheme.titleMedium),
             const SizedBox(height: 8),
@@ -171,7 +126,11 @@ class _ReadTabState extends ConsumerState<ReadTab> {
                 onTap: () => _open(_lastUrl!),
               ),
             ),
-          ],
+          ] else
+            Text(
+              'Chưa đọc truyện nào. Vào Thư viện để dán link hoặc nhập file.',
+              style: Theme.of(context).textTheme.bodyMedium,
+            ),
         ],
       ),
     );

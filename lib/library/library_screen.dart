@@ -24,7 +24,7 @@ class LibraryScreen extends ConsumerStatefulWidget {
     if (latestUrl == null || sameChapterUrl(latestUrl, lastUrl)) return null;
     final n = WebFetcher.trailingNumber(latestUrl);
     final label = n != null ? 'Chương $n' : (latestTitle ?? '').trim();
-    return 'Mới: ${label.isEmpty ? 'chương mới' : label}';
+    return 'Chưa đọc: ${label.isEmpty ? 'chương cuối' : label}';
   }
 
   // Lọc/tìm theo tên, không phân biệt hoa thường và dấu tiếng Việt.
@@ -37,7 +37,7 @@ class LibraryScreen extends ConsumerStatefulWidget {
   static String title(Map<String, dynamic> item) =>
       (item['title'] as String?) ?? '';
 
-  /// Truyện có chương mới (badge "Mới") đứng trước, trong nhóm đó mới đọc
+  /// Truyện chưa đọc tới chương cuối đứng trước, trong nhóm đó mới đọc
   /// trước trước (updated_at DESC từ DB).
   static bool hasNew(Map<String, dynamic> item) =>
       newBadge(
@@ -218,7 +218,7 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
       _checking = false;
       _checkProgress = null;
     });
-    if (res.ran) {
+    if (res.ran && !res.cancelled) {
       await ref
           .read(appDbProvider)
           .setSetting(
@@ -274,7 +274,7 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
 
   static const _sortLabels = {
     'recent': 'Mới đọc trước',
-    'newest': 'Chương mới lên đầu',
+    'newest': 'Chưa đọc hết lên đầu',
     'title': 'Tên A–Z',
   };
 
