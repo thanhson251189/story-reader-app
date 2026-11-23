@@ -1,5 +1,6 @@
 package dev.storyreader.story_reader
 
+import android.content.ClipData
 import android.content.Intent
 import android.net.Uri
 import android.os.Build
@@ -53,6 +54,18 @@ class MainActivity : AudioServiceActivity() {
                 "openInstallPermissionSettings" -> {
                     result.success(openInstallPermissionSettings())
                 }
+                "shareFile" -> {
+                    val path = call.arguments as? String
+                    if (path == null) {
+                        result.error("BAD_ARGS", "Thiếu đường dẫn file", null)
+                    } else {
+                        try {
+                            result.success(shareFile(path))
+                        } catch (e: Exception) {
+                            result.error("SHARE_ERROR", e.message, null)
+                        }
+                    }
+                }
                 else -> result.notImplemented()
             }
         }
@@ -100,6 +113,25 @@ class MainActivity : AudioServiceActivity() {
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         }
         startActivity(intent)
+        return true
+    }
+
+    // File phải nằm trong đường dẫn FileProvider (cache/backup). Bảng chia sẻ
+    // là cách người dùng gửi file sang máy khác mà không phải lần trong
+    // trình chọn thư mục.
+    private fun shareFile(path: String): Boolean {
+        val file = File(path)
+        if (!file.exists()) {
+            throw IllegalStateException("File không còn, hãy sao lưu lại")
+        }
+        val uri = FileProvider.getUriForFile(this, "$packageName.fileprovider", file)
+        val send = Intent(Intent.ACTION_SEND).apply {
+            type = "application/json"
+            putExtra(Intent.EXTRA_STREAM, uri)
+            clipData = ClipData.newRawUri("backup", uri)
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        startActivity(Intent.createChooser(send, "Chia sẻ file sao lưu"))
         return true
     }
 

@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import 'core/errors.dart';
 import 'core/providers.dart';
 import 'home/read_tab.dart';
 import 'library/library_checker.dart';
@@ -20,7 +21,8 @@ class HomeScreen extends ConsumerStatefulWidget {
 }
 
 class _HomeScreenState extends ConsumerState<HomeScreen> {
-  int _tab = 2;
+  // Thư viện là màn đầu: ô dán link không phải thứ người đọc cần thấy trước.
+  int _tab = 0;
 
   @override
   void initState() {
@@ -29,8 +31,9 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
   }
 
   // Việc nền lúc mở app: nhắc cập nhật app, tự cập nhật nguồn truyện, tự
-  // kiểm tra chương mới. Chạy sau một khoảng nghỉ để không giành mạng lúc
-  // app vừa cất cánh; lỗi bất kỳ thì bỏ qua — người dùng không cần biết.
+  // kiểm tra chương mới nếu đã lâu chưa kiểm. Nghỉ vài giây để không giành
+  // mạng lúc app vừa mở. Lỗi cập nhật nguồn bỏ qua (lần mở sau thử lại);
+  // lỗi kiểm tra chương mới thì báo, không im.
   Future<void> _startupTasks() async {
     final db = ref.read(appDbProvider);
     unawaited(AppUpdater.showIfAny(context, db).catchError((_) => false));
@@ -50,18 +53,46 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     if (!mounted) return;
     if ((await db.getSetting('autoCheckNew') ?? '1') != '1') return;
     if (LibraryChecker.running) return;
+    final last = int.tryParse(
+      await db.getSetting(LibraryChecker.lastCheckKey) ?? '',
+    );
+    // Quét cả thư viện mỗi lần mở app dễ bị trang chặn và mất vài phút.
+    // Cách vài giờ là đủ để thấy chương mới; nút trên thư viện vẫn kiểm tra ngay.
+    if (!LibraryChecker.isDue(last, DateTime.now())) return;
     try {
       final res = await LibraryChecker.check(
         db: db,
         fetcher: ref.read(webFetcherProvider),
         repo: ref.read(adapterRepoProvider),
       );
-      if (res.fresh > 0 && mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
+      if (!res.ran || !mounted) return;
+      await db.setSetting(
+        LibraryChecker.lastCheckKey,
+        '${DateTime.now().millisecondsSinceEpoch}',
+      );
+      if (res.cancelled || !mounted) return;
+      final messenger = ScaffoldMessenger.of(context);
+      if (res.warns.isNotEmpty) {
+        final head = res.fresh > 0
+            ? '${res.fresh} truyện có chương mới'
+            : 'Kiểm tra chương mới gặp lỗi';
+        messenger.showSnackBar(
+          SnackBar(content: Text('$head\n${res.warns.join('\n')}')),
+        );
+      } else if (res.fresh > 0) {
+        messenger.showSnackBar(
           SnackBar(content: Text('${res.fresh} truyện có chương mới')),
         );
       }
-    } catch (_) {}
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Kiểm tra chương mới lỗi: ${friendlyError(e)}'),
+          ),
+        );
+      }
+    }
   }
 
   @override

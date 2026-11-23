@@ -46,6 +46,9 @@ class FakeAppDb extends AppDb {
   Future<void> touchLibrary(String storyUrl, String chapterUrl) async {}
 
   @override
+  Future<bool> isInLibrary(String storyUrl) async => false;
+
+  @override
   Future<void> savePosition(String url, double offset) async {}
 
   @override
@@ -466,7 +469,9 @@ void main() {
     expect(marks.single['para_index'], 0);
 
     // Danh sách đánh dấu: snippet + nhãn chương/đoạn.
-    await tester.tap(find.byTooltip('Đoạn đã đánh dấu'));
+    await tester.tap(find.byTooltip('Thêm'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Đoạn đã đánh dấu'));
     await tester.pumpAndSettle();
     expect(find.text('Đoạn đã đánh dấu'), findsOneWidget);
     expect(find.textContaining('Hắn gi ết người'), findsNWidgets(2));
@@ -497,7 +502,9 @@ void main() {
     );
     await pumpReader(tester, db);
 
-    await tester.tap(find.byTooltip('Đoạn đã đánh dấu'));
+    await tester.tap(find.byTooltip('Thêm'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Đoạn đã đánh dấu'));
     await tester.pumpAndSettle();
     await tester.tap(find.text('Chương 1 · Đoạn 31'));
     await tester.pumpAndSettle();
@@ -562,13 +569,15 @@ void main() {
 
     // Mở route mới đè lên (sheet hẹn giờ là một route) — menu nằm trong root
     // overlay, không tự gỡ theo widget tree: phải bị gỡ khi rời route.
-    await tester.tap(find.byTooltip('Hẹn giờ tắt'));
+    await tester.tap(find.byTooltip('Thêm'));
     await tester.pumpAndSettle();
     expect(
       find.byKey(const Key('selection_menu')),
       findsNothing,
       reason: 'menu overlay treo trên route mới',
     );
+    await tester.tap(find.text('Hẹn giờ tắt'));
+    await tester.pumpAndSettle();
 
     // Quay về màn đọc: menu cũng KHÔNG quay lại (selection đã dọn sạch).
     await tester.tap(find.text('15 phút'));
@@ -634,7 +643,9 @@ void main() {
     );
     await pumpReader(tester, db);
 
-    await tester.tap(find.byTooltip('Đoạn đã đánh dấu'));
+    await tester.tap(find.byTooltip('Thêm'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Đoạn đã đánh dấu'));
     await tester.pumpAndSettle();
     expect(find.text('Chương 1 · Đoạn 1'), findsOneWidget);
 

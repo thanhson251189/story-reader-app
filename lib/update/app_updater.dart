@@ -36,6 +36,20 @@ class AppUpdater {
   static const repoApi =
       'https://api.github.com/repos/thanhson251189/story-reader-app/releases/latest';
   static const _installerChannel = MethodChannel('story_reader/updater');
+
+  /// Mở bảng chia sẻ của Android cho một file trong thư mục app được phép
+  /// (cache/backup). File ngoài đường dẫn đó bị FileProvider từ chối.
+  static Future<void> shareFile(String path) async {
+    try {
+      final ok = await _installerChannel.invokeMethod<bool>('shareFile', path);
+      if (ok != true) {
+        throw Exception('Không mở được bảng chia sẻ');
+      }
+    } on PlatformException catch (e) {
+      throw Exception(e.message ?? 'Không chia sẻ được file');
+    }
+  }
+
   // GitHub không phục vụ asset cho request không có User-Agent.
   static const _ua = 'story-reader-app';
 

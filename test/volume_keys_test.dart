@@ -53,6 +53,9 @@ class FakeAppDb extends AppDb {
 
   @override
   Future<void> touchLibrary(String storyUrl, String chapterUrl) async {}
+
+  @override
+  Future<bool> isInLibrary(String storyUrl) async => false;
 }
 
 class FakeTtsPlayer extends ChangeNotifier implements TtsPlayer {

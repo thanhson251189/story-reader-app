@@ -399,6 +399,17 @@ class AppDb {
     return db.query('library', orderBy: 'updated_at DESC');
   }
 
+  /// Truyện đã nằm trong thư viện chưa. So link đã chuẩn hóa vì cùng một
+  /// truyện có thể lệch slash cuối hoặc hoa thường tên miền.
+  Future<bool> isInLibrary(String storyUrl) async {
+    final rows = await getLibrary();
+    for (final r in rows) {
+      final stored = r['story_url'] as String? ?? '';
+      if (sameChapterUrl(stored, storyUrl)) return true;
+    }
+    return false;
+  }
+
   Future<void> touchLibrary(String storyUrl, String chapterUrl) async {
     final db = await database;
     await db.update(

@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:permission_handler/permission_handler.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../core/errors.dart';
@@ -23,12 +24,17 @@ class ReaderScreen extends ConsumerStatefulWidget {
   final String url;
   final String? storyUrl;
 
+  /// Tên truyện nếu nơi mở đã biết. Lưu thư viện và thẻ "Đọc tiếp" dùng tên
+  /// này, không phải đường link.
+  final String? storyTitle;
+
   /// Mở màn là nhảy thẳng tới đoạn này (từ danh sách đánh dấu đoạn).
   final int? initialParagraph;
   const ReaderScreen({
     super.key,
     required this.url,
     this.storyUrl,
+    this.storyTitle,
     this.initialParagraph,
   });
 
@@ -171,6 +177,13 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen>
   String? _selectedText;
   // Điểm chạm xuống (tọa độ trong body) — neo menu sát vùng chữ bôi đen.
   Offset? _pointerDownLocal;
+  DateTime? _pointerDownAt;
+  // Chạm vào nút (Chương sau) không được tính là chạm để ẩn thanh.
+  bool _ateTap = false;
+  // Thanh trên và thanh nghe. Ẩn khi đang đọc chữ; nghe thì thanh nghe giữ lại.
+  bool _chromeVisible = true;
+  bool _inLibrary = false;
+  static bool _askedNotif = false;
   // Offset cuộn lúc mở menu. Menu nằm ở root overlay, không đi theo
   // SingleChildScrollView — trừ delta này thì menu đứng yên đè chữ khác khi cuộn.
   double? _menuScrollAnchor;
@@ -483,6 +496,11 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen>
       // bản đã sửa thì xoá cụm từ trong danh sách không khôi phục được).
       final fixed = await db.fixWords(cc, storyUrl: _storyUrlOf(url));
       await db.setSetting('lastUrl', url);
+      final storyName = widget.storyTitle?.trim();
+      final label = (storyName != null && storyName.isNotEmpty)
+          ? storyName
+          : cc.title;
+      if (label.isNotEmpty) await db.setSetting('lastTitle', label);
       await db.touchLibrary(_storyUrlOf(url), url);
       unawaited(ref.read(chapterPrefetcherProvider).prefetch(cc.nextUrl));
       final saved = await db.getPosition(url);
@@ -494,6 +512,7 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen>
         _flashPara = -1;
         _loading = false;
       });
+      unawaited(_refreshSaved());
       WidgetsBinding.instance.addPostFrameCallback((_) {
         // Mở từ danh sách đánh dấu: nhảy thẳng tới đoạn đã đánh dấu thay vì
         // vị trí đọc cũ. Ưu tiên cao hơn vị trí đã lưu.
@@ -556,25 +575,70 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen>
 
   bool _addingToLib = false;
 
+  Future<void> _refreshSaved() async {
+    final c = _content;
+    if (c == null || c.url.startsWith('book:')) return;
+    final saved = await ref.read(appDbProvider).isInLibrary(_storyUrlOf(c.url));
+    if (mounted) setState(() => _inLibrary = saved);
+  }
+
   Future<void> _addToLibrary() async {
     final c = _content;
     if (c == null || _addingToLib) return;
+    if (_inLibrary) {
+      ScaffoldMessenger.of(context)
+          .showSnackBar(const SnackBar(content: Text('Đã nằm trong thư viện')));
+      return;
+    }
     setState(() => _addingToLib = true);
+    final db = ref.read(appDbProvider);
+    final storyUrl = _storyUrlOf(c.url);
+    final known = widget.storyTitle?.trim();
     try {
-      final storyUrl = _storyUrlOf(c.url);
+      if (known != null && known.isNotEmpty) {
+        await db.upsertLibrary(
+          storyUrl: storyUrl,
+          title: known,
+          lastChapterUrl: c.url,
+        );
+        if (!mounted) return;
+        setState(() => _inLibrary = true);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Đã thêm "$known" vào thư viện')),
+        );
+        return;
+      }
       final adapter = ref.read(adapterRepoProvider).forUrl(storyUrl);
       if (adapter == null) throw Exception('Chưa có adapter cho trang này');
-      final info = await ref
-          .read(webFetcherProvider)
-          .fetchStory(storyUrl, adapter);
-      if (!info.tocComplete) throw IncompleteTocException();
-      await ref
-          .read(appDbProvider)
-          .saveStoryInfo(storyUrl, info, lastChapterUrl: c.url);
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Đã thêm "${info.title}" vào thư viện')),
-      );
+      try {
+        final info = await ref
+            .read(webFetcherProvider)
+            .fetchStory(storyUrl, adapter);
+        await db.saveStoryInfo(storyUrl, info, lastChapterUrl: c.url);
+        if (!mounted) return;
+        setState(() => _inLibrary = true);
+        final extra = info.tocComplete
+            ? ''
+            : ' Mục lục chưa tải đủ, vẫn giữ được truyện.';
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Đã thêm "${info.title}" vào thư viện.$extra'),
+          ),
+        );
+      } catch (e) {
+        await db.upsertLibrary(
+          storyUrl: storyUrl,
+          title: c.title,
+          lastChapterUrl: c.url,
+        );
+        if (!mounted) return;
+        setState(() => _inLibrary = true);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Đã lưu theo tên chương. ${friendlyError(e)}'),
+          ),
+        );
+      }
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context)
@@ -681,6 +745,35 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen>
       _player.chapter != null &&
       _player.chunks.isNotEmpty;
 
+  Future<void> _askNotificationOnce() async {
+    if (_askedNotif) return;
+    _askedNotif = true;
+    try {
+      final status = await Permission.notification.status;
+      if (status.isGranted) return;
+      final next = await Permission.notification.request();
+      if (!next.isGranted && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Chưa có quyền thông báo. Nghe vẫn chạy, nhưng nút tạm dừng trên màn khóa có thể không hiện.',
+            ),
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              'Không xin được quyền thông báo: ${friendlyError(e)}',
+            ),
+          ),
+        );
+      }
+    }
+  }
+
   void _togglePlay() {
     final c = _content;
     if (c == null) return;
@@ -688,17 +781,19 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen>
       _player.pause();
       return;
     }
-    if (_player.voiceWarning != null) {
-      ScaffoldMessenger.of(context)
-          .showSnackBar(SnackBar(content: Text(_player.voiceWarning!)));
-    }
-    // Luôn phát từ đầu đoạn văn đang hiển thị; nghe dở rồi dừng thì đọc lại
-    // từ đầu đoạn đó (resume() cũng theo semantics này cho nút media/headset).
-    _player.start(
-      c,
-      paraIndex: _visibleParaIndex(),
-      storyUrl: _storyUrlOf(c.url),
-    );
+    final para = _visibleParaIndex();
+    final story = _storyUrlOf(c.url);
+    unawaited(() async {
+      await _askNotificationOnce();
+      if (!mounted) return;
+      if (_player.voiceWarning != null) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text(_player.voiceWarning!)));
+      }
+      // Luôn phát từ đầu đoạn văn đang hiển thị; nghe dở rồi dừng thì đọc lại
+      // từ đầu đoạn đó (resume() cũng theo semantics này cho nút media/headset).
+      _player.start(c, paraIndex: para, storyUrl: story);
+    }());
   }
 
   void _sleepTimerMenu() {
@@ -1397,82 +1492,133 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen>
     final (bg, fg) = _themes[_theme] ?? _themes['light']!;
     final c = _content;
     final isPlayingThis = _player.playing && _player.chapter?.url == c?.url;
+    final showBottom = c != null && (_chromeVisible || isPlayingThis);
     return Scaffold(
       backgroundColor: bg,
-      appBar: AppBar(
-        backgroundColor: bg,
-        foregroundColor: fg,
-        title: Text(
-          c?.title ?? 'Đang tải...',
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-        ),
-        actions: [
-          if (c != null)
-            IconButton(
-              icon: const Icon(Icons.search),
-              onPressed: _loading ? null : _openSearch,
-              tooltip: 'Tìm trong chương',
-            ),
-          if (c != null)
-            IconButton(
-              icon: const Icon(Icons.collections_bookmark_outlined),
-              onPressed: _loading ? null : _openBookmarks,
-              tooltip: 'Đoạn đã đánh dấu',
-            ),
-          if (c != null)
-            IconButton(
-              icon: const Icon(Icons.list),
-              onPressed: () => Navigator.push(
-                context,
-                MaterialPageRoute(
-                  builder: (_) => TocScreen(
-                    storyUrl: _storyUrlOf(c.url),
-                    currentChapterUrl: c.url,
-                  ),
-                ),
+      appBar: !_chromeVisible
+          ? null
+          : AppBar(
+              backgroundColor: bg,
+              foregroundColor: fg,
+              title: Text(
+                c?.title ?? 'Đang tải...',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
               ),
-              tooltip: 'Mục lục',
+              actions: [
+                if (c != null)
+                  IconButton(
+                    icon: const Icon(Icons.search),
+                    onPressed: _loading ? null : _openSearch,
+                    tooltip: 'Tìm trong chương',
+                  ),
+                if (c != null)
+                  IconButton(
+                    icon: const Icon(Icons.list),
+                    onPressed: () => Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) => TocScreen(
+                          storyUrl: _storyUrlOf(c.url),
+                          currentChapterUrl: c.url,
+                        ),
+                      ),
+                    ),
+                    tooltip: 'Mục lục',
+                  ),
+                if (c != null && !c.url.startsWith('book:'))
+                  IconButton(
+                    icon: _addingToLib
+                        ? const SizedBox(
+                            width: 20,
+                            height: 20,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : Icon(
+                            _inLibrary
+                                ? Icons.bookmark
+                                : Icons.bookmark_add_outlined,
+                          ),
+                    onPressed: _addingToLib ? null : _addToLibrary,
+                    tooltip: _inLibrary
+                        ? 'Đã trong thư viện'
+                        : 'Thêm vào thư viện',
+                  ),
+                PopupMenuButton<String>(
+                  tooltip: _player.sleepAt != null
+                      ? 'Hẹn giờ đang chạy'
+                      : 'Thêm',
+                  icon: Icon(
+                    _player.sleepAt != null ? Icons.timer : Icons.more_vert,
+                  ),
+                  onSelected: (v) {
+                    if (v == 'marks') _openBookmarks();
+                    if (v == 'timer') _sleepTimerMenu();
+                    if (v == 'settings') _openSettings();
+                  },
+                  itemBuilder: (_) => [
+                    if (c != null)
+                      const PopupMenuItem(
+                        value: 'marks',
+                        child: Text('Đoạn đã đánh dấu'),
+                      ),
+                    PopupMenuItem(
+                      value: 'timer',
+                      child: Text(
+                        _player.sleepAt != null
+                            ? 'Hẹn giờ tắt (đang chạy)'
+                            : 'Hẹn giờ tắt',
+                      ),
+                    ),
+                    const PopupMenuItem(
+                      value: 'settings',
+                      child: Text('Cài đặt đọc'),
+                    ),
+                  ],
+                ),
+              ],
             ),
-          if (c != null && !c.url.startsWith('book:'))
-            IconButton(
-              icon: _addingToLib
-                  ? const SizedBox(
-                      width: 20,
-                      height: 20,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    )
-                  : const Icon(Icons.bookmark_add_outlined),
-              onPressed: _addingToLib ? null : _addToLibrary,
-              tooltip: 'Thêm vào thư viện',
+      body: SafeArea(
+        top: !_chromeVisible,
+        bottom: !showBottom,
+        child: Stack(
+          fit: StackFit.expand,
+          key: _bodyStackKey,
+          children: [
+            // Listener bị động: ghi điểm chạm để neo menu bôi đen, và nhận
+            // chạm ngắn (không phải giữ để chọn chữ, không phải vuốt) để ẩn
+            // thanh trên / thanh nghe.
+            Listener(
+              onPointerDown: (e) {
+                _pointerDownLocal = e.localPosition;
+                _pointerDownAt = DateTime.now();
+              },
+              onPointerUp: (e) {
+                final down = _pointerDownLocal;
+                final at = _pointerDownAt;
+                if (down == null || at == null || _content == null) return;
+                final moved = (e.localPosition - down).distance;
+                final held = DateTime.now().difference(at);
+                if (moved > 24 || held > const Duration(milliseconds: 350)) {
+                  return;
+                }
+                WidgetsBinding.instance.addPostFrameCallback((_) {
+                  if (!mounted ||
+                      _ateTap ||
+                      _selectedText != null ||
+                      _selectionMenuEntry != null) {
+                    _ateTap = false;
+                    return;
+                  }
+                  setState(() => _chromeVisible = !_chromeVisible);
+                });
+              },
+              child: _buildBody(bg, fg),
             ),
-          IconButton(
-            icon: Icon(
-              _player.sleepAt != null ? Icons.timer : Icons.timer_outlined,
-            ),
-            onPressed: _sleepTimerMenu,
-            tooltip: 'Hẹn giờ tắt',
-          ),
-          IconButton(
-            icon: const Icon(Icons.settings),
-            onPressed: _openSettings,
-            tooltip: 'Cài đặt đọc',
-          ),
-        ],
+          ],
+        ),
       ),
-      body: Stack(
-        fit: StackFit.expand,
-        key: _bodyStackKey,
-        children: [
-          // Listener bị động: ghi lại điểm chạm xuống (local trong body) để
-          // neo menu cạnh vùng chọn (không tranh gesture với cuộn/kéo ngang).
-          Listener(
-            onPointerDown: (e) => _pointerDownLocal = e.localPosition,
-            child: _buildBody(bg, fg),
-          ),
-        ],
-      ),
-      bottomNavigationBar: c == null
+      bottomNavigationBar: !showBottom
           ? null
           : SafeArea(
               child: Padding(
@@ -1650,7 +1796,10 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen>
                     child: Padding(
                       padding: const EdgeInsets.symmetric(vertical: 24),
                       child: FilledButton.icon(
-                        onPressed: () => _load(c.nextUrl!),
+                        onPressed: () {
+                          _ateTap = true;
+                          _load(c.nextUrl!);
+                        },
                         icon: const Icon(Icons.arrow_forward),
                         label: const Text('Chương sau'),
                       ),

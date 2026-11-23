@@ -2,4 +2,6 @@
 <paths>
     <!-- APK cập nhật tải về cacheDir/update/ (AppUpdater._download). -->
     <cache-path name="update_apk" path="update/" />
+    <!-- File sao lưu để bảng chia sẻ Android mở được. -->
+    <cache-path name="backup" path="backup/" />
 </paths>

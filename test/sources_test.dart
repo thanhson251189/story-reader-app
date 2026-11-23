@@ -72,25 +72,48 @@ void main() {
       'https://dammyy.cc/tim-kiem?search={query}',
       const {'searchList': '.card'},
     );
-    expect(seeded.loginUrl, 'https://dammyy.cc/login',
-        reason: 'seed search không được mất trang đăng nhập');
+    expect(
+      seeded.loginUrl,
+      'https://dammyy.cc/login',
+      reason: 'seed search không được mất trang đăng nhập',
+    );
     // Nguồn không khai báo đăng nhập: null, không gây lỗi.
     final plain = SourceAdapter.fromJson({'domain': 'x.com'});
     expect(plain.loginUrl, null);
   });
 
-  test('loadAdapterNames đọc json hợp lệ, hỏng thì trả rỗng thay vì sập', () async {
-    final db = _FakeDb();
-    expect(await loadAdapterNames(db), isEmpty);
+  test(
+    'loadAdapterNames đọc json hợp lệ, hỏng thì trả rỗng thay vì sập',
+    () async {
+      final db = _FakeDb();
+      expect(await loadAdapterNames(db), isEmpty);
 
-    db.settings['adapterNames'] = '{"a.com":"Nguồn A","b.com":"Nguồn B"}';
-    expect(await loadAdapterNames(db), {
-      'a.com': 'Nguồn A',
-      'b.com': 'Nguồn B',
+      db.settings['adapterNames'] = '{"a.com":"Nguồn A","b.com":"Nguồn B"}';
+      expect(await loadAdapterNames(db), {
+        'a.com': 'Nguồn A',
+        'b.com': 'Nguồn B',
+      });
+
+      db.settings['adapterNames'] = '{json hỏng';
+      expect(await loadAdapterNames(db), isEmpty);
+    },
+  );
+
+  test('namesFromCache: tên trong danh sách, tên người dùng đổi thắng', () {
+    const cache =
+        '{"sources":[{"id":"td","name":"TruyenDich","domain":"truyendich.us","url":"https://x"}]}';
+    final names = SourceRegistry.namesFromCache(cache, {
+      'truyendich.us': 'Tên của tôi',
     });
-
-    db.settings['adapterNames'] = '{json hỏng';
-    expect(await loadAdapterNames(db), isEmpty);
+    expect(SourceRegistry.labelFor('truyendich.us', names), 'Tên của tôi');
+    expect(SourceRegistry.labelFor('khac.com', names), 'khac.com');
+    expect(
+      SourceRegistry.labelFor(
+        'truyendich.us',
+        SourceRegistry.namesFromCache(cache, const {}),
+      ),
+      'TruyenDich',
+    );
   });
 }
 

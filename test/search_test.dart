@@ -4,6 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:story_reader/adapters/adapter_repository.dart';
 import 'package:story_reader/core/models.dart';
 import 'package:story_reader/core/providers.dart';
+import 'package:story_reader/data/app_db.dart';
 import 'package:story_reader/fetcher/web_fetcher.dart';
 import 'package:story_reader/search/search_screen.dart';
 import 'package:story_reader/sources/registry.dart';
@@ -213,10 +214,19 @@ class _FakeFetcher extends WebFetcher {
       ]);
 }
 
+class _FakeDb extends AppDb {
+  @override
+  Future<String?> getSetting(String key) async => null;
+
+  @override
+  Future<List<Map<String, dynamic>>> getLibrary() async => const [];
+}
+
 Future<void> _pumpSearch(WidgetTester tester) async {
   await tester.pumpWidget(
     ProviderScope(
       overrides: [
+        appDbProvider.overrideWithValue(_FakeDb()),
         adapterRepoProvider.overrideWithValue(
           AdapterRepository([_adapter('a.com'), _adapter('b.com')]),
         ),

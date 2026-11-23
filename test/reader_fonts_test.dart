@@ -82,7 +82,9 @@ void main() {
 
     expect(_paragraph(tester).style?.fontFamily, 'Literata');
 
-    await tester.tap(find.byTooltip('Cài đặt đọc'));
+    await tester.tap(find.byTooltip('Thêm'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Cài đặt đọc'));
     await tester.pumpAndSettle();
     expect(find.text('Font chữ: Literata'), findsOneWidget);
 
@@ -161,6 +163,9 @@ class _FakeAppDb extends AppDb {
 
   @override
   Future<void> touchLibrary(String storyUrl, String chapterUrl) async {}
+
+  @override
+  Future<bool> isInLibrary(String storyUrl) async => false;
 
   @override
   Future<double?> getPosition(String url) async => null;

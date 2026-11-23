@@ -175,4 +175,46 @@ void main() {
     expect(kept, isFalse);
     expect(await db.getToc(story), hasLength(1));
   });
+
+  test('isDue: chưa từng kiểm tra thì đến hạn, trong 6 giờ thì chưa', () {
+    final now = DateTime(2026, 11, 23, 12);
+    expect(LibraryChecker.isDue(null, now), isTrue);
+    expect(LibraryChecker.isDue(0, now), isTrue);
+    final recent = now
+        .subtract(const Duration(hours: 1))
+        .millisecondsSinceEpoch;
+    expect(LibraryChecker.isDue(recent, now), isFalse);
+    final old = now.subtract(const Duration(hours: 6)).millisecondsSinceEpoch;
+    expect(LibraryChecker.isDue(old, now), isTrue);
+  });
+
+  test('hủy trong lúc nghỉ thì không kiểm tra truyện sau', () async {
+    final db = AppDb(fileName: fileName);
+    const a = 'https://x.test/truyen-huy-a';
+    const b = 'https://x.test/truyen-huy-b';
+    final repo = AdapterRepository([
+      SourceAdapter.fromJson({'domain': 'x.test', 'selectors': {}}),
+    ]);
+    final fetcher = _ScriptFetcher()
+      ..next = NovelInfo(
+        title: 'A',
+        chapters: [ChapterRef(title: '1', url: '$a/1')],
+      );
+    final fut = LibraryChecker.check(
+      db: db,
+      fetcher: fetcher,
+      repo: repo,
+      gap: const Duration(seconds: 2),
+      items: [
+        {'story_url': a, 'title': 'A', 'last_chapter_url': null},
+        {'story_url': b, 'title': 'B', 'last_chapter_url': null},
+      ],
+    );
+    await Future<void>.delayed(const Duration(milliseconds: 200));
+    LibraryChecker.cancel();
+    final res = await fut.timeout(const Duration(seconds: 3));
+    expect(res.cancelled, isTrue);
+    expect(res.ran, isTrue);
+    expect(LibraryChecker.running, isFalse);
+  });
 }

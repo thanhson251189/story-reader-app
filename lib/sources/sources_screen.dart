@@ -136,7 +136,7 @@ class _SourcesScreenState extends ConsumerState<SourcesScreen> {
     final ok = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: Text('Đổi tên nguồn ${e.domain}'),
+        title: const Text('Đổi tên nguồn'),
         content: TextField(
           controller: ctrl,
           autofocus: true,
@@ -218,20 +218,29 @@ class _SourcesScreenState extends ConsumerState<SourcesScreen> {
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
-          TextField(
-            controller: _urlCtrl,
-            decoration: InputDecoration(
-              labelText: 'Link index.json',
-              border: const OutlineInputBorder(),
-              suffixIcon: IconButton(
-                tooltip: 'Lưu & làm mới',
-                icon: const Icon(Icons.save),
-                onPressed: _saveUrl,
-              ),
+          ExpansionTile(
+            title: const Text('Nâng cao'),
+            subtitle: const Text(
+              'Link danh sách nguồn — chỉ sửa khi được đưa link khác',
             ),
-            keyboardType: TextInputType.url,
-            autocorrect: false,
-            onSubmitted: (_) => _saveUrl(),
+            children: [
+              TextField(
+                controller: _urlCtrl,
+                decoration: InputDecoration(
+                  labelText: 'Link danh sách nguồn',
+                  border: const OutlineInputBorder(),
+                  suffixIcon: IconButton(
+                    tooltip: 'Lưu & làm mới',
+                    icon: const Icon(Icons.save),
+                    onPressed: _saveUrl,
+                  ),
+                ),
+                keyboardType: TextInputType.url,
+                autocorrect: false,
+                onSubmitted: (_) => _saveUrl(),
+              ),
+              const SizedBox(height: 8),
+            ],
           ),
           const SizedBox(height: 8),
           Text(
@@ -250,7 +259,7 @@ class _SourcesScreenState extends ConsumerState<SourcesScreen> {
               style: TextStyle(color: Theme.of(context).colorScheme.error),
             ),
           if (!_loading && _error == null && _entries.isEmpty)
-            const Text('Chưa có index (mất mạng hoặc link sai).'),
+            const Text('Chưa có danh sách nguồn (mất mạng hoặc link sai).'),
           for (final e in _entries) _row(e),
         ],
       ),
@@ -297,11 +306,7 @@ class _SourcesScreenState extends ConsumerState<SourcesScreen> {
               if (v == 'rename') {
                 _rename(e);
               } else if (v == 'login') {
-                openSourceLogin(
-                  context,
-                  adapter,
-                  _names[e.domain] ?? e.name,
-                );
+                openSourceLogin(context, adapter, _names[e.domain] ?? e.name);
               } else if (v == 'delete') {
                 _confirmDelete(e);
               }
@@ -317,8 +322,7 @@ class _SourcesScreenState extends ConsumerState<SourcesScreen> {
       child: ListTile(
         leading: const Icon(Icons.dns_outlined),
         title: Text(_names[e.domain] ?? e.name),
-        subtitle: Text('${e.domain}\n$label'),
-        isThreeLine: true,
+        subtitle: Text(label),
         trailing: Row(
           mainAxisSize: MainAxisSize.min,
           children: [?action, ?menu],

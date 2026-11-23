@@ -106,6 +106,28 @@ class SourceRegistry {
 
   /// Body JSON danh sách nguồn → danh sách entry; hỏng thì trả null thay vì
   /// ném (người gọi chỉ cần thấy "không tải được danh sách" là đủ).
+  /// Tên dễ đọc: bản người dùng đổi tên thắng tên trong danh sách nguồn.
+  /// Không có cả hai thì nơi gọi hiện tên miền.
+  static Map<String, String> namesFromCache(
+    String? indexCache,
+    Map<String, String> overrides,
+  ) {
+    final fromIndex = <String, String>{};
+    if (indexCache != null && indexCache.isNotEmpty) {
+      for (final e in parseIndex(indexCache) ?? const <SourceEntry>[]) {
+        final n = e.name.trim();
+        if (n.isNotEmpty) fromIndex[e.domain] = n;
+      }
+    }
+    return {...fromIndex, ...overrides};
+  }
+
+  static String labelFor(String domain, Map<String, String> names) {
+    final n = names[domain]?.trim();
+    if (n == null || n.isEmpty) return domain;
+    return n;
+  }
+
   static List<SourceEntry>? parseIndex(String raw) {
     try {
       final j = jsonDecode(raw) as Map<String, dynamic>;

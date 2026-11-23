@@ -1,20 +1,47 @@
-import 'dart:async';
-
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:file_picker/file_picker.dart';
 
-import '../core/errors.dart';
 import '../core/models.dart';
 import '../core/providers.dart';
-import '../local/book_importer.dart';
-import '../reader/reader_screen.dart';
 import '../sources/sources_screen.dart';
+import 'open_actions.dart';
 
 class ReadTab extends ConsumerStatefulWidget {
   final bool active;
   const ReadTab({super.key, required this.active});
+
+  /// Nhãn thẻ "Đọc tiếp": tên truyện, không bao giờ là đường link.
+  static String continueLabel({
+    required String lastUrl,
+    String? savedTitle,
+    List<Map<String, dynamic>> library = const [],
+  }) {
+    final saved = savedTitle?.trim();
+    if (saved != null && saved.isNotEmpty) return saved;
+    if (lastUrl.startsWith('book:')) {
+      final story = BookUrl.storyOf(lastUrl);
+      final title = library
+          .where((e) => e['story_url'] == story)
+          .map((e) => e['title'] as String?)
+          .firstOrNull;
+      final n = BookUrl.chapterOf(lastUrl);
+      final chapter = n == null ? '' : ' — Chương ${n + 1}';
+      return title == null || title.trim().isEmpty
+          ? 'Sách trong máy$chapter'
+          : '${title.trim()}$chapter';
+    }
+    for (final e in library) {
+      final title = (e['title'] as String?)?.trim();
+      if (title == null || title.isEmpty) continue;
+      final last = e['last_chapter_url'] as String?;
+      final story = e['story_url'] as String?;
+      if (sameChapterUrl(last, lastUrl) || sameChapterUrl(story, lastUrl)) {
+        return title;
+      }
+    }
+    return 'Chương vừa đọc';
+  }
 
   @override
   ConsumerState<ReadTab> createState() => _ReadTabState();
@@ -23,8 +50,8 @@ class ReadTab extends ConsumerStatefulWidget {
 class _ReadTabState extends ConsumerState<ReadTab> {
   final _urlCtrl = TextEditingController();
   String? _lastUrl;
+  String? _lastTitle;
   List<Map<String, dynamic>> _library = [];
-  bool _importing = false;
 
   @override
   void initState() {
@@ -44,93 +71,33 @@ class _ReadTabState extends ConsumerState<ReadTab> {
   Future<void> _loadLast() async {
     final db = ref.read(appDbProvider);
     final last = await db.getSetting('lastUrl');
+    final title = await db.getSetting('lastTitle');
     final lib = await db.getLibrary();
     if (mounted) {
       setState(() {
         _lastUrl = last;
+        _lastTitle = title;
         _library = lib;
       });
     }
   }
 
   void _open(String url) {
-    final u = url.trim();
-    if (u.startsWith('book:')) {
-      Navigator.push(
-        context,
-        MaterialPageRoute(builder: (_) => ReaderScreen(url: u)),
-      ).then((_) => _loadLast());
-      return;
-    }
-    final uri = Uri.tryParse(u);
-    if (u.isEmpty || uri == null || !uri.hasScheme || !uri.host.contains('.')) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text(
-            'Link không hợp lệ, dán link chương đầy đủ (https://...)',
-          ),
-        ),
-      );
-      return;
-    }
-    Navigator.push(
-      context,
-      MaterialPageRoute(builder: (_) => ReaderScreen(url: u)),
-    ).then((_) => _loadLast());
+    openWebLink(context, url).then((_) {
+      if (mounted) _loadLast();
+    });
   }
 
   Future<void> _importBook() async {
-    if (_importing) return;
-    PlatformFile? picked;
-    try {
-      picked = await FilePicker.pickFile(type: FileType.any);
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Không mở được trình chọn file: $e')),
-        );
-      }
-      return;
-    }
-    final path = picked?.path;
-    if (path == null || !mounted) return;
-    // Đuôi không hỗ trợ do BookImporter chặn sớm và báo lỗi qua snackbar dưới.
-    setState(() => _importing = true);
-    try {
-      final result = await BookImporter(ref.read(appDbProvider))
-          .importFile(path);
-      await _loadLast();
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            'Đã nhập "${result.title}" (${result.chapters} chương)',
-          ),
-        ),
-      );
-      _open('${result.storyUrl}:0');
-    } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Nhập sách lỗi: ${friendlyError(e)}')),
-      );
-    } finally {
-      if (mounted) setState(() => _importing = false);
-    }
+    await pickAndImportBook(context, ref.read(appDbProvider));
+    if (mounted) await _loadLast();
   }
 
-  String _lastLabel() {
-    final last = _lastUrl!;
-    if (!last.startsWith('book:')) return last;
-    final story = BookUrl.storyOf(last);
-    final title = _library
-        .where((e) => e['story_url'] == story)
-        .map((e) => e['title'] as String?)
-        .firstOrNull;
-    final n = BookUrl.chapterOf(last);
-    final chapter = n == null ? '' : ' — Chương ${n + 1}';
-    return title == null ? 'Sách trong máy$chapter' : '$title$chapter';
-  }
+  String _lastLabel() => ReadTab.continueLabel(
+    lastUrl: _lastUrl!,
+    savedTitle: _lastTitle,
+    library: _library,
+  );
 
   @override
   void dispose() {
@@ -184,18 +151,10 @@ class _ReadTabState extends ConsumerState<ReadTab> {
           ),
           const SizedBox(height: 8),
           OutlinedButton.icon(
-            onPressed: _importing ? null : _importBook,
+            onPressed: _importBook,
             icon: const Icon(Icons.file_open_outlined),
-            label: Text(
-              _importing
-                  ? 'Đang nhập sách...'
-                  : 'Đọc file trong máy (EPUB, MOBI, FB2, TXT)',
-            ),
+            label: const Text('Đọc file trong máy (EPUB, MOBI, FB2, TXT)'),
           ),
-          if (_importing) ...[
-            const SizedBox(height: 12),
-            const LinearProgressIndicator(minHeight: 3),
-          ],
           const SizedBox(height: 24),
           if (_lastUrl != null) ...[
             Text('Đọc tiếp', style: Theme.of(context).textTheme.titleMedium),

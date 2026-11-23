@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:path/path.dart' as p;
+import 'package:path_provider/path_provider.dart';
 
 import '../core/errors.dart';
 import '../core/providers.dart';
@@ -50,8 +51,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       version = info.version;
       build = info.buildNumber;
     } catch (_) {}
-    final auto = (await ref.read(appDbProvider).getSetting('autoCheckNew') ??
-            '1') ==
+    final auto =
+        (await ref.read(appDbProvider).getSetting('autoCheckNew') ?? '1') ==
         '1';
     final fixes = await ref.read(appDbProvider).getWordFixes();
     if (mounted) {
@@ -109,25 +110,70 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     if (_busy) return;
     setState(() => _busy = true);
     try {
-      final dirPath = await FilePicker.getDirectoryPath();
-      if (!mounted) return;
-      if (dirPath == null) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('Đang đóng gói dữ liệu...')));
       final data = await DataBackup(ref.read(appDbProvider)).export();
       final stamp = DateTime.now();
       String two(int n) => n.toString().padLeft(2, '0');
       final name =
           'story_reader_backup_${stamp.year}${two(stamp.month)}${two(stamp.day)}'
           '_${two(stamp.hour)}${two(stamp.minute)}.json';
-      await File(p.join(dirPath, name)).writeAsString(jsonEncode(data));
+      // Ghi vào cache/backup để FileProvider chia sẻ được. Trình chọn thư mục
+      // của Android dễ lạc — chia sẻ là đường chính, lưu thư mục là đường phụ.
+      final dir = Directory(
+        p.join((await getTemporaryDirectory()).path, 'backup'),
+      );
+      await dir.create(recursive: true);
+      final file = File(p.join(dir.path, name));
+      await file.writeAsString(jsonEncode(data));
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
+      await showDialog<void>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Text('Đã tạo file sao lưu'),
           content: Text(
-            'Đã lưu "$name" — gồm thư viện, vị trí đọc và sách đã nhập.',
+            'File "$name" gồm thư viện, vị trí đọc và sách đã nhập.\n\n'
+            'Bấm Chia sẻ để gửi sang máy khác, Drive hoặc Files.\n\n'
+            'Đường dẫn trên máy này:\n${file.path}',
           ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('Đóng'),
+            ),
+            TextButton(
+              onPressed: () async {
+                try {
+                  final dest = await _copyBackupToFolder(file, name);
+                  if (!ctx.mounted || dest == null) return;
+                  Navigator.pop(ctx);
+                  if (!mounted) return;
+                  ScaffoldMessenger.of(
+                    context,
+                  ).showSnackBar(SnackBar(content: Text('Đã lưu tại $dest')));
+                } catch (e) {
+                  if (!mounted) return;
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text('Lưu thư mục lỗi: ${friendlyError(e)}'),
+                    ),
+                  );
+                }
+              },
+              child: const Text('Lưu vào thư mục'),
+            ),
+            FilledButton(
+              onPressed: () async {
+                try {
+                  await AppUpdater.shareFile(file.path);
+                } catch (e) {
+                  if (!mounted) return;
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(content: Text('Chia sẻ lỗi: ${friendlyError(e)}')),
+                  );
+                }
+              },
+              child: const Text('Chia sẻ'),
+            ),
+          ],
         ),
       );
     } catch (e) {
@@ -139,6 +185,14 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     } finally {
       if (mounted) setState(() => _busy = false);
     }
+  }
+
+  Future<String?> _copyBackupToFolder(File file, String name) async {
+    final dirPath = await FilePicker.getDirectoryPath();
+    if (dirPath == null) return null;
+    final dest = p.join(dirPath, name);
+    await file.copy(dest);
+    return dest;
   }
 
   Future<void> _restore() async {
@@ -179,10 +233,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       await DataBackup(db).import(data);
       // Bản nguồn truyện đã cài nằm trong settings khôi phục; nạp luôn để
       // không phải mở lại app.
-      await SourceRegistry.restoreInstalled(
-        db,
-        ref.read(adapterRepoProvider),
-      );
+      await SourceRegistry.restoreInstalled(db, ref.read(adapterRepoProvider));
       // Restore ghép cả settings vào DB (kể cả tuỳ chọn tự check) — nạp lại
       // để công tắc hiển thị đúng dữ liệu vừa khôi phục.
       await _load();
@@ -291,13 +342,17 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                 ListTile(
                   leading: const Icon(Icons.save_outlined),
                   title: const Text('Sao lưu dữ liệu'),
-                  subtitle: const Text('Lưu ra file để chuyển máy, giữ an toàn'),
+                  subtitle: const Text(
+                    'Tạo file, rồi chia sẻ hoặc lưu vào thư mục',
+                  ),
                   onTap: _busy || _checkingUpdate ? null : _backup,
                 ),
                 ListTile(
                   leading: const Icon(Icons.restore_outlined),
                   title: const Text('Phục hồi từ file sao lưu'),
-                  subtitle: const Text('Ghép dữ liệu từ file sao lưu vào máy này'),
+                  subtitle: const Text(
+                    'Ghép dữ liệu từ file sao lưu vào máy này',
+                  ),
                   onTap: _busy || _checkingUpdate ? null : _restore,
                 ),
               ],

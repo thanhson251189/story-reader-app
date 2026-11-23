@@ -10,6 +10,7 @@ import '../core/providers.dart';
 import '../fetcher/web_fetcher.dart';
 import '../fetcher/webview_fallback_screen.dart';
 import '../reader/reader_screen.dart';
+import '../sources/registry.dart';
 import '../sources/source_login_screen.dart';
 
 enum _Status { loading, done, error }
@@ -57,6 +58,30 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
   final Map<String, _SourceState> _states = {};
   // Nguồn đang thu gọn; lần tìm mới mở lại hết.
   final Set<String> _collapsed = {};
+  Map<String, String> _names = {};
+  Set<String> _saved = {};
+
+  @override
+  void initState() {
+    super.initState();
+    unawaited(_loadMeta());
+  }
+
+  Future<void> _loadMeta() async {
+    final db = ref.read(appDbProvider);
+    final overrides = await loadAdapterNames(db);
+    final cache = await db.getSetting('registryIndexCache');
+    final lib = await db.getLibrary();
+    if (!mounted) return;
+    setState(() {
+      _names = SourceRegistry.namesFromCache(cache, overrides);
+      _saved = lib.map((e) => e['story_url'] as String).toSet();
+    });
+  }
+
+  String _label(SourceAdapter a) => SourceRegistry.labelFor(a.domain, _names);
+
+  bool _isSaved(String url) => _saved.any((s) => sameChapterUrl(s, url));
 
   @override
   void dispose() {
@@ -181,9 +206,14 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
       await Navigator.push(
         context,
         MaterialPageRoute(
-          builder: (_) => ReaderScreen(url: url, storyUrl: r.url),
+          builder: (_) => ReaderScreen(
+            url: url,
+            storyUrl: r.url,
+            storyTitle: info.title.trim().isEmpty ? r.title : info.title,
+          ),
         ),
       );
+      await _loadMeta();
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -192,6 +222,74 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
       }
     } finally {
       if (mounted) setState(() => _opening = null);
+    }
+  }
+
+  /// Lưu ngay tên truyện đã có. Không chờ tải hết mục lục — tải chương đầu
+  /// chạy sau, lỗi thì vẫn giữ truyện trong thư viện và nói rõ.
+  Future<void> _save(SearchResult r, SourceAdapter a) async {
+    final db = ref.read(appDbProvider);
+    final title = r.title.trim().isEmpty ? 'Truyện đã lưu' : r.title.trim();
+    String? last;
+    try {
+      final toc = await db.getToc(r.url);
+      if (toc.isNotEmpty) last = toc.first.url;
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Không đọc được mục lục đã lưu: ${friendlyError(e)}'),
+          ),
+        );
+      }
+    }
+    try {
+      await db.upsertLibrary(
+        storyUrl: r.url,
+        title: title,
+        coverUrl: r.coverUrl,
+        lastChapterUrl: last,
+      );
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Không lưu được: ${friendlyError(e)}')),
+        );
+      }
+      return;
+    }
+    if (!mounted) return;
+    setState(() => _saved.add(r.url));
+    ScaffoldMessenger.of(context)
+        .showSnackBar(SnackBar(content: Text('Đã lưu "$title" vào thư viện')));
+    if (last != null) return;
+    try {
+      final info = await ref.read(webFetcherProvider).fetchStory(r.url, a);
+      final wrote = await db.saveTocUnlessShorter(r.url, info);
+      final chapters = wrote ? info.chapters : await db.getToc(r.url);
+      if (chapters.isEmpty) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text(
+                'Đã lưu tên truyện. Chưa lấy được chương đầu — mở truyện khi có mạng.',
+              ),
+            ),
+          );
+        }
+        return;
+      }
+      await db.touchLibrary(r.url, chapters.first.url);
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              'Đã lưu tên truyện. Chưa lấy được chương đầu: ${friendlyError(e)}',
+            ),
+          ),
+        );
+      }
     }
   }
 
@@ -264,7 +362,7 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
                       for (final a in _supported)
                         CheckboxListTile(
                           dense: true,
-                          title: Text(a.domain),
+                          title: Text(_label(a)),
                           value: _picked == null || _picked!.contains(a.domain),
                           onChanged: (_) => setState(() {
                             _picked = SearchScreen.toggleSource(
@@ -283,7 +381,7 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
             Padding(
               padding: const EdgeInsets.fromLTRB(16, 4, 16, 0),
               child: Text(
-                'Chưa hỗ trợ tìm: ${unsupported.map((a) => a.domain).join(', ')}',
+                'Chưa hỗ trợ tìm: ${unsupported.map(_label).join(', ')}',
                 style: Theme.of(context).textTheme.bodySmall,
               ),
             ),
@@ -352,7 +450,7 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
             padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 4),
             child: Row(
               children: [
-                Text(a.domain, style: Theme.of(context).textTheme.titleMedium),
+                Text(_label(a), style: Theme.of(context).textTheme.titleMedium),
                 const SizedBox(width: 8),
                 if (s.status == _Status.loading)
                   const SizedBox(
@@ -439,22 +537,34 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
               child: ListTile(
                 leading: CoverImage(url: r.coverUrl, width: 40, height: 56),
                 title: Text(
-                  r.title,
+                  r.title.trim().isEmpty ? 'Không có tên' : r.title,
                   maxLines: 2,
                   overflow: TextOverflow.ellipsis,
                 ),
-                subtitle: Text(
-                  Uri.tryParse(r.url)?.path ?? r.url,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                ),
-                trailing: _opening == r.url
-                    ? const SizedBox(
+                trailing: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    IconButton(
+                      tooltip: _isSaved(r.url)
+                          ? 'Đã trong thư viện'
+                          : 'Lưu vào thư viện',
+                      icon: Icon(
+                        _isSaved(r.url)
+                            ? Icons.bookmark
+                            : Icons.bookmark_add_outlined,
+                      ),
+                      onPressed: () => _save(r, a),
+                    ),
+                    if (_opening == r.url)
+                      const SizedBox(
                         width: 20,
                         height: 20,
                         child: CircularProgressIndicator(strokeWidth: 2),
                       )
-                    : const Icon(Icons.arrow_forward),
+                    else
+                      const Icon(Icons.arrow_forward),
+                  ],
+                ),
                 onTap: () => _openStory(r, a),
               ),
             ),

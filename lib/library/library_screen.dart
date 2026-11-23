@@ -7,6 +7,7 @@ import '../core/cover_image.dart';
 import '../core/models.dart';
 import '../core/providers.dart';
 import '../fetcher/web_fetcher.dart';
+import '../home/open_actions.dart';
 import '../reader/reader_screen.dart';
 import '../reader/toc_screen.dart';
 import 'library_checker.dart';
@@ -104,13 +105,19 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
     _load();
     // Kiểm tra chương mới chạy ngầm lúc mở app xong cũng phải refresh list.
     LibraryChecker.revision.addListener(_onExternalCheck);
+    LibraryChecker.progress.addListener(_onProgress);
   }
 
   @override
   void dispose() {
     LibraryChecker.revision.removeListener(_onExternalCheck);
+    LibraryChecker.progress.removeListener(_onProgress);
     _searchCtrl.dispose();
     super.dispose();
+  }
+
+  void _onProgress() {
+    if (mounted) setState(() {});
   }
 
   void _onExternalCheck() {
@@ -155,8 +162,11 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
     Navigator.push(
       context,
       MaterialPageRoute(
-        builder: (_) =>
-            ReaderScreen(url: url, storyUrl: item['story_url'] as String),
+        builder: (_) => ReaderScreen(
+          url: url,
+          storyUrl: item['story_url'] as String,
+          storyTitle: item['title'] as String?,
+        ),
       ),
     ).then((_) => _load());
   }
@@ -208,6 +218,15 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
       _checking = false;
       _checkProgress = null;
     });
+    if (res.ran) {
+      await ref
+          .read(appDbProvider)
+          .setSetting(
+            LibraryChecker.lastCheckKey,
+            '${DateTime.now().millisecondsSinceEpoch}',
+          );
+    }
+    if (!mounted || res.cancelled) return;
     final msg = res.fresh > 0
         ? '${res.fresh} truyện có chương mới'
         : 'Không có chương mới';
@@ -304,9 +323,9 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
       ),
       body: Column(
         children: [
-          if (_checking)
+          if (_checking || LibraryChecker.running)
             Padding(
-              padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+              padding: const EdgeInsets.fromLTRB(16, 8, 8, 0),
               child: Row(
                 children: [
                   const SizedBox(
@@ -317,15 +336,20 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
                   const SizedBox(width: 12),
                   Expanded(
                     child: Text(
-                      'Đang check ${_checkProgress ?? ''}',
+                      'Đang kiểm tra ${_checkProgress ?? LibraryChecker.progress.value ?? ''}',
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: Theme.of(context).textTheme.bodySmall,
                     ),
                   ),
+                  TextButton(
+                    onPressed: LibraryChecker.cancel,
+                    child: const Text('Dừng'),
+                  ),
                 ],
               ),
             ),
+          if (_loaded) _addButtons(),
           Expanded(
             child: !_loaded
                 ? const Center(child: CircularProgressIndicator())
@@ -348,8 +372,9 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
                           ),
                           const SizedBox(height: 8),
                           Text(
-                            'Mở truyện rồi bấm nút đánh dấu ở màn đọc, '
-                            'hoặc tìm truyện ở tab Tìm kiếm để thêm vào đây.',
+                            'Bấm Dán link hoặc Nhập file ở trên. '
+                            'Tìm ở tab Tìm kiếm thì phải bấm Lưu — '
+                            'tìm thôi chưa thêm vào đây.',
                             textAlign: TextAlign.center,
                             style: Theme.of(context).textTheme.bodyMedium,
                           ),
@@ -396,20 +421,40 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
                                 padding: const EdgeInsets.all(16),
                                 children: [
                                   for (final item in items) _card(item),
-                                  const SizedBox(height: 8),
-                                  Center(
-                                    child: Text(
-                                      'Giữ một truyện để xoá khỏi thư viện',
-                                      style: Theme.of(context)
-                                          .textTheme
-                                          .bodySmall,
-                                    ),
-                                  ),
                                 ],
                               ),
                       ),
                     ],
                   ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _addButtons() {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+      child: Row(
+        children: [
+          Expanded(
+            child: OutlinedButton.icon(
+              onPressed: () =>
+                  showPasteLinkDialog(context).then((_) => _load()),
+              icon: const Icon(Icons.link),
+              label: const Text('Dán link'),
+            ),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: OutlinedButton.icon(
+              onPressed: () => pickAndImportBook(
+                context,
+                ref.read(appDbProvider),
+              ).then((_) => _load()),
+              icon: const Icon(Icons.file_open_outlined),
+              label: const Text('Nhập file'),
+            ),
           ),
         ],
       ),
@@ -447,7 +492,11 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
               ),
           ],
         ),
-        trailing: const Icon(Icons.arrow_forward),
+        trailing: IconButton(
+          icon: const Icon(Icons.delete_outline),
+          tooltip: 'Xóa khỏi thư viện',
+          onPressed: () => _remove(item),
+        ),
         onTap: () => _open(item),
         onLongPress: () => _remove(item),
       ),

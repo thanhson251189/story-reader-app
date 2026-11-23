@@ -26,6 +26,7 @@ void main() {
   ) async {
     final db = FakeAppDb();
     db.settings['lastUrl'] = 'https://x.test/truyen-cu/chuong-1';
+    db.settings['lastTitle'] = 'Truyện cũ';
 
     Future<void> pump(bool active) async {
       await tester.pumpWidget(
@@ -39,14 +40,46 @@ void main() {
 
     // Mở app: thẻ "Đọc tiếp" hiện truyện lúc mở app.
     await pump(true);
-    expect(find.text('https://x.test/truyen-cu/chuong-1'), findsOneWidget);
+    expect(find.text('Truyện cũ'), findsOneWidget);
 
     // Đọc truyện khác qua Thư viện (lastUrl trong DB đổi) rồi quay lại tab Đọc.
     db.settings['lastUrl'] = 'https://x.test/truyen-moi/chuong-9';
+    db.settings['lastTitle'] = 'Truyện mới';
     await pump(false);
     await pump(true);
 
-    expect(find.text('https://x.test/truyen-cu/chuong-1'), findsNothing);
-    expect(find.text('https://x.test/truyen-moi/chuong-9'), findsOneWidget);
+    expect(find.text('Truyện cũ'), findsNothing);
+    expect(find.text('Truyện mới'), findsOneWidget);
+  });
+
+  test('continueLabel không hiện đường link', () {
+    expect(
+      ReadTab.continueLabel(lastUrl: 'https://x.test/truyen/chuong-1'),
+      'Chương vừa đọc',
+    );
+    expect(
+      ReadTab.continueLabel(
+        lastUrl: 'https://x.test/truyen/chuong-9',
+        savedTitle: 'Kiếm Đế',
+      ),
+      'Kiếm Đế',
+    );
+    expect(
+      ReadTab.continueLabel(
+        lastUrl: 'https://x.test/truyen/chuong-2',
+        library: [
+          {
+            'story_url': 'https://x.test/truyen',
+            'title': 'Từ thư viện',
+            'last_chapter_url': 'https://x.test/truyen/chuong-2',
+          },
+        ],
+      ),
+      'Từ thư viện',
+    );
+    expect(
+      ReadTab.continueLabel(lastUrl: 'book:abc:0'),
+      'Sách trong máy — Chương 1',
+    );
   });
 }
