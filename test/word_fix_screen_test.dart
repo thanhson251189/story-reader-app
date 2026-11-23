@@ -89,17 +89,18 @@ void main() {
 
     expect(find.text('gi ết'), findsOneWidget);
     expect(find.textContaining('→'), findsOneWidget);
-    expect(
-      await tester.runAsync(() => db.getWordFixes()),
-      [('gi ết', 'giết')],
-    );
+    expect(await tester.runAsync(() => db.getWordFixes()), [
+      const WordFix('gi ết', 'giết'),
+    ]);
   });
 
   testWidgets('Cụm từ trống hoặc trùng thì báo lỗi ngay trong hộp thoại', (
     tester,
   ) async {
     final db = AppDb(fileName: 'test_word_fix_screen.db');
-    await tester.runAsync(() => db.setWordFixes([('gi ết', 'giết')]));
+    await tester.runAsync(
+      () => db.setWordFixes([const WordFix('gi ết', 'giết')]),
+    );
     await pumpScreen(tester, db);
 
     await openEditor(tester, find.text('Thêm cụm từ'));
@@ -120,15 +121,16 @@ void main() {
 
     await tester.tap(find.text('Huỷ'));
     await waitUntil(tester, () => find.text('Lưu').evaluate().isEmpty);
-    expect(
-      await tester.runAsync(() => db.getWordFixes()),
-      [('gi ết', 'giết')],
-    );
+    expect(await tester.runAsync(() => db.getWordFixes()), [
+      const WordFix('gi ết', 'giết'),
+    ]);
   });
 
   testWidgets('Bấm dòng mở hộp thoại sửa, điền sẵn giá trị cũ', (tester) async {
     final db = AppDb(fileName: 'test_word_fix_screen.db');
-    await tester.runAsync(() => db.setWordFixes([('thi th ể', 'thi thể')]));
+    await tester.runAsync(
+      () => db.setWordFixes([const WordFix('thi th ể', 'thi thể')]),
+    );
     await pumpScreen(tester, db);
 
     await openEditor(tester, find.text('thi th ể'));
@@ -139,15 +141,16 @@ void main() {
       () => find.textContaining('thi thể.').evaluate().isNotEmpty,
     );
 
-    expect(
-      await tester.runAsync(() => db.getWordFixes()),
-      [('thi th ể', 'thi thể.')],
-    );
+    expect(await tester.runAsync(() => db.getWordFixes()), [
+      const WordFix('thi th ể', 'thi thể.'),
+    ]);
   });
 
   testWidgets('Xoá cụm từ có xác nhận', (tester) async {
     final db = AppDb(fileName: 'test_word_fix_screen.db');
-    await tester.runAsync(() => db.setWordFixes([('gi ết', 'giết')]));
+    await tester.runAsync(
+      () => db.setWordFixes([const WordFix('gi ết', 'giết')]),
+    );
     await pumpScreen(tester, db);
 
     await tester.tap(find.byIcon(Icons.delete_outline));
@@ -160,5 +163,89 @@ void main() {
     );
 
     expect(await tester.runAsync(() => db.getWordFixes()), isEmpty);
+  });
+
+  testWidgets('Dòng chỉ một truyện ghi tên truyện; thêm mới là mọi truyện', (
+    tester,
+  ) async {
+    final db = AppDb(fileName: 'test_word_fix_screen.db');
+    const story = 'https://x/truyen-ten';
+    await tester.runAsync(
+      () => db.upsertLibrary(
+        storyUrl: story,
+        title: 'Truyện Có Tên',
+        lastChapterUrl: '$story/1',
+      ),
+    );
+    await tester.runAsync(
+      () => db.setWordFixes([
+        const WordFix('chung', 'ok'),
+        const WordFix('riêng', 'ổn', storyUrl: story),
+        const WordFix(
+          'mất tên',
+          'x',
+          storyUrl: 'https://x/khong-co-trong-thu-vien',
+        ),
+      ]),
+    );
+    await pumpScreen(tester, db);
+
+    expect(find.textContaining('Mọi truyện'), findsOneWidget);
+    expect(find.textContaining('Truyện Có Tên'), findsOneWidget);
+    expect(find.textContaining('Chỉ một truyện'), findsOneWidget);
+
+    await openEditor(tester, find.text('Thêm cụm từ'));
+    expect(find.text('Chỉ truyện này'), findsNothing);
+    expect(find.text('Áp dụng cho: Mọi truyện'), findsOneWidget);
+    await tester.tap(find.text('Huỷ'));
+    await waitUntil(tester, () => find.text('Lưu').evaluate().isEmpty);
+  });
+
+  testWidgets('Từ màn đọc: mặc định chỉ truyện này, không đè mục chung', (
+    tester,
+  ) async {
+    final db = AppDb(fileName: 'test_word_fix_screen.db');
+    await tester.runAsync(
+      () => db.setWordFixes([const WordFix('gi ết', 'giết')]),
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: Builder(
+            builder: (ctx) => TextButton(
+              onPressed: () => showWordFixEditor(
+                ctx,
+                db,
+                initialWrong: 'gi ết',
+                storyChoice: 'https://x/truyen-a',
+                storyLabel: 'Truyện A',
+              ),
+              child: const Text('open'),
+            ),
+          ),
+        ),
+      ),
+    );
+    await openEditor(tester, find.text('open'));
+    expect(find.text('Chỉ truyện này'), findsOneWidget);
+    expect(find.text('Truyện A'), findsOneWidget);
+    await tester.enterText(find.byType(TextField).at(1), 'GIẾT');
+    await tester.tap(find.text('Lưu'));
+    await waitUntil(tester, () => find.text('Lưu').evaluate().isEmpty);
+
+    expect(await tester.runAsync(() => db.getWordFixes()), [
+      const WordFix('gi ết', 'giết'),
+      const WordFix('gi ết', 'GIẾT', storyUrl: 'https://x/truyen-a'),
+    ]);
+
+    await openEditor(tester, find.text('open'));
+    await tester.tap(find.text('Mọi truyện'));
+    await tester.enterText(find.byType(TextField).at(1), 'giết hết');
+    await tester.tap(find.text('Lưu'));
+    await waitUntil(tester, () => find.text('Lưu').evaluate().isEmpty);
+    expect(await tester.runAsync(() => db.getWordFixes()), [
+      const WordFix('gi ết', 'giết hết'),
+      const WordFix('gi ết', 'GIẾT', storyUrl: 'https://x/truyen-a'),
+    ]);
   });
 }

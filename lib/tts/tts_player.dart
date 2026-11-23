@@ -47,6 +47,10 @@ class TtsPlayer extends ChangeNotifier {
   Map<String, String>? currentVoice;
   String? voiceWarning;
   String? lastError;
+
+  /// URL truyện màn đọc truyền lúc bấm nghe. Chương kế phải dùng đúng URL này
+  /// thì sửa từ "chỉ truyện này" mới khớp — đoán từ link chương thì lệch.
+  String? _readingStoryUrl;
   Timer? _sleepTimer;
   DateTime? sleepAt;
   bool _disposed = false;
@@ -232,7 +236,12 @@ class TtsPlayer extends ChangeNotifier {
     return out;
   }
 
-  Future<void> start(ChapterContent c, {int paraIndex = 0}) async {
+  Future<void> start(
+    ChapterContent c, {
+    int paraIndex = 0,
+    String? storyUrl,
+  }) async {
+    if (storyUrl != null) _readingStoryUrl = storyUrl;
     _gen++;
     // start() là một lệnh phát mới từ nơi gọi — ý định chờ khi tải đã được
     // nơi đó biểu đạt trực tiếp, xoá cờ cũ để không còn ý định stale.
@@ -460,7 +469,19 @@ class TtsPlayer extends ChangeNotifier {
     await db.touchLibrary(storyUrlFromChapter(url), url);
     unawaited(prefetcher.prefetch(c.nextUrl));
     // Nghe cũng đọc bản đã sửa từ (cache giữ bản gốc — xem AppDb.fixWords).
-    return db.fixWords(c);
+    // Dùng URL truyện màn đọc đã truyền, không đoán từ link chương.
+    return db.fixWords(c, storyUrl: await _storyUrlForFix(url));
+  }
+
+  Future<String> _storyUrlForFix(String chapterUrl) async {
+    final known = _readingStoryUrl;
+    if (known == null) return storyUrlFromChapter(chapterUrl);
+    if (chapterBelongsToStory(chapterUrl, known, const [])) return known;
+    final toc = await db.getToc(known);
+    if (chapterBelongsToStory(chapterUrl, known, toc)) return known;
+    final guessed = storyUrlFromChapter(chapterUrl);
+    _readingStoryUrl = guessed;
+    return guessed;
   }
 
   Future<void> pause() async {

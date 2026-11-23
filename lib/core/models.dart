@@ -222,6 +222,38 @@ bool sameChapterUrl(String? a, String? b) {
   return normalizeChapterUrl(a) == normalizeChapterUrl(b);
 }
 
+/// Chương [chapterUrl] có thuộc truyện [storyUrl] mà màn đọc đã biết không.
+/// Không suy URL truyện từ chương: đoán lệch thì sửa từ "chỉ truyện này" áp
+/// nhầm hoặc không áp. Khớp khi cùng link, sách cùng mã, chương nằm trong mục
+/// lục của truyện đó, hoặc link chương nằm dưới link truyện.
+bool chapterBelongsToStory(
+  String chapterUrl,
+  String storyUrl,
+  Iterable<ChapterRef> toc,
+) {
+  if (chapterUrl.startsWith('book:') || storyUrl.startsWith('book:')) {
+    return BookUrl.storyOf(chapterUrl) == storyUrl;
+  }
+  if (sameChapterUrl(chapterUrl, storyUrl)) return true;
+  if (toc.any((c) => sameChapterUrl(c.url, chapterUrl))) return true;
+  final base = storyUrl.endsWith('/') ? storyUrl : '$storyUrl/';
+  return chapterUrl.startsWith(base);
+}
+
+/// URL truyện dùng khi áp sửa từ lúc nghe. [remembered] là URL màn đọc truyền
+/// lúc bấm nghe — giữ nó khi chương còn thuộc truyện đó, không đoán lại.
+String storyUrlForPlayback({
+  required String chapterUrl,
+  required String? remembered,
+  Iterable<ChapterRef> toc = const [],
+}) {
+  if (remembered != null &&
+      chapterBelongsToStory(chapterUrl, remembered, toc)) {
+    return remembered;
+  }
+  return storyUrlFromChapter(chapterUrl);
+}
+
 /// Mục lục web tải chưa đủ trang. Nơi lưu phải giữ danh sách cũ.
 class IncompleteTocException implements Exception {
   @override

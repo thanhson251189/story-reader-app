@@ -70,7 +70,11 @@ class FakeTtsPlayer extends ChangeNotifier implements TtsPlayer {
   List<SpeakChunk> chunks = [];
 
   @override
-  Future<void> start(ChapterContent c, {int paraIndex = 0}) async {}
+  Future<void> start(
+    ChapterContent c, {
+    int paraIndex = 0,
+    String? storyUrl,
+  }) async {}
 
   @override
   Future<void> stop() async {}
@@ -109,59 +113,60 @@ void pressVolumeDown() {
 }
 
 void main() {
-  testWidgets('Back về màn đọc cũ từ màn đọc đè lên thì phím âm lượng vẫn lật trang', (
-    tester,
-  ) async {
-    final db = FakeAppDb();
-    db.cache[chapter(1).url] = chapter(1);
-    db.cache[chapter(2).url] = chapter(2);
-    final player = FakeTtsPlayer();
-    tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
-      const MethodChannel('story_reader/volume_keys'),
-      (call) async => null,
-    );
-    await tester.pumpWidget(
-      ProviderScope(
-        overrides: [
-          appDbProvider.overrideWithValue(db),
-          ttsPlayerProvider.overrideWithValue(player),
-          chapterPrefetcherProvider.overrideWithValue(NoopPrefetcher()),
-        ],
-        child: MaterialApp(
-          navigatorObservers: [routeObserver],
-          home: ReaderScreen(url: chapter(1).url),
+  testWidgets(
+    'Back về màn đọc cũ từ màn đọc đè lên thì phím âm lượng vẫn lật trang',
+    (tester) async {
+      final db = FakeAppDb();
+      db.cache[chapter(1).url] = chapter(1);
+      db.cache[chapter(2).url] = chapter(2);
+      final player = FakeTtsPlayer();
+      tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        const MethodChannel('story_reader/volume_keys'),
+        (call) async => null,
+      );
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            appDbProvider.overrideWithValue(db),
+            ttsPlayerProvider.overrideWithValue(player),
+            chapterPrefetcherProvider.overrideWithValue(NoopPrefetcher()),
+          ],
+          child: MaterialApp(
+            navigatorObservers: [routeObserver],
+            home: ReaderScreen(url: chapter(1).url),
+          ),
         ),
-      ),
-    );
-    await tester.pumpAndSettle();
-    expect(find.text('Chương 1'), findsWidgets);
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('Chương 1'), findsWidgets);
 
-    // Mục lục mở chương mới: một màn đọc thứ hai đè lên màn đọc cũ (cùng
-    // hiệu ứng với pushReplacement từ mục lục). KHÔNG await push — future của
-    // nó chỉ hoàn tất khi route được pop, await là treo test.
-    final navigator = tester.state<NavigatorState>(find.byType(Navigator));
-    unawaited(
-      navigator.push(
-        MaterialPageRoute(builder: (_) => ReaderScreen(url: chapter(2).url)),
-      ),
-    );
-    await tester.pumpAndSettle();
-    expect(find.text('Chương 2'), findsWidgets);
+      // Mục lục mở chương mới: một màn đọc thứ hai đè lên màn đọc cũ (cùng
+      // hiệu ứng với pushReplacement từ mục lục). KHÔNG await push — future của
+      // nó chỉ hoàn tất khi route được pop, await là treo test.
+      final navigator = tester.state<NavigatorState>(find.byType(Navigator));
+      unawaited(
+        navigator.push(
+          MaterialPageRoute(builder: (_) => ReaderScreen(url: chapter(2).url)),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('Chương 2'), findsWidgets);
 
-    // Quay về màn đọc cũ: dispose màn đọc trên xoá handler chung của channel —
-    // màn đọc dưới phải đăng ký lại trong didPopNext.
-    navigator.pop();
-    await tester.pumpAndSettle();
-    expect(find.text('Chương 1'), findsWidgets);
+      // Quay về màn đọc cũ: dispose màn đọc trên xoá handler chung của channel —
+      // màn đọc dưới phải đăng ký lại trong didPopNext.
+      navigator.pop();
+      await tester.pumpAndSettle();
+      expect(find.text('Chương 1'), findsWidgets);
 
-    // Nhấn phím âm lượng: phải lật trang (vị trí cuộn đổi và được lưu).
-    pressVolumeDown();
-    await tester.pumpAndSettle();
-    await tester.pump(const Duration(milliseconds: 700));
-    expect(
-      db.positions[chapter(1).url] ?? 0,
-      greaterThan(0),
-      reason: 'phím âm lượng phải lật trang màn đọc dưới sau khi quay về',
-    );
-  });
+      // Nhấn phím âm lượng: phải lật trang (vị trí cuộn đổi và được lưu).
+      pressVolumeDown();
+      await tester.pumpAndSettle();
+      await tester.pump(const Duration(milliseconds: 700));
+      expect(
+        db.positions[chapter(1).url] ?? 0,
+        greaterThan(0),
+        reason: 'phím âm lượng phải lật trang màn đọc dưới sau khi quay về',
+      );
+    },
+  );
 }

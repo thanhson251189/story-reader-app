@@ -388,7 +388,7 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen>
       await db.cacheChapter(cc);
       // Sửa từ người dùng dạy cho phần HIỂN THỊ; cache giữ bản gốc (cache
       // bản đã sửa thì xoá cụm từ trong danh sách không khôi phục được).
-      final fixed = await db.fixWords(cc);
+      final fixed = await db.fixWords(cc, storyUrl: _storyUrlOf(url));
       await db.setSetting('lastUrl', url);
       await db.touchLibrary(_storyUrlOf(url), url);
       unawaited(ref.read(chapterPrefetcherProvider).prefetch(cc.nextUrl));
@@ -508,7 +508,7 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen>
     final filled = await db.fillNav(cleaned);
     await db.cacheChapter(filled);
     // Hiển thị bản đã sửa từ (cache giữ bản gốc — xem đường _load).
-    final shown = await db.fixWords(filled);
+    final shown = await db.fixWords(filled, storyUrl: _storyUrlOf(filled.url));
     await db.setSetting('lastUrl', filled.url);
     await db.touchLibrary(_storyUrlOf(filled.url), filled.url);
     // Mở chương khác qua WebView khi đang nghe cũng dừng nghe như đường
@@ -588,7 +588,11 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen>
     }
     // Luôn phát từ đầu đoạn văn đang hiển thị; nghe dở rồi dừng thì đọc lại
     // từ đầu đoạn đó (resume() cũng theo semantics này cho nút media/headset).
-    _player.start(c, paraIndex: _visibleParaIndex());
+    _player.start(
+      c,
+      paraIndex: _visibleParaIndex(),
+      storyUrl: _storyUrlOf(c.url),
+    );
   }
 
   void _sleepTimerMenu() {
@@ -1712,15 +1716,17 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen>
     final text = (_selectedText ?? '').trim();
     _clearSelection();
     if (text.isEmpty || !mounted) return;
+    final db = ref.read(appDbProvider);
+    final raw = _contentRaw;
+    final storyUrl = raw == null ? null : _storyUrlOf(raw.url);
     final ok = await showWordFixEditor(
       context,
-      ref.read(appDbProvider),
+      db,
       initialWrong: text,
+      storyChoice: storyUrl,
     );
-    if (!ok || !mounted) return;
-    final raw = _contentRaw;
-    if (raw == null) return;
-    final fixed = await ref.read(appDbProvider).fixWords(raw);
+    if (!ok || !mounted || raw == null) return;
+    final fixed = await db.fixWords(raw, storyUrl: storyUrl);
     if (!mounted) return;
     setState(() {
       _content = fixed;

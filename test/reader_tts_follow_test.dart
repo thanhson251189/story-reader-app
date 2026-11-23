@@ -80,7 +80,11 @@ class FakeTtsPlayer extends ChangeNotifier implements TtsPlayer {
   Future<void> skipNext() async {}
 
   @override
-  Future<void> start(ChapterContent c, {int paraIndex = 0}) async {
+  Future<void> start(
+    ChapterContent c, {
+    int paraIndex = 0,
+    String? storyUrl,
+  }) async {
     calls.add('start:${c.url}');
     chapter = c;
     playing = true;
@@ -187,21 +191,22 @@ void main() {
     await tester.pump(const Duration(seconds: 1));
   });
 
-  testWidgets('Mở chương khác khi đang nghe thì dừng nghe, không tự nghe chương mới', (
-    tester,
-  ) async {
-    // Đang nghe chương 2, mở thẳng chương 4 (từ thư viện/mục lục/tìm kiếm).
-    player.chapter = chapter(2);
-    player.playing = true;
-    player.chunks = [SpeakChunk(0, 'Đoạn 0.')];
-    await pumpReader(tester, 'https://x.test/c/4');
-    await tester.pumpAndSettle();
+  testWidgets(
+    'Mở chương khác khi đang nghe thì dừng nghe, không tự nghe chương mới',
+    (tester) async {
+      // Đang nghe chương 2, mở thẳng chương 4 (từ thư viện/mục lục/tìm kiếm).
+      player.chapter = chapter(2);
+      player.playing = true;
+      player.chunks = [SpeakChunk(0, 'Đoạn 0.')];
+      await pumpReader(tester, 'https://x.test/c/4');
+      await tester.pumpAndSettle();
 
-    expect(find.text('Chương 4'), findsWidgets);
-    expect(player.calls, contains('stop'));
-    expect(player.calls.where((s) => s.startsWith('start:')), isEmpty);
-    expect(player.playing, isFalse);
-  });
+      expect(find.text('Chương 4'), findsWidgets);
+      expect(player.calls, contains('stop'));
+      expect(player.calls.where((s) => s.startsWith('start:')), isEmpty);
+      expect(player.playing, isFalse);
+    },
+  );
 
   testWidgets('Mở lại đúng chương đang nghe thì giữ phiên nghe tiếp tục', (
     tester,

@@ -5,6 +5,29 @@ import 'package:sqflite/sqflite.dart';
 
 import '../core/models.dart';
 
+/// Một cụm từ người dùng dạy thay. [storyUrl] null = mọi truyện; có giá trị =
+/// chỉ truyện đó. So khớp phạm vi bỏ khác biệt vô hại của link (slash cuối,
+/// hoa thường) — cùng quy tắc với link chương, không phải đoán truyện khác.
+class WordFix {
+  final String from;
+  final String to;
+  final String? storyUrl;
+
+  const WordFix(this.from, this.to, {this.storyUrl});
+
+  bool sameScope(String? other) => sameChapterUrl(storyUrl, other);
+
+  @override
+  bool operator ==(Object other) =>
+      other is WordFix &&
+      from == other.from &&
+      to == other.to &&
+      storyUrl == other.storyUrl;
+
+  @override
+  int get hashCode => Object.hash(from, to, storyUrl);
+}
+
 class AppDb {
   Database? _db;
 
@@ -531,36 +554,47 @@ class AppDb {
 
   // ---- Từ/cụm từ sửa lỗi người dùng dạy ----
 
-  /// Key settings chứa danh sách [["cụm từ sai", "thay bằng"], ...]. Để trong
-  /// bảng settings (không tạo bảng riêng) thì sao lưu/phục hồi tự mang theo
-  /// và không cần nâng schema DB.
+  /// Key settings chứa danh sách sửa từ. Mục cũ là 2 phần tử
+  /// ["cụm từ sai", "thay bằng"] = mọi truyện — giữ nguyên dạng đó để bản app
+  /// cũ và bản sao lưu cũ vẫn đọc được. Mục chỉ một truyện thêm URL truyện
+  /// ở phần tử thứ ba; bản app cũ bỏ qua phần tử dài hơn 2, không làm mất
+  /// mục chung. Để trong bảng settings thì sao lưu/phục hồi tự mang theo.
   static const wordFixesKey = 'wordReplacements';
 
   /// Danh sách từ sửa lỗi, giữ thứ tự người dùng nhập. Bỏ qua phần tử hỏng
   /// (key rỗng, sai cấu trúc, file settings bị dính tay) thay vì crash.
-  Future<List<(String, String)>> getWordFixes() async {
+  Future<List<WordFix>> getWordFixes() async {
     final raw = await getSetting(wordFixesKey);
     if (raw == null || raw.isEmpty) return const [];
     try {
       final list = jsonDecode(raw) as List;
       return [
         for (final e in list)
-          if (e is List &&
-              e.length == 2 &&
-              e[0] is String &&
-              e[1] is String &&
-              (e[0] as String).isNotEmpty)
-            (e[0] as String, e[1] as String),
+          if (_parseWordFix(e) case final fix?) fix,
       ];
     } catch (_) {
       return const [];
     }
   }
 
-  Future<void> setWordFixes(List<(String, String)> fixes) => setSetting(
+  static WordFix? _parseWordFix(Object? e) {
+    if (e is! List || e.length < 2 || e.length > 3) return null;
+    if (e[0] is! String || e[1] is! String) return null;
+    final from = e[0] as String;
+    if (from.isEmpty) return null;
+    if (e.length == 2) return WordFix(from, e[1] as String);
+    // Phần tử thứ ba không phải chữ là dữ liệu hỏng — bỏ, không biến thành
+    // mục chung kẻo áp nhầm cho mọi truyện.
+    if (e[2] is! String) return null;
+    if ((e[2] as String).isEmpty) return WordFix(from, e[1] as String);
+    return WordFix(from, e[1] as String, storyUrl: e[2] as String);
+  }
+
+  Future<void> setWordFixes(List<WordFix> fixes) => setSetting(
     wordFixesKey,
     jsonEncode([
-      for (final (from, to) in fixes) [from, to],
+      for (final f in fixes)
+        if (f.storyUrl == null) [f.from, f.to] else [f.from, f.to, f.storyUrl],
     ]),
   );
 
@@ -580,32 +614,40 @@ class AppDb {
   static String _cleanJunk(String s) =>
       s.replaceAll(_invisibleJunk, '').replaceAll(_dotJunk, '');
 
-  /// Áp danh sách từ sửa lỗi vào tiêu đề + từng đoạn của nội dung chương.
-  /// Chạy chuẩn hóa ký tự rác TRƯỚC, rồi mới áp danh sách người dùng (mục
-  /// nhập của người dùng viết theo bản đã chuẩn hóa). Khớp nguyên văn (phân
-  /// biệt hoa thường), áp theo thứ tự trong danh sách. CHỈ gọi ở đường hiển
-  /// thị/phát (màn đọc, nghe đọc) — không sửa trước khi ghi cache: cache giữ
-  /// bản gốc thì xoá/sửa một cụm từ trong danh sách có tác dụng ngược ngay
-  /// trên cả chương đã tải sẵn, không kẹt lỗi sai cũ.
-  Future<ChapterContent> fixWords(ChapterContent c) async {
-    final fixes = await getWordFixes();
-    if (fixes.isEmpty) {
-      return ChapterContent(
-        url: c.url,
-        title: _cleanJunk(c.title),
-        paragraphs: [for (final pa in c.paragraphs) _cleanJunk(pa)],
-        nextUrl: c.nextUrl,
-        prevUrl: c.prevUrl,
-      );
+  /// Áp danh sách sửa từ lên một chuỗi. Chuẩn hóa ký tự rác trước (người dùng
+  /// nhập theo bản đã chuẩn hóa). Cùng cụm từ, bản của [storyUrl] thắng bản
+  /// chung — không áp cả hai, kẻo thay hai lần. [storyUrl] null thì chỉ áp
+  /// mục chung.
+  static String applyWordFixes(
+    String text,
+    List<WordFix> fixes,
+    String? storyUrl,
+  ) {
+    var s = _cleanJunk(text);
+    final storyFroms = <String>{
+      for (final f in fixes)
+        if (f.storyUrl != null && f.sameScope(storyUrl)) f.from,
+    };
+    for (final f in fixes) {
+      if (f.from.isEmpty) continue;
+      final forThisStory = f.storyUrl != null && f.sameScope(storyUrl);
+      if (f.storyUrl == null && storyFroms.contains(f.from)) continue;
+      if (f.storyUrl != null && !forThisStory) continue;
+      s = s.replaceAll(f.from, f.to);
     }
-    String fix(String s) {
-      s = _cleanJunk(s);
-      for (final (from, to) in fixes) {
-        s = s.replaceAll(from, to);
-      }
-      return s;
-    }
+    return s;
+  }
 
+  /// Áp danh sách từ sửa lỗi vào tiêu đề + từng đoạn của nội dung chương.
+  /// [storyUrl] là URL truyện màn đọc đang dùng — phải cùng giá trị lúc người
+  /// dùng chọn "Chỉ truyện này", không đoán từ link chương. Khớp nguyên văn
+  /// (phân biệt hoa thường), áp theo thứ tự trong danh sách. CHỈ gọi ở đường
+  /// hiển thị/phát (màn đọc, nghe đọc) — không sửa trước khi ghi cache: cache
+  /// giữ bản gốc thì xoá/sửa một cụm từ có tác dụng ngược ngay trên chương đã
+  /// tải sẵn, không kẹt lỗi sai cũ.
+  Future<ChapterContent> fixWords(ChapterContent c, {String? storyUrl}) async {
+    final fixes = await getWordFixes();
+    String fix(String s) => applyWordFixes(s, fixes, storyUrl);
     return ChapterContent(
       url: c.url,
       title: fix(c.title),
