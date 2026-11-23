@@ -78,9 +78,21 @@ class _TocScreenState extends ConsumerState<TocScreen> {
 
   @override
   void dispose() {
+    // Rời mục lục (Back hoặc mở chương) phải dừng tải. Không có cờ này thì vòng
+    // lặp vẫn tải tiếp sau khi thanh tiến độ và nút Huỷ đã biến mất.
+    _dlCancel = true;
     _scroll.dispose();
     _filterCtrl.dispose();
     super.dispose();
+  }
+
+  /// Nghỉ [seconds] giây, nhưng thoát trong vòng 1 giây nếu user huỷ hoặc rời màn.
+  /// true = nghỉ hết; false = đã huỷ.
+  Future<bool> _pause(int seconds) async {
+    for (var s = 0; s < seconds && !_dlCancel; s++) {
+      await Future.delayed(const Duration(seconds: 1));
+    }
+    return !_dlCancel;
   }
 
   Future<void> _load({bool force = false}) async {
@@ -155,20 +167,27 @@ class _TocScreenState extends ConsumerState<TocScreen> {
       final i = _chapters.indexWhere((c) => TocScreen.normUrl(c.url) == cur);
       if (i >= 0) start = i;
     }
-    var ok = 0;
+    var downloaded = 0;
+    var already = 0;
+    var covered = 0;
     var fail = 0;
     var streak = 0;
     var challenges = 0;
     var pace = 5;
     String? lastErr;
     var i = start;
-    while (i < _chapters.length && ok < count && !_dlCancel) {
+    while (i < _chapters.length && covered < count && !_dlCancel) {
       final url = _chapters[i].url;
       if (_cached.contains(url)) {
-        // Đã có trong máy vẫn ghim cho trọn đoạn được yêu cầu: tải trước là
-        // ý định giữ offline, prefetch lẻ trước đó không đáng tin dài hạn.
+        // Đã có trong máy vẫn ghim, và tính vào N chương được yêu cầu. Không
+        // tính thì "Tải 5 chương tiếp" bỏ qua chương có sẵn rồi tải thêm cho
+        // đủ 5 chương mới — xa hơn đoạn user vừa xin.
         await db.pinChapter(url);
+        if (_dlCancel) break;
+        already++;
+        covered++;
         i++;
+        if (mounted) setState(() => _dlDone = covered);
         continue;
       }
       final adapter = ref.read(adapterRepoProvider).forUrl(url);
@@ -177,13 +196,18 @@ class _TocScreenState extends ConsumerState<TocScreen> {
         final c = await fetcher.fetchChapter(url, adapter);
         await db.cacheChapter(c);
         await db.pinChapter(url);
-        ok++;
+        downloaded++;
+        if (_dlCancel) {
+          if (mounted) setState(() => _cached.add(url));
+          break;
+        }
+        covered++;
         streak = 0;
         i++;
         if (mounted) {
           setState(() {
             _cached.add(url);
-            _dlDone = ok;
+            _dlDone = covered;
           });
         }
       } on ChallengeException {
@@ -193,9 +217,7 @@ class _TocScreenState extends ConsumerState<TocScreen> {
         if (challenges >= 8) break;
         // Nguồn chặn bot theo số lượt tải: nghỉ dài rồi thử lại đúng chương.
         pace = (pace + 2).clamp(5, 15);
-        for (var s = 0; s < 60 && !_dlCancel; s++) {
-          await Future.delayed(const Duration(seconds: 1));
-        }
+        if (!await _pause(60)) break;
         continue;
       } catch (e) {
         fail++;
@@ -203,20 +225,32 @@ class _TocScreenState extends ConsumerState<TocScreen> {
         // 3 lần hỏng liên tiếp thường là bị chặn — dừng để khỏi đập tiếp.
         if (++streak >= 3) break;
         i++;
-        await Future.delayed(const Duration(seconds: 5));
+        if (!await _pause(5)) break;
       }
-      // Nhịp tối thiểu bằng prefetcher (5s) để tránh bị chặn.
-      if (!_dlCancel && ok < count) {
-        await Future.delayed(Duration(seconds: pace));
+      if (_dlCancel) break;
+      // Nhịp tối thiểu bằng prefetcher (5s) để tránh bị chặn. Nghỉ từng giây
+      // để Huỷ / rời màn có hiệu lực, không chờ hết 5–15s mới dừng.
+      if (covered < count && i < _chapters.length) {
+        if (!await _pause(pace)) break;
       }
     }
     if (!mounted) return;
+    final err = fail > 0 ? ', $fail lỗi: $lastErr' : '';
+    final String msg;
+    if (_dlCancel) {
+      msg = downloaded > 0
+          ? 'Đã huỷ, tải được $downloaded chương$err'
+          : 'Đã huỷ$err';
+    } else if (downloaded == 0 && already > 0 && fail == 0) {
+      msg = 'Đã có đủ $already chương trong máy';
+    } else if (already > 0 && downloaded > 0) {
+      msg = 'Đã xong $covered chương, tải mới $downloaded$err';
+    } else {
+      msg = 'Đã tải $downloaded chương$err';
+    }
     setState(() {
       _downloading = false;
-      _dlResult =
-          'Đã tải $ok chương'
-          '${fail > 0 ? ', $fail lỗi: $lastErr' : ''}'
-          '${_dlCancel ? ' (đã huỷ)' : ''}';
+      _dlResult = msg;
     });
   }
 

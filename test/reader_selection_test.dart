@@ -276,6 +276,65 @@ void main() {
     expect(find.text('Dịch'), findsOneWidget);
   });
 
+  testWidgets('Cuộn sau khi bôi đen: menu đi theo chữ, ra khỏi màn thì ẩn', (
+    tester,
+  ) async {
+    final db = FakeAppDb();
+    db.cache['https://x.test/c/1'] = ChapterContent(
+      url: 'https://x.test/c/1',
+      title: 'Chương 1',
+      paragraphs: [
+        'Đoạn đầu ngắn để bôi đen.',
+        ...List.generate(40, (j) => 'Đoạn đệm số $j. ' * 8),
+      ],
+    );
+    await pumpReader(tester, db);
+
+    await tester.longPress(find.textContaining('Đoạn đầu ngắn'));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('selection_menu')), findsOneWidget);
+    final menuBefore = tester
+        .getRect(find.byKey(const Key('selection_menu')))
+        .top;
+    final textBefore = tester
+        .getTopLeft(find.textContaining('Đoạn đầu ngắn'))
+        .dy;
+
+    final pos = tester.state<ScrollableState>(find.byType(Scrollable)).position;
+    pos.jumpTo(40);
+    await tester.pump();
+
+    expect(find.byKey(const Key('selection_menu')), findsOneWidget);
+    final menuAfter = tester
+        .getRect(find.byKey(const Key('selection_menu')))
+        .top;
+    final textAfter = tester
+        .getTopLeft(find.textContaining('Đoạn đầu ngắn'))
+        .dy;
+    expect(textBefore - textAfter, closeTo(40, 1));
+    expect(
+      menuBefore - menuAfter,
+      closeTo(textBefore - textAfter, 1),
+      reason: 'menu đứng yên trong khi chữ đã cuộn',
+    );
+
+    pos.jumpTo(pos.maxScrollExtent);
+    await tester.pump();
+    expect(
+      find.byKey(const Key('selection_menu')),
+      findsNothing,
+      reason: 'chữ đã ra khỏi màn mà menu vẫn đè lên đoạn khác',
+    );
+
+    pos.jumpTo(0);
+    await tester.pump();
+    expect(find.byKey(const Key('selection_menu')), findsOneWidget);
+    expect(
+      tester.getRect(find.byKey(const Key('selection_menu'))).top,
+      closeTo(menuBefore, 1),
+    );
+  });
+
   testWidgets('Đổi từ: hộp thoại điền sẵn, lưu xong chương áp ngay', (
     tester,
   ) async {

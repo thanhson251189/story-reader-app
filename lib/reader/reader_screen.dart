@@ -32,10 +32,15 @@ class ReaderScreen extends ConsumerStatefulWidget {
   });
 
   /// Đoạn văn có chứa từ khoá (không phân biệt hoa thường, dấu tiếng Việt).
+  /// Khoảng trắng trong từ khoá — kể cả xuống dòng của selection nhiều dòng —
+  /// được dẹp như nội dung chương. Từ khoá bắt đầu hoặc kết thúc bằng chữ/số
+  /// phải khớp trọn token: "Ngũ" (fold thành "ngu") không được khớp trong "người".
   static bool paragraphMatches(String text, String query) {
-    final q = query.trim();
+    final q = flattenForProbe(query).trim();
     if (q.isEmpty) return false;
-    return TocScreen.fold(text).contains(TocScreen.fold(q));
+    final fQuery = TocScreen.fold(q);
+    if (fQuery.isEmpty) return false;
+    return _nextBoundedHit(TocScreen.fold(text), fQuery, 0) >= 0;
   }
 
   /// plainText của selection nhiều dòng join bằng '\n', còn nội dung chương
@@ -45,22 +50,54 @@ class ReaderScreen extends ConsumerStatefulWidget {
   /// khoảng trắng nên bản dẹp vẫn trùng với bản gốc tại vị trí nối dòng).
   static String flattenForProbe(String s) => s.replaceAll(RegExp(r'\s+'), ' ');
 
+  static bool _isSearchTokenChar(int unit) =>
+      (unit >= 0x30 && unit <= 0x39) || (unit >= 0x61 && unit <= 0x7A);
+
+  /// [at] là chỗ [foldedQuery] nằm trong [foldedText]. Nếu từ khoá bắt đầu hoặc
+  /// kết thúc bằng chữ/số thì ký tự kề phải không phải chữ/số — nếu không,
+  /// "ngu" khớp nhầm bên trong "nguoi".
+  static bool _hitIsBounded(String foldedText, String foldedQuery, int at) {
+    final end = at + foldedQuery.length;
+    if (_isSearchTokenChar(foldedQuery.codeUnitAt(0)) &&
+        at > 0 &&
+        _isSearchTokenChar(foldedText.codeUnitAt(at - 1))) {
+      return false;
+    }
+    if (_isSearchTokenChar(foldedQuery.codeUnitAt(foldedQuery.length - 1)) &&
+        end < foldedText.length &&
+        _isSearchTokenChar(foldedText.codeUnitAt(end))) {
+      return false;
+    }
+    return true;
+  }
+
+  static int _nextBoundedHit(String foldedText, String foldedQuery, int from) {
+    var at = foldedText.indexOf(foldedQuery, from);
+    while (at >= 0) {
+      if (_hitIsBounded(foldedText, foldedQuery, at)) return at;
+      at = foldedText.indexOf(foldedQuery, at + 1);
+    }
+    return -1;
+  }
+
   /// Tách [text] thành các TextSpan, chỗ khớp [query] (so sánh KHÔNG DẤU qua
-  /// fold) mang [matchStyle], phần còn lại mang [baseStyle]. fold giữ nguyên
-  /// độ dài từng ký tự nên vị trí khớp trong bản fold khớp 1-1 với bản gốc.
+  /// fold, trọn token như [paragraphMatches]) mang [matchStyle], phần còn lại
+  /// mang [baseStyle]. fold giữ nguyên độ dài từng ký tự nên vị trí khớp trong
+  /// bản fold khớp 1-1 với bản gốc.
   static List<TextSpan> highlightSpans(
     String text,
     String query,
     TextStyle base,
     TextStyle match,
   ) {
-    final q = query.trim();
+    final q = flattenForProbe(query).trim();
     if (q.isEmpty) return [TextSpan(text: text, style: base)];
     final fText = TocScreen.fold(text);
     final fQuery = TocScreen.fold(q);
+    if (fQuery.isEmpty) return [TextSpan(text: text, style: base)];
     final spans = <TextSpan>[];
     var start = 0;
-    var at = fText.indexOf(fQuery);
+    var at = _nextBoundedHit(fText, fQuery, 0);
     while (at >= 0) {
       if (at > start) {
         spans.add(TextSpan(text: text.substring(start, at), style: base));
@@ -69,7 +106,7 @@ class ReaderScreen extends ConsumerStatefulWidget {
         TextSpan(text: text.substring(at, at + fQuery.length), style: match),
       );
       start = at + fQuery.length;
-      at = fText.indexOf(fQuery, start);
+      at = _nextBoundedHit(fText, fQuery, start);
     }
     if (start < text.length) {
       spans.add(TextSpan(text: text.substring(start), style: base));
@@ -100,11 +137,20 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen>
   String? _selectedText;
   // Điểm chạm xuống (tọa độ trong body) — neo menu sát vùng chữ bôi đen.
   Offset? _pointerDownLocal;
+  // Offset cuộn lúc mở menu. Menu nằm ở root overlay, không đi theo
+  // SingleChildScrollView — trừ delta này thì menu đứng yên đè chữ khác khi cuộn.
+  double? _menuScrollAnchor;
   // Đoạn cần nhảy tới ngay khi mở màn (từ danh sách đánh dấu đoạn).
   int? _pendingInitialPara;
 
   void _showSelectionMenu() {
+    // onSelectionChanged gọi lại khi selection đổi (kéo núm). Giữ mốc cuộn nếu
+    // menu đang mở, kẻo một callback giữa lúc cuộn reset menu về điểm chạm cũ.
+    final keepAnchor = _selectionMenuEntry != null;
     _hideSelectionMenu();
+    if (!keepAnchor) {
+      _menuScrollAnchor = _scroll.hasClients ? _scroll.offset : 0;
+    }
     _selectionMenuEntry = OverlayEntry(builder: (_) => _selectionMenuBubble());
     Overlay.of(context, rootOverlay: true).insert(_selectionMenuEntry!);
   }
@@ -127,6 +173,7 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen>
     _hideSelectionMenu();
     _selectedText = null;
     _pointerDownLocal = null;
+    _menuScrollAnchor = null;
   }
 
   bool _loading = true;
@@ -316,6 +363,7 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen>
   }
 
   void _onScroll() {
+    _selectionMenuEntry?.markNeedsBuild();
     _saveTimer?.cancel();
     _saveTimer = Timer(const Duration(milliseconds: 600), () {
       final c = _content;
@@ -1496,6 +1544,7 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen>
                 _showSelectionMenu();
               } else {
                 _hideSelectionMenu();
+                _menuScrollAnchor = null;
               }
             },
             child: Column(
@@ -1547,7 +1596,7 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen>
   /// ngay DƯỚI hộp, nửa dưới thì nằm ngay TRÊN (như các app đọc truyện mẫu).
   /// Menu nằm trong root overlay nên đè được lên núm kéo selection, không
   /// bị núm ăn cú bấm. Tra không ra hộp (selection lạ) thì dùng điểm chạm.
-  ({Offset origin, bool below, double caretDx, double width}) _menuLayout() {
+  ({Offset origin, bool below, double caretDx, double width})? _menuLayout() {
     const menuH = 54.0;
     final bodyBox =
         _bodyStackKey.currentContext?.findRenderObject() as RenderBox?;
@@ -1561,9 +1610,10 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen>
     // text chọn — menu phải nằm ngoài toàn bộ hộp, không cắm giữa các dòng
     // đã bôi đen (bug user chụp màn: menu nằm giữa selection 5 dòng).
     final p = bodyOrigin + (_pointerDownLocal ?? Offset.zero);
-    double selTop = p.dy - 20;
-    double selBottom = p.dy + 20;
+    var selTop = p.dy - 20;
+    var selBottom = p.dy + 20;
     final sel = (_selectedText ?? '').trim();
+    var liveBox = false;
     if (sel.length > 60) {
       final probeStart = ReaderScreen.flattenForProbe(sel.substring(0, 40));
       final probeEnd = ReaderScreen.flattenForProbe(
@@ -1587,9 +1637,19 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen>
         if (startBox != null && endBox != null) {
           selTop = startBox.localToGlobal(Offset.zero).dy;
           selBottom = endBox.localToGlobal(Offset.zero).dy + endBox.size.height;
+          liveBox = true;
         }
       }
     }
+    // Selection ngắn neo điểm chạm (không đổi khi cuộn). Hộp dài dùng
+    // RenderBox đang sống — đã ăn offset, không trừ delta lần nữa.
+    if (!liveBox && _menuScrollAnchor != null && _scroll.hasClients) {
+      final delta = _scroll.offset - _menuScrollAnchor!;
+      selTop -= delta;
+      selBottom -= delta;
+    }
+    // Chữ đã ra khỏi body: không kẹp menu vào mép, kẻo đè lên đoạn khác.
+    if (selBottom < bodyOrigin.dy || selTop > bodyBottom) return null;
 
     final menuW = (bodySize.width - 16).clamp(0.0, 356.0);
     final selMid = (selTop + selBottom) / 2;
@@ -1635,6 +1695,7 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen>
 
   Widget _selectionMenuBubble() {
     final layout = _menuLayout();
+    if (layout == null) return const SizedBox.shrink();
     return Positioned(
       left: layout.origin.dx,
       top: layout.origin.dy,
@@ -1738,7 +1799,9 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen>
   /// Tìm kiếm: mở sheet tìm trong chương với từ khoá là text đang bôi đen —
   /// danh sách kết quả hiện luôn kèm phần khớp được tô màu.
   Future<void> _searchSelected() async {
-    final text = (_selectedText ?? '').trim();
+    // plainText nhiều dòng join bằng '\n'; chương đã dẹp \s+ thành ' '.
+    // Không dẹp thì từ khoá không khớp đoạn, và ô tìm hiện cả xuống dòng.
+    final text = ReaderScreen.flattenForProbe(_selectedText ?? '').trim();
     _clearSelection();
     if (text.isEmpty || !mounted) return;
     _searchCtrl.text = text;

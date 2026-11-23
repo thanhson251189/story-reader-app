@@ -5,7 +5,10 @@ import 'package:story_reader/reader/reader_screen.dart';
 void main() {
   test('paragraphMatches: tìm không dấu vẫn khớp chữ có dấu', () {
     expect(
-      ReaderScreen.paragraphMatches('Hắn vặn nấc công lực lên mức tối đa.', 'van nac'),
+      ReaderScreen.paragraphMatches(
+        'Hắn vặn nấc công lực lên mức tối đa.',
+        'van nac',
+      ),
       isTrue,
     );
     expect(
@@ -22,6 +25,35 @@ void main() {
     expect(ReaderScreen.paragraphMatches('Bất kỳ đoạn nào', ''), isFalse);
     expect(ReaderScreen.paragraphMatches('Bất kỳ đoạn nào', '   '), isFalse);
   });
+
+  test('paragraphMatches: không khớp bên trong từ dài hơn', () {
+    // "Ngũ" fold thành "ngu", là tiền tố của "người" ("nguoi"). Khớp chuỗi con
+    // thì tô nhầm hàng chục chữ "người" khi user tìm đúng từ vừa bôi đen.
+    expect(ReaderScreen.paragraphMatches('có người đứng đó.', 'Ngũ'), isFalse);
+    expect(ReaderScreen.paragraphMatches('có người đứng đó.', 'ngu'), isFalse);
+    expect(ReaderScreen.paragraphMatches('thấy Ngũ rồi đi.', 'Ngũ'), isTrue);
+    expect(ReaderScreen.paragraphMatches('thấy Ngũ, rồi đi.', 'Ngũ'), isTrue);
+    expect(ReaderScreen.paragraphMatches('Ngũ', 'Ngũ'), isTrue);
+    expect(ReaderScreen.paragraphMatches('chương 150', '15'), isFalse);
+    expect(ReaderScreen.paragraphMatches('chương 15.', '15'), isTrue);
+  });
+
+  test(
+    'paragraphMatches: từ khoá nhiều dòng vẫn khớp đoạn đã dẹp khoảng trắng',
+    () {
+      expect(
+        ReaderScreen.paragraphMatches('Ngũ Hành đại đế đứng đó.', 'Ngũ\nHành'),
+        isTrue,
+      );
+      expect(
+        ReaderScreen.paragraphMatches(
+          'Ngũ Hành đại đế đứng đó.',
+          'Ngũ\n\nHành',
+        ),
+        isTrue,
+      );
+    },
+  );
 
   test('paragraphMatches: hoa thường không ảnh hưởng', () {
     expect(
@@ -69,19 +101,56 @@ void main() {
     expect(plain(spans), [' trong ', '.']);
   });
 
-  test('highlightSpans: từ khoá rỗng hoặc không khớp thì 1 span nguyên văn', () {
-    for (final q in ['', '   ', 'khongco']) {
-      final spans = ReaderScreen.highlightSpans('Nguyên văn một đoạn.', q, base(), hl());
-      expect(spans.length, 1);
-      expect(spans.single.text, 'Nguyên văn một đoạn.');
-      expect(spans.single.style!.backgroundColor, isNull);
-    }
+  test(
+    'highlightSpans: từ khoá rỗng hoặc không khớp thì 1 span nguyên văn',
+    () {
+      for (final q in ['', '   ', 'khongco']) {
+        final spans = ReaderScreen.highlightSpans(
+          'Nguyên văn một đoạn.',
+          q,
+          base(),
+          hl(),
+        );
+        expect(spans.length, 1);
+        expect(spans.single.text, 'Nguyên văn một đoạn.');
+        expect(spans.single.style!.backgroundColor, isNull);
+      }
+    },
+  );
+
+  test('highlightSpans: chỉ tô từ trọn, không tô phần đầu của từ dài hơn', () {
+    final spans = ReaderScreen.highlightSpans(
+      'có Ngũ người đứng.',
+      'Ngũ',
+      base(),
+      hl(),
+    );
+    expect(matched(spans), ['Ngũ']);
+    expect(plain(spans).join(), 'có  người đứng.');
   });
 
-  test('highlightSpans: span khớp dài đúng bằng từ khoá (fold 1-1)', () {
-    final spans = ReaderScreen.highlightSpans('Đẹp hơn tại đeps hơn tại.', 'dep', base(), hl());
-    // Khớp thứ hai nằm trong "đeps" — chỉ tô đúng 3 ký tự bằng độ dài từ khoá.
-    expect(matched(spans), ['Đẹp', 'đep']);
-    expect(plain(spans), [' hơn tại ', 's hơn tại.']);
+  test('highlightSpans: từ khoá nhiều dòng vẫn tô cụm đã dẹp khoảng trắng', () {
+    final spans = ReaderScreen.highlightSpans(
+      'Ngũ Hành đại đế.',
+      'Ngũ\nHành',
+      base(),
+      hl(),
+    );
+    expect(matched(spans), ['Ngũ Hành']);
   });
+
+  test(
+    'highlightSpans: span khớp dài đúng bằng từ khoá, không ăn vào từ dài hơn',
+    () {
+      final spans = ReaderScreen.highlightSpans(
+        'Đẹp hơn tại đeps hơn tại.',
+        'dep',
+        base(),
+        hl(),
+      );
+      // "đeps" chứa "đep" nhưng không phải từ trọn — không tô.
+      expect(matched(spans), ['Đẹp']);
+      expect(plain(spans), [' hơn tại đeps hơn tại.']);
+    },
+  );
 }
