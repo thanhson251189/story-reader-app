@@ -16,6 +16,7 @@ import '../fetcher/webview_fallback_screen.dart';
 import '../settings/word_fix_screen.dart';
 import '../sources/source_login_screen.dart';
 import '../tts/tts_player.dart';
+import 'reader_fonts.dart';
 import 'toc_screen.dart';
 
 class ReaderScreen extends ConsumerStatefulWidget {
@@ -181,6 +182,7 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen>
   String? _failedUrl;
   double _fontSize = 20;
   double _lineHeight = 1.8;
+  String _fontId = ReaderFonts.systemId;
   String _theme = 'light';
   int _prefetchCount = 3;
   bool _volPage = true;
@@ -244,6 +246,7 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen>
     _fontSize = double.tryParse(await db.getSetting('fontSize') ?? '') ?? 20;
     _lineHeight =
         double.tryParse(await db.getSetting('lineHeight') ?? '') ?? 1.8;
+    _fontId = ReaderFonts.byId(await db.getSetting(ReaderFonts.settingKey)).id;
     _theme = await db.getSetting('readerTheme') ?? 'light';
     _prefetchCount =
         (int.tryParse(await db.getSetting('prefetchCount') ?? '') ?? 3).clamp(
@@ -701,6 +704,18 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen>
             for (var i = 0; i < c.paragraphs.length; i++)
               if (ReaderScreen.paragraphMatches(c.paragraphs[i], q)) i,
           ];
+          // Kết quả tìm dùng cùng font chương: không thì đoạn khớp (style
+          // riêng, không kế thừa) nhảy về font máy giữa câu.
+          final readFamily = ReaderFonts.familyOf(_fontId);
+          final hitBase =
+              (Theme.of(ctx).textTheme.bodyLarge ?? const TextStyle()).copyWith(
+                fontFamily: readFamily,
+              );
+          final hitMatch = TextStyle(
+            backgroundColor: const Color(0x66FFB74D),
+            fontWeight: FontWeight.w600,
+            fontFamily: readFamily,
+          );
           // Nhích sheet lên TRÊN bàn phím: không có dòng này thì sheet nằm
           // dưới keyboard — lúc mới mở sheet chỉ có ô nhập (chưa có kết quả
           // nên gập gọn) là bị bàn phím trùm hết, nhìn như không hiện gì;
@@ -773,12 +788,8 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen>
                                 children: ReaderScreen.highlightSpans(
                                   c.paragraphs[i],
                                   q,
-                                  Theme.of(ctx).textTheme.bodyLarge ??
-                                      const TextStyle(),
-                                  const TextStyle(
-                                    backgroundColor: Color(0x66FFB74D),
-                                    fontWeight: FontWeight.w600,
-                                  ),
+                                  hitBase,
+                                  hitMatch,
                                 ),
                               ),
                               maxLines: 3,
@@ -1109,6 +1120,15 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen>
                           )
                         : const Icon(Icons.volume_up),
                     label: const Text('Nghe thử'),
+                  ),
+                  const SizedBox(height: 16),
+                  ReaderFontPicker(
+                    fontId: _fontId,
+                    onSelected: (font) {
+                      setSheet(() {});
+                      setState(() => _fontId = font.id);
+                      db.setSetting(ReaderFonts.settingKey, font.id);
+                    },
                   ),
                   const SizedBox(height: 16),
                   Text('Cỡ chữ: ${_fontSize.round()}', style: titleStyle),
@@ -1514,6 +1534,7 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen>
     }
     final c = _content!;
     final style = TextStyle(
+      fontFamily: ReaderFonts.familyOf(_fontId),
       fontSize: _fontSize,
       height: _lineHeight,
       color: fg,
