@@ -35,6 +35,8 @@ class _DiscoverScreenState extends ConsumerState<DiscoverScreen> {
   bool _canForward = false;
   bool _pageLoading = true;
   bool _opening = false;
+  final Map<String, GlobalKey> _chipKeys = {};
+  String? _revealedDomain;
 
   @override
   void initState() {
@@ -66,12 +68,31 @@ class _DiscoverScreenState extends ConsumerState<DiscoverScreen> {
   void didUpdateWidget(DiscoverScreen old) {
     super.didUpdateWidget(old);
     // Tab nằm trong IndexedStack: cài thêm nguồn ở màn khác rồi quay lại phải
-    // thấy nguồn mới trong danh sách chọn.
-    if (widget.active && !old.active) setState(() {});
+    // thấy nguồn mới trong danh sách chọn, và cuộn lại tới nguồn đang dùng.
+    if (widget.active && !old.active) {
+      _revealedDomain = null;
+      setState(() {});
+    }
   }
 
   List<SourceAdapter> get _sources => [...ref.read(adapterRepoProvider).all]
     ..sort((a, b) => a.domain.compareTo(b.domain));
+
+  /// Cuộn hàng chọn nguồn để nguồn đang dùng hiện ra — cài nhiều nguồn thì
+  /// nguồn đang đọc có thể nằm ngoài màn sau khi mở lại app.
+  void _revealSelectedChip(String? domain) {
+    if (domain == null || domain == _revealedDomain) return;
+    _revealedDomain = domain;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final ctx = _chipKeys[domain]?.currentContext;
+      if (ctx == null || !mounted) return;
+      Scrollable.ensureVisible(
+        ctx,
+        alignment: 0.5,
+        duration: const Duration(milliseconds: 200),
+      );
+    });
+  }
 
   String? _effectiveDomain(List<SourceAdapter> sources) {
     if (sources.isEmpty) return null;
@@ -256,6 +277,7 @@ class _DiscoverScreenState extends ConsumerState<DiscoverScreen> {
   Widget build(BuildContext context) {
     final sources = _sources;
     final domain = _effectiveDomain(sources);
+    _revealSelectedChip(domain);
     // Không dùng AppBar: tên tab đã ở thanh dưới, bỏ đi để web có thêm chỗ.
     return Scaffold(
       body: SafeArea(
@@ -365,7 +387,7 @@ class _DiscoverScreenState extends ConsumerState<DiscoverScreen> {
 
   Widget _sourceChips(List<SourceAdapter> sources, String domain) {
     return SizedBox(
-      height: 52,
+      height: 48,
       child: Row(
         children: [
           Expanded(
@@ -377,13 +399,16 @@ class _DiscoverScreenState extends ConsumerState<DiscoverScreen> {
                   Padding(
                     padding: const EdgeInsets.only(
                       right: 8,
-                      top: 8,
-                      bottom: 8,
+                      top: 5,
+                      bottom: 5,
                     ),
                     child: ChoiceChip(
+                      key: _chipKeys.putIfAbsent(a.domain, () => GlobalKey()),
                       label: Text(SourceRegistry.labelFor(a.domain, _names)),
+                      labelStyle: const TextStyle(fontSize: 12),
                       selected: a.domain == domain,
                       visualDensity: VisualDensity.compact,
+                      materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
                       onSelected: (_) => _select(a.domain),
                     ),
                   ),
