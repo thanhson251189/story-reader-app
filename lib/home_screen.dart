@@ -16,6 +16,44 @@ import 'update/app_updater.dart';
 class HomeScreen extends ConsumerStatefulWidget {
   const HomeScreen({super.key});
 
+  /// Thanh tab gọn hơn NavigationBar mặc định (80dp): nhường chiều cao cho
+  /// nội dung, nhất là tab Khám phá đang xem web.
+  static Widget navBar({
+    required int index,
+    required ValueChanged<int> onSelect,
+  }) {
+    return NavigationBar(
+      height: 62,
+      selectedIndex: index,
+      onDestinationSelected: onSelect,
+      labelTextStyle: const WidgetStatePropertyAll(
+        TextStyle(fontSize: 11, fontWeight: FontWeight.w500),
+      ),
+      destinations: const [
+        NavigationDestination(
+          icon: Icon(Icons.local_library_outlined),
+          selectedIcon: Icon(Icons.local_library),
+          label: 'Thư viện',
+        ),
+        NavigationDestination(
+          icon: Icon(Icons.search_outlined),
+          selectedIcon: Icon(Icons.search),
+          label: 'Tìm kiếm',
+        ),
+        NavigationDestination(
+          icon: Icon(Icons.explore_outlined),
+          selectedIcon: Icon(Icons.explore),
+          label: 'Khám phá',
+        ),
+        NavigationDestination(
+          icon: Icon(Icons.settings_outlined),
+          selectedIcon: Icon(Icons.settings),
+          label: 'Cài đặt',
+        ),
+      ],
+    );
+  }
+
   @override
   ConsumerState<HomeScreen> createState() => _HomeScreenState();
 }
@@ -107,31 +145,9 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
           const SettingsScreen(),
         ],
       ),
-      bottomNavigationBar: NavigationBar(
-        selectedIndex: _tab,
-        onDestinationSelected: (i) => setState(() => _tab = i),
-        destinations: const [
-          NavigationDestination(
-            icon: Icon(Icons.local_library_outlined),
-            selectedIcon: Icon(Icons.local_library),
-            label: 'Thư viện',
-          ),
-          NavigationDestination(
-            icon: Icon(Icons.search_outlined),
-            selectedIcon: Icon(Icons.search),
-            label: 'Tìm kiếm',
-          ),
-          NavigationDestination(
-            icon: Icon(Icons.explore_outlined),
-            selectedIcon: Icon(Icons.explore),
-            label: 'Khám phá',
-          ),
-          NavigationDestination(
-            icon: Icon(Icons.settings_outlined),
-            selectedIcon: Icon(Icons.settings),
-            label: 'Cài đặt',
-          ),
-        ],
+      bottomNavigationBar: HomeScreen.navBar(
+        index: _tab,
+        onSelect: (i) => setState(() => _tab = i),
       ),
     );
   }

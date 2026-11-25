@@ -29,10 +29,15 @@ class WebFetcher {
   static String chapterJs(SourceAdapter a) {
     final sel = jsonEncode(a.selectors);
     final remove = jsonEncode(a.removeSelectors);
+    // Site chỉ ngắt đoạn bằng một <br> thì mỗi dòng mới là một đoạn; nội dung
+    // có thể nằm ngoài <p> nên bỏ qua nhánh gom theo <p>.
+    final lineMode = a.paragraphBreak == 'line';
+    final split = lineMode ? r'/\n+/' : r'/\n{2,}/';
     return '''
 (function(){
   const sel = $sel;
   const remove = $remove;
+  const lineMode = $lineMode;
   const abs = h => (h && h !== '#') ? new URL(h, location.href).href : null;
   const q = s => s ? document.querySelector(s) : null;
   const n = q(sel.nextLink), p = q(sel.prevLink);
@@ -44,10 +49,12 @@ class WebFetcher {
   if (c) {
     // Nhiều site nhét cả chương vào một <p> dài ngăn cách bằng <br>: nội dung
     // innerText lúc đó xuống từng dòng, tách theo dòng mới thành các đoạn.
-    ps = Array.from(c.querySelectorAll('p')).map(p => p.innerText.trim())
-      .flatMap(t => t.split(/\\n+/))
-      .map(t => t.trim()).filter(Boolean);
-    if (!ps.length) ps = c.innerText.split(/\\n{2,}/).map(t => t.trim()).filter(Boolean);
+    if (!lineMode) {
+      ps = Array.from(c.querySelectorAll('p')).map(p => p.innerText.trim())
+        .flatMap(t => t.split(/\\n+/))
+        .map(t => t.trim()).filter(Boolean);
+    }
+    if (!ps.length) ps = c.innerText.split($split).map(t => t.trim()).filter(Boolean);
   }
   return JSON.stringify({
     url: location.href,
@@ -144,7 +151,7 @@ class WebFetcher {
   static ChapterContent cleanChapter(ChapterContent c, SourceAdapter a) =>
       ChapterContent(
         url: c.url,
-        title: c.title,
+        title: a.cleanTitle(c.title),
         paragraphs: c.paragraphs
             .map(a.clean)
             .where((p) => p.isNotEmpty)

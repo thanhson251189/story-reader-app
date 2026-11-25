@@ -21,4 +21,18 @@ void main() {
     // touchLibrary/tìm mục lục nên phải trả gì đó thay vì exception.
     expect(storyUrlFromChapter('http://['), 'http://[');
   });
+
+  test('adapter đọc paragraphBreak và dọn tiêu đề bằng titleCleanup', () {
+    final a = SourceAdapter.fromJson({
+      'domain': 'x.test',
+      'paragraphBreak': 'line',
+      'titleCleanup': [
+        {'pattern': r'^\d+\s+', 'replacement': ''},
+      ],
+    });
+    expect(a.paragraphBreak, 'line');
+    expect(a.cleanTitle('2 Chương 2: Gặp gỡ'), 'Chương 2: Gặp gỡ');
+    // titleCleanup không được rò sang nội dung chương.
+    expect(a.clean('2 đoạn văn'), '2 đoạn văn');
+  });
 }

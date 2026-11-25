@@ -59,6 +59,10 @@ class SourceAdapter {
   // Trang đăng nhập cho nguồn yêu cầu tài khoản: màn Nguồn mở WebView để user
   // tự đăng nhập; cookie lưu vào WebView dùng chung nên lần tải nền sau đó tự mang theo.
   final String? loginUrl;
+  // 'line': mỗi dòng (<br>) là một đoạn. Mặc định ngắt đoạn theo dòng trống.
+  final String? paragraphBreak;
+  // Luật dọn riêng cho tiêu đề chương (không đụng nội dung).
+  final List<Map<String, String>> titleCleanup;
 
   SourceAdapter({
     required this.domain,
@@ -71,6 +75,8 @@ class SourceAdapter {
     this.tocPageUrl,
     this.api,
     this.loginUrl,
+    this.paragraphBreak,
+    this.titleCleanup = const [],
   });
 
   factory SourceAdapter.fromJson(Map<String, dynamic> j) => SourceAdapter(
@@ -90,6 +96,10 @@ class SourceAdapter {
         ? null
         : SourceApi.fromJson(Map<String, dynamic>.from(j['api'] as Map)),
     loginUrl: j['loginUrl'] as String?,
+    paragraphBreak: j['paragraphBreak'] as String?,
+    titleCleanup: (j['titleCleanup'] as List? ?? [])
+        .map((e) => Map<String, String>.from(e as Map))
+        .toList(),
   );
 
   SourceAdapter withSearch(String url, Map<String, String> extraSelectors) =>
@@ -104,6 +114,8 @@ class SourceAdapter {
         tocPageUrl: tocPageUrl,
         api: api,
         loginUrl: loginUrl,
+        paragraphBreak: paragraphBreak,
+        titleCleanup: titleCleanup,
       );
 
   bool matches(String url) {
@@ -111,9 +123,13 @@ class SourceAdapter {
     return host == domain || host.endsWith('.$domain');
   }
 
-  String clean(String text) {
+  String clean(String text) => _applyRules(text, textCleanup);
+
+  String cleanTitle(String text) => _applyRules(text, titleCleanup);
+
+  static String _applyRules(String text, List<Map<String, String>> rules) {
     var t = text;
-    for (final rule in textCleanup) {
+    for (final rule in rules) {
       final p = rule['pattern'];
       if (p == null || p.isEmpty) continue;
       t = t.replaceAll(RegExp(p), rule['replacement'] ?? '');
