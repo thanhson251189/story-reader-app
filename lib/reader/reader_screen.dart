@@ -49,6 +49,30 @@ class ReaderScreen extends ConsumerStatefulWidget {
     return !hasNext;
   }
 
+  /// Chương kế tiếp sau [currentUrl] trong [toc], không nhảy cóc qua chương
+  /// mới khác. Khớp URL đã chuẩn hóa trước; lệch URL (trang đổi link chương)
+  /// thì theo số chương: chương gần nhất có số lớn hơn chương đang đọc.
+  /// Không xác định được thì trả null — nơi gọi mở mục lục, không đoán bừa
+  /// rồi mở chương mới nhất và bỏ qua các chương mới ở giữa.
+  static ChapterRef? nextChapterAfter(String currentUrl, List<ChapterRef> toc) {
+    final cur = normalizeChapterUrl(currentUrl);
+    final i = toc.indexWhere((c) => normalizeChapterUrl(c.url) == cur);
+    if (i >= 0) return i + 1 < toc.length ? toc[i + 1] : null;
+    final n = WebFetcher.trailingNumber(currentUrl);
+    if (n == null) return null;
+    ChapterRef? best;
+    int? bestN;
+    for (final c in toc) {
+      final m = WebFetcher.trailingNumber(c.url);
+      if (m == null || m <= n) continue;
+      if (bestN == null || m < bestN) {
+        best = c;
+        bestN = m;
+      }
+    }
+    return best;
+  }
+
   /// Bản web mới ngắn hơn nhiều so với bản đã lưu: thường là trang đăng nhập,
   /// trang chặn, hoặc trang chưa tải hết chữ. Không ghi đè bản đầy đủ.
   /// Chương vốn đã ngắn (dưới 400 chữ) thì nhận bản mới — không có gì để giữ.
@@ -658,19 +682,34 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen>
       final last = info.chapters.last;
       await db.setLatestChapter(storyUrl, last.url, last.title);
       final toc = await db.getToc(storyUrl);
-      final cur = TocScreen.normUrl(c.url);
-      final i = toc.indexWhere((ch) => TocScreen.normUrl(ch.url) == cur);
-      final hasNew = i >= 0
-          ? i < toc.length - 1
-          : !sameChapterUrl(last.url, c.url);
+      final matched = toc.indexWhere(
+        (ch) => normalizeChapterUrl(ch.url) == normalizeChapterUrl(c.url),
+      );
+      final next = ReaderScreen.nextChapterAfter(c.url, toc);
+      final curN = WebFetcher.trailingNumber(c.url);
+      final lastN = WebFetcher.trailingNumber(last.url);
+      // Link lệch domain vẫn là cùng chương khi số chương trùng.
+      final sameChapter = curN != null && lastN != null && curN == lastN;
       if (!mounted) return;
-      if (!hasNew) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Chưa có chương mới')),
-        );
+      if (next == null) {
+        if (matched >= 0 || sameChapter) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Chưa có chương mới')),
+          );
+        } else {
+          // Trang đổi link chương hoặc mục lục đổi dạng: không đoán chương
+          // để khỏi mở chương mới nhất và bỏ qua các chương mới ở giữa.
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: const Text(
+                'Đã cập nhật mục lục nhưng chưa xác định được chương kế tiếp',
+              ),
+              action: SnackBarAction(label: 'Mở mục lục', onPressed: _openToc),
+            ),
+          );
+        }
         return;
       }
-      final next = i >= 0 ? toc[i + 1] : last;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Có chương mới: ${next.title}')),
       );
@@ -684,6 +723,20 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen>
     } finally {
       if (mounted) setState(() => _checkingNew = false);
     }
+  }
+
+  void _openToc() {
+    final c = _content;
+    if (c == null) return;
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => TocScreen(
+          storyUrl: _storyUrlOf(c.url),
+          currentChapterUrl: c.url,
+        ),
+      ),
+    );
   }
 
   bool _addingToLib = false;
@@ -1628,15 +1681,7 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen>
                 if (c != null)
                   IconButton(
                     icon: const Icon(Icons.list),
-                    onPressed: () => Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (_) => TocScreen(
-                          storyUrl: _storyUrlOf(c.url),
-                          currentChapterUrl: c.url,
-                        ),
-                      ),
-                    ),
+                    onPressed: _openToc,
                     tooltip: 'Mục lục',
                   ),
                 if (c != null && !c.url.startsWith('book:'))

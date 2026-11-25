@@ -185,6 +185,65 @@ void main() {
     expect(ReaderScreen.shorterThanCached(stub, full), isFalse);
   });
 
+  List<ChapterRef> tocNumbers(int from, int to) => [
+    for (var i = from; i <= to; i++)
+      ChapterRef(title: 'Chương $i', url: 'https://x.test/c/chuong-$i'),
+  ];
+
+  test('nextChapterAfter: mở chương kế tiếp, không nhảy chương mới nhất', () {
+    final toc = tocNumbers(1, 10);
+    expect(
+      ReaderScreen.nextChapterAfter('https://x.test/c/chuong-5/', toc)?.url,
+      'https://x.test/c/chuong-6',
+      reason: 'link lệch slash cuối vẫn khớp; phải mở chương 6, không phải 10',
+    );
+    expect(
+      ReaderScreen.nextChapterAfter('https://x.test/c/chuong-10', toc),
+      null,
+      reason: 'đang ở chương cuối mục lục thì không có chương kế',
+    );
+  });
+
+  test('nextChapterAfter: nhiều chương mới thì mở chương mới đầu tiên', () {
+    final toc = tocNumbers(1, 15);
+    expect(
+      ReaderScreen.nextChapterAfter('https://x.test/c/chuong-10', toc)?.url,
+      'https://x.test/c/chuong-11',
+    );
+  });
+
+  test('nextChapterAfter: URL lệch hẳn thì theo số chương, không đoán bừa', () {
+    // Trang đổi link chương: URL đang đọc không nằm trong mục lục mới.
+    final toc = tocNumbers(1, 20);
+    expect(
+      ReaderScreen.nextChapterAfter(
+        'https://khac.test/doc-truyen/truyen-name/chuong-12/?ref=abc',
+        toc,
+      )?.url,
+      'https://x.test/c/chuong-13',
+      reason: 'lấy chương gần nhất có số lớn hơn 12, không phải chương 20',
+    );
+  });
+
+  test('nextChapterAfter: mục lục xếp ngược vẫn lấy chương sát sau', () {
+    final toc = tocNumbers(1, 10).reversed.toList();
+    expect(
+      ReaderScreen.nextChapterAfter(
+        'https://khac.test/chuong-4',
+        toc,
+      )?.url,
+      endsWith('chuong-5'),
+    );
+  });
+
+  test('nextChapterAfter: không khớp và không có số thì trả null', () {
+    final toc = [
+      ChapterRef(title: 'A', url: 'https://x.test/a'),
+      ChapterRef(title: 'B', url: 'https://x.test/b'),
+    ];
+    expect(ReaderScreen.nextChapterAfter('https://x.test/missing', toc), null);
+  });
+
   test('atTocEnd: chương cuối mục lục mới hiện nút kiểm tra', () {
     // Có mục lục: tin vị trí, kể cả khi trang còn nút chương sau (mục lục cũ).
     expect(
