@@ -14,7 +14,6 @@ class SourcesScreen extends ConsumerStatefulWidget {
 }
 
 class _SourcesScreenState extends ConsumerState<SourcesScreen> {
-  final _urlCtrl = TextEditingController();
   late final SourceRegistry _registry;
   List<SourceEntry> _entries = [];
   Map<String, String> _names = {};
@@ -39,7 +38,6 @@ class _SourcesScreenState extends ConsumerState<SourcesScreen> {
   }
 
   Future<void> _init() async {
-    _urlCtrl.text = await _registry.indexUrl();
     _appVersion = await _registry.appVersion();
     await _refresh();
   }
@@ -69,11 +67,6 @@ class _SourcesScreenState extends ConsumerState<SourcesScreen> {
         });
       }
     }
-  }
-
-  Future<void> _saveUrl() async {
-    await _registry.setIndexUrl(_urlCtrl.text.trim());
-    await _refresh();
   }
 
   Future<void> _install(SourceEntry e) async {
@@ -190,12 +183,6 @@ class _SourcesScreenState extends ConsumerState<SourcesScreen> {
   }
 
   @override
-  void dispose() {
-    _urlCtrl.dispose();
-    super.dispose();
-  }
-
-  @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
@@ -218,31 +205,8 @@ class _SourcesScreenState extends ConsumerState<SourcesScreen> {
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
-          ExpansionTile(
-            title: const Text('Nâng cao'),
-            subtitle: const Text(
-              'Link danh sách nguồn — chỉ sửa khi được đưa link khác',
-            ),
-            children: [
-              TextField(
-                controller: _urlCtrl,
-                decoration: InputDecoration(
-                  labelText: 'Link danh sách nguồn',
-                  border: const OutlineInputBorder(),
-                  suffixIcon: IconButton(
-                    tooltip: 'Lưu & làm mới',
-                    icon: const Icon(Icons.save),
-                    onPressed: _saveUrl,
-                  ),
-                ),
-                keyboardType: TextInputType.url,
-                autocorrect: false,
-                onSubmitted: (_) => _saveUrl(),
-              ),
-              const SizedBox(height: 8),
-            ],
-          ),
-          const SizedBox(height: 8),
+          // Danh sách nguồn do app tự cung cấp: không hiện link registry cho
+          // người dùng sửa. Setting cũ trong máy vẫn được dùng để tải.
           Text(
             'App v$_appVersion',
             style: Theme.of(context).textTheme.bodySmall,
