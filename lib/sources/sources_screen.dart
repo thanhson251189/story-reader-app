@@ -13,6 +13,8 @@ class SourcesScreen extends ConsumerStatefulWidget {
   ConsumerState<SourcesScreen> createState() => _SourcesScreenState();
 }
 
+enum _Filter { all, installed, notInstalled }
+
 class _SourcesScreenState extends ConsumerState<SourcesScreen> {
   late final SourceRegistry _registry;
   List<SourceEntry> _entries = [];
@@ -23,9 +25,26 @@ class _SourcesScreenState extends ConsumerState<SourcesScreen> {
   String? _error;
   String? _busyId;
   String? _allProgress;
+  _Filter _filter = _Filter.all;
 
   List<SourceEntry> get _updates =>
       SourceRegistry.pendingUpdates(_entries, _registry.adapters, _appVersion);
+
+  List<SourceEntry> get _visible {
+    final filtered = _entries.where((e) {
+      final installed = _registry.installed(e.domain) != null;
+      return switch (_filter) {
+        _Filter.all => true,
+        _Filter.installed => installed,
+        _Filter.notInstalled => !installed,
+      };
+    });
+    return SourceRegistry.sortedForDisplay(
+      filtered,
+      _names,
+      _registry.adapters,
+    );
+  }
 
   @override
   void initState() {
@@ -125,7 +144,9 @@ class _SourcesScreenState extends ConsumerState<SourcesScreen> {
   }
 
   Future<void> _rename(SourceEntry e) async {
-    final ctrl = TextEditingController(text: _names[e.domain] ?? e.name);
+    final ctrl = TextEditingController(
+      text: SourceRegistry.displayName(e, _names),
+    );
     final ok = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -158,7 +179,7 @@ class _SourcesScreenState extends ConsumerState<SourcesScreen> {
     final ok = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: Text('Xóa nguồn ${_names[e.domain] ?? e.name}?'),
+        title: Text('Xóa nguồn ${SourceRegistry.displayName(e, _names)}?'),
         content: const Text(
           'Truyện trong thư viện từ nguồn này sẽ không mở được cho tới khi cài lại nguồn.',
         ),
@@ -216,6 +237,15 @@ class _SourcesScreenState extends ConsumerState<SourcesScreen> {
             Text(_allProgress!, style: Theme.of(context).textTheme.bodySmall),
           ],
           const SizedBox(height: 16),
+          Wrap(
+            spacing: 8,
+            children: [
+              _filterChip(_Filter.all, 'Tất cả'),
+              _filterChip(_Filter.installed, 'Đã cài'),
+              _filterChip(_Filter.notInstalled, 'Chưa cài'),
+            ],
+          ),
+          const SizedBox(height: 8),
           if (_loading) const Center(child: CircularProgressIndicator()),
           if (_error != null)
             Text(
@@ -224,11 +254,28 @@ class _SourcesScreenState extends ConsumerState<SourcesScreen> {
             ),
           if (!_loading && _error == null && _entries.isEmpty)
             const Text('Chưa có danh sách nguồn (mất mạng hoặc link sai).'),
-          for (final e in _entries) _row(e),
+          if (!_loading &&
+              _error == null &&
+              _entries.isNotEmpty &&
+              _visible.isEmpty)
+            Text(
+              _filter == _Filter.installed
+                  ? 'Chưa cài nguồn nào.'
+                  : 'Mọi nguồn trong danh sách đã cài.',
+            ),
+          for (final e in _visible) _row(e),
         ],
       ),
     );
   }
+
+  Widget _filterChip(_Filter f, String label) => ChoiceChip(
+    label: Text(label),
+    selected: _filter == f,
+    showCheckmark: false,
+    visualDensity: VisualDensity.compact,
+    onSelected: (_) => setState(() => _filter = f),
+  );
 
   Widget _row(SourceEntry e) {
     final inst = _registry.installed(e.domain);
@@ -265,6 +312,7 @@ class _SourcesScreenState extends ConsumerState<SourcesScreen> {
       );
     }
     final adapter = inst;
+    final name = SourceRegistry.displayName(e, _names);
     final loginUrl = adapter?.loginUrl;
     final menu = adapter == null
         ? null
@@ -275,7 +323,7 @@ class _SourcesScreenState extends ConsumerState<SourcesScreen> {
               if (v == 'rename') {
                 _rename(e);
               } else if (v == 'login') {
-                openSourceLogin(context, adapter, _names[e.domain] ?? e.name);
+                openSourceLogin(context, adapter, name);
               } else if (v == 'delete') {
                 _confirmDelete(e);
               }
@@ -291,7 +339,12 @@ class _SourcesScreenState extends ConsumerState<SourcesScreen> {
       child: ListTile(
         onTap: inst == null ? null : () => Navigator.pop(context, e.domain),
         leading: const Icon(Icons.dns_outlined),
-        title: Text(_names[e.domain] ?? e.name),
+        title: Row(
+          children: [
+            Flexible(child: Text(name)),
+            if (e.adult) ...[const SizedBox(width: 6), _adultBadge()],
+          ],
+        ),
         subtitle: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -309,6 +362,24 @@ class _SourcesScreenState extends ConsumerState<SourcesScreen> {
         trailing: Row(
           mainAxisSize: MainAxisSize.min,
           children: [?action, ?menu],
+        ),
+      ),
+    );
+  }
+
+  Widget _adultBadge() {
+    final scheme = Theme.of(context).colorScheme;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+      decoration: BoxDecoration(
+        color: scheme.errorContainer,
+        borderRadius: BorderRadius.circular(4),
+      ),
+      child: Text(
+        '18+',
+        style: Theme.of(context).textTheme.labelSmall?.copyWith(
+          color: scheme.onErrorContainer,
+          fontWeight: FontWeight.bold,
         ),
       ),
     );

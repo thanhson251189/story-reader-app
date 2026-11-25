@@ -23,6 +23,17 @@ SourceEntry entry(String domain, int version, {String minApp = '0.0.0'}) =>
       url: 'https://example.com/$domain.json',
     );
 
+SourceEntry named(String domain, String name, {bool adult = false}) =>
+    SourceEntry(
+      id: domain,
+      name: name,
+      domain: domain,
+      version: 1,
+      minAppVersion: '0.0.0',
+      url: 'https://example.com/$domain.json',
+      adult: adult,
+    );
+
 void main() {
   test('AdapterRepository.remove gỡ đúng nguồn', () {
     final repo = AdapterRepository([adapter('a.com', 1), adapter('b.com', 2)]);
@@ -113,6 +124,62 @@ void main() {
         SourceRegistry.namesFromCache(cache, const {}),
       ),
       'TruyenDich',
+    );
+  });
+
+  test('SourceEntry đọc cờ 18+ từ index, thiếu thì mặc định false', () {
+    final adult = SourceEntry.fromJson({
+      'id': 'a',
+      'name': 'A',
+      'domain': 'a.com',
+      'url': 'https://x',
+      'adult': true,
+    });
+    expect(adult.adult, true);
+    final plain = SourceEntry.fromJson({
+      'id': 'b',
+      'name': 'B',
+      'domain': 'b.com',
+      'url': 'https://x',
+    });
+    expect(plain.adult, false);
+  });
+
+  test('foldName bỏ dấu để tên tiếng Việt xếp đúng thứ tự', () {
+    expect(SourceRegistry.foldName('Đam Mỹ'), 'dam my');
+    expect(SourceRegistry.foldName('Truyện Kể'), 'truyen ke');
+    final names = ['Zeta', 'Đam Mỹ', 'Ánh Dương', 'Bình Minh']
+      ..sort((a, b) => SourceRegistry.foldName(
+        a,
+      ).compareTo(SourceRegistry.foldName(b)));
+    expect(names, ['Ánh Dương', 'Bình Minh', 'Đam Mỹ', 'Zeta']);
+  });
+
+  test('sortedForDisplay: đã cài trước, mỗi nhóm xếp theo tên, tên đổi thắng', () {
+    final repo = AdapterRepository([
+      adapter('b.com', 1),
+      adapter('d.com', 1),
+    ]);
+    final entries = [
+      named('a.com', 'Zeta'),
+      named('b.com', 'Đam Mỹ'),
+      named('c.com', 'Ánh Dương'),
+      named('d.com', 'Bình Minh'),
+      named('e.com', 'Truyện Kể'),
+    ];
+    final sorted = SourceRegistry.sortedForDisplay(entries, {
+      'b.com': 'Ấn Tượng',
+    }, repo);
+    expect(sorted.map((e) => e.domain), [
+      'b.com', // đã cài, tên đổi "Ấn Tượng"
+      'd.com', // đã cài
+      'c.com', // chưa cài, Ánh Dương
+      'e.com', // chưa cài, Truyện Kể
+      'a.com', // chưa cài, Zeta
+    ]);
+    expect(
+      SourceRegistry.displayName(sorted.first, {'b.com': 'Ấn Tượng'}),
+      'Ấn Tượng',
     );
   });
 }

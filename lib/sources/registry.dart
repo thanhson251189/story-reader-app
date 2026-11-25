@@ -14,6 +14,7 @@ class SourceEntry {
   final int version;
   final String minAppVersion;
   final String url;
+  final bool adult;
 
   SourceEntry({
     required this.id,
@@ -22,6 +23,7 @@ class SourceEntry {
     required this.version,
     required this.minAppVersion,
     required this.url,
+    this.adult = false,
   });
 
   factory SourceEntry.fromJson(Map<String, dynamic> j) => SourceEntry(
@@ -31,6 +33,7 @@ class SourceEntry {
     version: (j['version'] as num?)?.toInt() ?? 1,
     minAppVersion: j['minAppVersion'] as String? ?? '0.0.0',
     url: j['url'] as String,
+    adult: j['adult'] as bool? ?? false,
   );
 }
 
@@ -126,6 +129,56 @@ class SourceRegistry {
     final n = names[domain]?.trim();
     if (n == null || n.isEmpty) return domain;
     return n;
+  }
+
+  static String displayName(SourceEntry e, Map<String, String> names) {
+    final n = names[e.domain]?.trim();
+    return (n == null || n.isEmpty) ? e.name.trim() : n;
+  }
+
+  // Bỏ dấu tiếng Việt để sắp xếp theo tên: so codepoint thì "Đam Mỹ" rơi sau
+  // "Z" và mọi tên có dấu xếp lộn xộn.
+  static const _foldGroups = {
+    'a': 'áàảãạăắằẳẵặâấầẩẫậ',
+    'e': 'éèẻẽẹêếềểễệ',
+    'i': 'íìỉĩị',
+    'o': 'óòỏõọôốồổỗộơớờởỡợ',
+    'u': 'úùủũụưứừửữự',
+    'y': 'ýỳỷỹỵ',
+    'd': 'đ',
+  };
+
+  static String foldName(String s) {
+    var t = s.toLowerCase();
+    _foldGroups.forEach((plain, chars) {
+      for (final c in chars.split('')) {
+        t = t.replaceAll(c, plain);
+      }
+    });
+    return t;
+  }
+
+  /// Nguồn đã cài lên trước, mỗi nhóm xếp theo tên hiển thị (bỏ dấu).
+  static List<SourceEntry> sortedForDisplay(
+    Iterable<SourceEntry> entries,
+    Map<String, String> names,
+    AdapterRepository adapters,
+  ) {
+    final list = List.of(entries);
+    final keys = {
+      for (final e in list) e.domain: foldName(displayName(e, names)),
+    };
+    final installed = {
+      for (final e in list) e.domain: installedIn(adapters, e.domain) != null,
+    };
+    list.sort((a, b) {
+      final ai = installed[a.domain]!;
+      final bi = installed[b.domain]!;
+      if (ai != bi) return ai ? -1 : 1;
+      final d = keys[a.domain]!.compareTo(keys[b.domain]!);
+      return d != 0 ? d : a.domain.compareTo(b.domain);
+    });
+    return list;
   }
 
   static List<SourceEntry>? parseIndex(String raw) {
