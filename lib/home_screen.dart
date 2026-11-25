@@ -5,7 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'core/errors.dart';
 import 'core/providers.dart';
-import 'home/read_tab.dart';
+import 'discover/discover_screen.dart';
 import 'library/library_checker.dart';
 import 'library/library_screen.dart';
 import 'search/search_screen.dart';
@@ -103,7 +103,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
         children: [
           LibraryScreen(active: _tab == 0),
           const SearchScreen(),
-          ReadTab(active: _tab == 2),
+          DiscoverScreen(active: _tab == 2),
           const SettingsScreen(),
         ],
       ),
@@ -122,9 +122,9 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
             label: 'Tìm kiếm',
           ),
           NavigationDestination(
-            icon: Icon(Icons.auto_stories_outlined),
-            selectedIcon: Icon(Icons.auto_stories),
-            label: 'Đọc',
+            icon: Icon(Icons.explore_outlined),
+            selectedIcon: Icon(Icons.explore),
+            label: 'Khám phá',
           ),
           NavigationDestination(
             icon: Icon(Icons.settings_outlined),

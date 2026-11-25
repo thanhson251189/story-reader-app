@@ -39,6 +39,38 @@ class LibraryScreen extends ConsumerStatefulWidget {
   static String title(Map<String, dynamic> item) =>
       (item['title'] as String?) ?? '';
 
+  /// Nhãn thẻ "Đọc tiếp": tên truyện, không bao giờ là đường link.
+  static String continueLabel({
+    required String lastUrl,
+    String? savedTitle,
+    List<Map<String, dynamic>> library = const [],
+  }) {
+    final saved = savedTitle?.trim();
+    if (saved != null && saved.isNotEmpty) return saved;
+    if (lastUrl.startsWith('book:')) {
+      final story = BookUrl.storyOf(lastUrl);
+      final title = library
+          .where((e) => e['story_url'] == story)
+          .map((e) => e['title'] as String?)
+          .firstOrNull;
+      final n = BookUrl.chapterOf(lastUrl);
+      final chapter = n == null ? '' : ' — Chương ${n + 1}';
+      return title == null || title.trim().isEmpty
+          ? 'Sách trong máy$chapter'
+          : '${title.trim()}$chapter';
+    }
+    for (final e in library) {
+      final title = (e['title'] as String?)?.trim();
+      if (title == null || title.isEmpty) continue;
+      final last = e['last_chapter_url'] as String?;
+      final story = e['story_url'] as String?;
+      if (sameChapterUrl(last, lastUrl) || sameChapterUrl(story, lastUrl)) {
+        return title;
+      }
+    }
+    return 'Chương vừa đọc';
+  }
+
   /// Tên miền nguồn của truyện, để hai bản cùng tên ở hai trang không lẫn.
   /// Adapter đã cài (nếu có) là nguồn tin cậy — đúng cả khi link có subdomain.
   static String sourceLabel(String storyUrl, {String? adapterDomain}) {
@@ -69,6 +101,9 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
   String? _checkProgress;
   // Truyện đang được kiểm tra riêng từ nút trên thẻ (null khi không chạy).
   String? _checkingStory;
+  // Thẻ "Đọc tiếp" ở đầu thư viện (thay tab Đọc cũ).
+  String? _lastUrl;
+  String? _lastTitle;
   // storyUrl → số chương trong mục lục đã lưu, để hiện "Chương x/y".
   Map<String, int> _tocCounts = {};
   // Sắp xếp: 'recent' (mới đọc — mặc định theo DB), 'newest' (có chương mới
@@ -159,11 +194,15 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
       } catch (_) {}
     }
     final sort = await db.getSetting('librarySort') ?? 'recent';
+    final lastUrl = await db.getSetting('lastUrl');
+    final lastTitle = await db.getSetting('lastTitle');
     if (mounted) {
       setState(() {
         _library = lib;
         _tocCounts = counts;
         _sort = sort;
+        _lastUrl = lastUrl;
+        _lastTitle = lastTitle;
         _loaded = true;
       });
     }
@@ -504,6 +543,7 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
                 ],
               ),
             ),
+          if (_loaded && (_lastUrl?.isNotEmpty ?? false)) _continueCard(),
           if (_loaded) _addButtons(),
           Expanded(
             child: !_loaded
@@ -583,6 +623,32 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
                   ),
           ),
         ],
+      ),
+    );
+  }
+
+  /// Thẻ "Đọc tiếp" ở đầu thư viện — trước đây là tab Đọc riêng.
+  Widget _continueCard() {
+    final url = _lastUrl!;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+      child: Card(
+        child: ListTile(
+          leading: const Icon(Icons.history),
+          title: Text(
+            LibraryScreen.continueLabel(
+              lastUrl: url,
+              savedTitle: _lastTitle,
+              library: _library,
+            ),
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+          ),
+          trailing: const Icon(Icons.arrow_forward),
+          onTap: () => openWebLink(context, url).then((_) {
+            if (mounted) _load();
+          }),
+        ),
       ),
     );
   }
