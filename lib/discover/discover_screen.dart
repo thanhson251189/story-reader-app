@@ -9,7 +9,6 @@ import '../core/models.dart';
 import '../core/providers.dart';
 import '../fetcher/web_fetcher.dart';
 import '../reader/reader_screen.dart';
-import '../sources/registry.dart';
 import '../sources/sources_screen.dart';
 import 'discover_opener.dart';
 
@@ -29,14 +28,11 @@ class DiscoverScreen extends ConsumerStatefulWidget {
 class _DiscoverScreenState extends ConsumerState<DiscoverScreen> {
   InAppWebViewController? _web;
   String? _preferred;
-  Map<String, String> _names = {};
   String? _url;
   bool _canBack = false;
   bool _canForward = false;
   bool _pageLoading = true;
   bool _opening = false;
-  final Map<String, GlobalKey> _chipKeys = {};
-  String? _revealedDomain;
 
   @override
   void initState() {
@@ -46,21 +42,8 @@ class _DiscoverScreenState extends ConsumerState<DiscoverScreen> {
 
   Future<void> _loadPreferred() async {
     try {
-      final db = ref.read(appDbProvider);
-      final saved = await db.getSetting('discoverSource');
-      final names = SourceRegistry.namesFromCache(
-        await db.getSetting('registryIndexCache'),
-        await SourceRegistry(
-          db,
-          ref.read(adapterRepoProvider),
-        ).nameOverrides(),
-      );
-      if (mounted) {
-        setState(() {
-          _preferred = saved;
-          _names = names;
-        });
-      }
+      final saved = await ref.read(appDbProvider).getSetting('discoverSource');
+      if (mounted) setState(() => _preferred = saved);
     } catch (_) {}
   }
 
@@ -68,30 +51,26 @@ class _DiscoverScreenState extends ConsumerState<DiscoverScreen> {
   void didUpdateWidget(DiscoverScreen old) {
     super.didUpdateWidget(old);
     // Tab nằm trong IndexedStack: cài thêm nguồn ở màn khác rồi quay lại phải
-    // thấy nguồn mới trong danh sách chọn, và cuộn lại tới nguồn đang dùng.
-    if (widget.active && !old.active) {
-      _revealedDomain = null;
-      setState(() {});
-    }
+    // thấy nguồn mới trong danh sách nguồn.
+    if (widget.active && !old.active) setState(() {});
   }
 
   List<SourceAdapter> get _sources => [...ref.read(adapterRepoProvider).all]
     ..sort((a, b) => a.domain.compareTo(b.domain));
 
-  /// Cuộn hàng chọn nguồn để nguồn đang dùng hiện ra — cài nhiều nguồn thì
-  /// nguồn đang đọc có thể nằm ngoài màn sau khi mở lại app.
-  void _revealSelectedChip(String? domain) {
-    if (domain == null || domain == _revealedDomain) return;
-    _revealedDomain = domain;
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      final ctx = _chipKeys[domain]?.currentContext;
-      if (ctx == null || !mounted) return;
-      Scrollable.ensureVisible(
-        ctx,
-        alignment: 0.5,
-        duration: const Duration(milliseconds: 200),
-      );
-    });
+  /// Mở màn Nguồn truyện để chọn nguồn; bấm "Mở" ở một nguồn trả domain về
+  /// đây và tab Khám phá mở đúng trang nguồn đó.
+  Future<void> _openSources() async {
+    final domain = await Navigator.push<String>(
+      context,
+      MaterialPageRoute(builder: (_) => const SourcesScreen()),
+    );
+    if (!mounted) return;
+    if (domain != null && domain.isNotEmpty) {
+      _select(domain);
+    } else {
+      setState(() {});
+    }
   }
 
   String? _effectiveDomain(List<SourceAdapter> sources) {
@@ -277,8 +256,8 @@ class _DiscoverScreenState extends ConsumerState<DiscoverScreen> {
   Widget build(BuildContext context) {
     final sources = _sources;
     final domain = _effectiveDomain(sources);
-    _revealSelectedChip(domain);
     // Không dùng AppBar: tên tab đã ở thanh dưới, bỏ đi để web có thêm chỗ.
+    // Chọn nguồn nằm ở màn Nguồn truyện (nút Mở) thay vì hàng chip.
     return Scaffold(
       body: SafeArea(
         bottom: false,
@@ -286,7 +265,6 @@ class _DiscoverScreenState extends ConsumerState<DiscoverScreen> {
             ? _empty()
             : Column(
                 children: [
-                  _sourceChips(sources, domain!),
                   _toolbar(),
                   SizedBox(
                     height: 2,
@@ -369,13 +347,7 @@ class _DiscoverScreenState extends ConsumerState<DiscoverScreen> {
             ),
             const SizedBox(height: 16),
             FilledButton.tonalIcon(
-              onPressed: () async {
-                await Navigator.push(
-                  context,
-                  MaterialPageRoute(builder: (_) => const SourcesScreen()),
-                );
-                if (mounted) setState(() {});
-              },
+              onPressed: _openSources,
               icon: const Icon(Icons.dns_outlined),
               label: const Text('Mở Nguồn truyện'),
             ),
@@ -385,56 +357,8 @@ class _DiscoverScreenState extends ConsumerState<DiscoverScreen> {
     );
   }
 
-  Widget _sourceChips(List<SourceAdapter> sources, String domain) {
-    return SizedBox(
-      height: 48,
-      child: Row(
-        children: [
-          Expanded(
-            child: ListView(
-              scrollDirection: Axis.horizontal,
-              padding: const EdgeInsets.only(left: 12, right: 4),
-              children: [
-                for (final a in sources)
-                  Padding(
-                    padding: const EdgeInsets.only(
-                      right: 8,
-                      top: 5,
-                      bottom: 5,
-                    ),
-                    child: ChoiceChip(
-                      key: _chipKeys.putIfAbsent(a.domain, () => GlobalKey()),
-                      label: Text(SourceRegistry.labelFor(a.domain, _names)),
-                      labelStyle: const TextStyle(fontSize: 12),
-                      selected: a.domain == domain,
-                      visualDensity: VisualDensity.compact,
-                      materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                      onSelected: (_) => _select(a.domain),
-                    ),
-                  ),
-              ],
-            ),
-          ),
-          IconButton(
-            tooltip: 'Nguồn truyện',
-            visualDensity: VisualDensity.compact,
-            iconSize: 22,
-            icon: const Icon(Icons.dns_outlined),
-            onPressed: () async {
-              await Navigator.push(
-                context,
-                MaterialPageRoute(builder: (_) => const SourcesScreen()),
-              );
-              if (mounted) setState(() {});
-            },
-          ),
-          const SizedBox(width: 4),
-        ],
-      ),
-    );
-  }
-
   Widget _toolbar() {
+    final host = Uri.tryParse(_url ?? '')?.host ?? '';
     return Row(
       children: [
         _navIcon(
@@ -449,12 +373,22 @@ class _DiscoverScreenState extends ConsumerState<DiscoverScreen> {
         ),
         _navIcon(Icons.refresh, 'Tải lại', () => _web?.reload()),
         Expanded(
-          child: Text(
-            _url ?? '',
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: Theme.of(context).textTheme.bodySmall,
+          child: Tooltip(
+            message: _url ?? '',
+            child: Text(
+              host,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
           ),
+        ),
+        IconButton(
+          tooltip: 'Nguồn truyện',
+          visualDensity: VisualDensity.compact,
+          iconSize: 22,
+          icon: const Icon(Icons.dns_outlined),
+          onPressed: _openSources,
         ),
         const SizedBox(width: 4),
         FilledButton.tonalIcon(

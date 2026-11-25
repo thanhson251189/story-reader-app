@@ -258,6 +258,11 @@ class _SourcesScreenState extends ConsumerState<SourcesScreen> {
       );
     } else {
       label = 'Đã cài v${inst.version}';
+      // Bấm Mở (hoặc chạm cả dòng) trả domain về tab Khám phá để mở trang nguồn.
+      action = FilledButton.tonal(
+        onPressed: () => Navigator.pop(context, e.domain),
+        child: const Text('Mở'),
+      );
     }
     final adapter = inst;
     final loginUrl = adapter?.loginUrl;
@@ -284,6 +289,7 @@ class _SourcesScreenState extends ConsumerState<SourcesScreen> {
           );
     return Card(
       child: ListTile(
+        onTap: inst == null ? null : () => Navigator.pop(context, e.domain),
         leading: const Icon(Icons.dns_outlined),
         title: Text(_names[e.domain] ?? e.name),
         subtitle: Column(
