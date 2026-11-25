@@ -16,6 +16,34 @@ class TocApi {
   );
 }
 
+/// API JSON của nền tảng CMS dùng chung (khotruyen.site và các site cùng mã):
+/// một request trả nguyên truyện kèm mảng `chapters`; request chương cùng dạng
+/// nhưng chỉ chương đang đọc có `bodyText`. Template dùng {slug}, {chapter},
+/// {query}. Link trang web tách riêng để người đọc vẫn mở/chia sẻ được.
+class SourceApi {
+  final String? searchUrl;
+  final String? storyUrl;
+  final String? chapterUrl;
+  final String? storyPageUrl;
+  final String? chapterPageUrl;
+
+  SourceApi({
+    this.searchUrl,
+    this.storyUrl,
+    this.chapterUrl,
+    this.storyPageUrl,
+    this.chapterPageUrl,
+  });
+
+  factory SourceApi.fromJson(Map<String, dynamic> j) => SourceApi(
+    searchUrl: j['searchUrl'] as String?,
+    storyUrl: j['storyUrl'] as String?,
+    chapterUrl: j['chapterUrl'] as String?,
+    storyPageUrl: j['storyPageUrl'] as String?,
+    chapterPageUrl: j['chapterPageUrl'] as String?,
+  );
+}
+
 class SourceAdapter {
   final String domain;
   final int version;
@@ -26,6 +54,8 @@ class SourceAdapter {
   final TocApi? tocApi;
   // Mục lục phân trang HTML (site không có JSON API): template chứa {slug} và {page}.
   final String? tocPageUrl;
+  // API JSON kiểu CMS: tìm kiếm, mục lục, nội dung chương không cần WebView.
+  final SourceApi? api;
   // Trang đăng nhập cho nguồn yêu cầu tài khoản: màn Nguồn mở WebView để user
   // tự đăng nhập; cookie lưu vào WebView dùng chung nên lần tải nền sau đó tự mang theo.
   final String? loginUrl;
@@ -39,6 +69,7 @@ class SourceAdapter {
     this.searchUrl,
     this.tocApi,
     this.tocPageUrl,
+    this.api,
     this.loginUrl,
   });
 
@@ -55,6 +86,9 @@ class SourceAdapter {
         ? null
         : TocApi.fromJson(Map<String, dynamic>.from(j['tocApi'] as Map)),
     tocPageUrl: j['tocPageUrl'] as String?,
+    api: j['api'] == null
+        ? null
+        : SourceApi.fromJson(Map<String, dynamic>.from(j['api'] as Map)),
     loginUrl: j['loginUrl'] as String?,
   );
 
@@ -68,6 +102,7 @@ class SourceAdapter {
         searchUrl: url,
         tocApi: tocApi,
         tocPageUrl: tocPageUrl,
+        api: api,
         loginUrl: loginUrl,
       );
 
@@ -196,6 +231,14 @@ String storyUrlFromChapter(String url) {
   // Bỏ segment rỗng do dấu '/' cuối để không cắt nhầm vào tên chương.
   final segs = uri.pathSegments.where((s) => s.isNotEmpty).toList();
   if (segs.isNotEmpty) segs.removeLast();
+  // URL chương kiểu /truyen/{truyen}/chuong/{chuong}: segment "chuong" nằm
+  // giữa tên chương và tên truyện, bỏ thêm để ra đúng trang truyện.
+  if (segs.isNotEmpty) {
+    final last = segs.last.toLowerCase();
+    if (last == 'chuong' || last == 'chapter' || last == 'chap') {
+      segs.removeLast();
+    }
+  }
   final slash = url.endsWith('/') ? '/' : '';
   return uri.replace(path: '/${segs.join('/')}$slash').toString();
 }

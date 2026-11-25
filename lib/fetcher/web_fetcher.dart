@@ -8,6 +8,12 @@ import 'package:http/http.dart' as http;
 
 import '../core/models.dart';
 
+/// Chương truyện tranh (nội dung là ảnh): app chỉ đọc truyện chữ.
+class ComicChapterException implements Exception {
+  @override
+  String toString() => 'Chương này là ảnh (truyện tranh), app chưa đọc được.';
+}
+
 class WebFetcher {
   static const _ua =
       'Mozilla/5.0 (Linux; Android 13; CPH2629) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36';
@@ -113,6 +119,10 @@ class WebFetcher {
     String query,
     SourceAdapter a,
   ) async {
+    final api = a.api;
+    if (api != null && api.searchUrl != null && api.storyPageUrl != null) {
+      return _searchJsonApi(api, query);
+    }
     final map = await _fetch(
       searchUrlFor(a, query),
       searchJs(a),
@@ -144,15 +154,35 @@ class WebFetcher {
       );
 
   Future<ChapterContent> fetchChapter(String url, SourceAdapter adapter) async {
+    final api = adapter.api;
+    if (api != null) {
+      try {
+        final c = await _fetchChapterJsonApi(url, api);
+        if (c != null) return cleanChapter(c, adapter);
+      } on ComicChapterException {
+        rethrow;
+      } catch (_) {
+        // API hỏng/chặn: rơi về đọc DOM trong WebView như cũ.
+      }
+    }
     final map = await _fetch(url, chapterJs(adapter));
     return cleanChapter(ChapterContent.fromJson(map), adapter);
   }
 
   Future<NovelInfo> fetchStory(String url, SourceAdapter adapter) async {
-    final api = adapter.tocApi;
+    final api = adapter.api;
     if (api != null) {
       try {
-        final info = await _fetchStoryApi(url, api);
+        final info = await _fetchStoryJsonApi(url, api);
+        if (info != null) return info;
+      } catch (_) {
+        // API hỏng/chặn bot: rơi về quét DOM như cũ.
+      }
+    }
+    final toc = adapter.tocApi;
+    if (toc != null) {
+      try {
+        final info = await _fetchStoryApi(url, toc);
         if (info != null) return info;
       } catch (_) {
         // API hỏng/chặn bot: rơi về quét DOM như cũ.
@@ -206,12 +236,236 @@ class WebFetcher {
     return headers;
   }
 
-  Future<Map<String, dynamic>> _getJson(String url) async {
+  Future<dynamic> _getJsonAny(String url) async {
     final res = await http
         .get(Uri.parse(url), headers: await _headersFor(url))
-        .timeout(const Duration(seconds: 15));
+        .timeout(const Duration(seconds: 30));
     if (res.statusCode != 200) throw Exception('HTTP ${res.statusCode}');
-    return jsonDecode(res.body) as Map<String, dynamic>;
+    // Luôn giải mã UTF-8: nhiều API trả application/json không kèm charset,
+    // res.body khi đó đọc latin1 làm hỏng tiếng Việt.
+    return jsonDecode(utf8.decode(res.bodyBytes));
+  }
+
+  Future<Map<String, dynamic>> _getJson(String url) async {
+    final data = await _getJsonAny(url);
+    if (data is! Map) throw const FormatException('JSON không phải object');
+    return Map<String, dynamic>.from(data);
+  }
+
+  // ----- API JSON kiểu CMS (khotruyen.site) -----
+  // Tìm kiếm: mảng [{slug, title, cover, type}]. Truyện/chương: object
+  // {title, cover, chapters: [{slug, num, title, mediaType, bodyText, pages}]};
+  // chỉ chương đang đọc có bodyText.
+
+  Future<List<SearchResult>> _searchJsonApi(SourceApi api, String query) async {
+    final url = fillUrl(api.searchUrl!, {'query': Uri.encodeComponent(query)});
+    final data = await _getJsonAny(url);
+    if (data is! List) throw const FormatException('API tìm kiếm trả lỗi');
+    final out = <SearchResult>[];
+    for (final e in data.whereType<Map>()) {
+      // App chỉ đọc truyện chữ: truyện tranh toàn ảnh mở ra không đọc được.
+      final type = (e['type'] as String? ?? '').toLowerCase();
+      if (type == 'manga' || type == 'comic') continue;
+      final slug = (e['slug'] as String? ?? '').trim();
+      final title = (e['title'] as String? ?? '').trim();
+      if (slug.isEmpty || title.isEmpty) continue;
+      out.add(
+        SearchResult(
+          title: title,
+          url: fillUrl(api.storyPageUrl!, {'slug': slug}),
+          coverUrl: _resolveAgainst(e['cover'] as String?, url),
+        ),
+      );
+    }
+    return out;
+  }
+
+  Future<NovelInfo?> _fetchStoryJsonApi(String url, SourceApi api) async {
+    final vars = _storyVars(api, url);
+    final storyTpl = api.storyUrl;
+    final pageTpl = api.chapterPageUrl;
+    if (vars == null || storyTpl == null || pageTpl == null) return null;
+    final data = await _getJson(fillUrl(storyTpl, vars));
+    final title = (data['title'] as String? ?? '').trim();
+    if (title.isEmpty) return null;
+    final items = _apiChapters(data);
+    if (items.isEmpty) return null;
+    final slug = vars['slug']!;
+    return NovelInfo(
+      title: title,
+      coverUrl: _resolveAgainst(data['cover'] as String?, url),
+      chapters: [
+        for (final c in items)
+          ChapterRef(
+            title: c.title.isEmpty
+                ? (c.num == null ? c.slug : 'Chương ${c.num}')
+                : c.title,
+            url: fillUrl(pageTpl, {'slug': slug, 'chapter': c.slug}),
+          ),
+      ],
+    );
+  }
+
+  Future<ChapterContent?> _fetchChapterJsonApi(
+    String url,
+    SourceApi api,
+  ) async {
+    final vars = _chapterVars(api, url);
+    final chapterTpl = api.chapterUrl;
+    if (vars == null || chapterTpl == null) return null;
+    final storySlug = vars['slug']!;
+    final chapterSlug = vars['chapter']!;
+    final data = await _getJson(
+      fillUrl(chapterTpl, {'slug': storySlug, 'chapter': chapterSlug}),
+    );
+    Map? current;
+    for (final e in (data['chapters'] as List? ?? []).whereType<Map>()) {
+      if ((e['slug'] as String? ?? '').trim() == chapterSlug) {
+        current = e;
+        break;
+      }
+    }
+    if (current == null) return null;
+    if ((current['mediaType'] as String? ?? '') == 'image') {
+      throw ComicChapterException();
+    }
+    final paragraphs = _paragraphs(current['bodyText'] as String?);
+    if (paragraphs.isEmpty) return null;
+    String? nextUrl;
+    String? prevUrl;
+    final pageTpl = api.chapterPageUrl;
+    if (pageTpl != null) {
+      final items = _apiChapters(data);
+      final i = items.indexWhere((c) => c.slug == chapterSlug);
+      if (i >= 0) {
+        if (i + 1 < items.length) {
+          nextUrl = fillUrl(pageTpl, {
+            'slug': storySlug,
+            'chapter': items[i + 1].slug,
+          });
+        }
+        if (i > 0) {
+          prevUrl = fillUrl(pageTpl, {
+            'slug': storySlug,
+            'chapter': items[i - 1].slug,
+          });
+        }
+      }
+    }
+    return ChapterContent(
+      url: url,
+      title: (current['title'] as String? ?? '').trim(),
+      paragraphs: paragraphs,
+      nextUrl: nextUrl,
+      prevUrl: prevUrl,
+    );
+  }
+
+  static List<_ApiChapter> _apiChapters(Map<String, dynamic> data) {
+    final seen = <String>{};
+    final items = <_ApiChapter>[];
+    for (final e in (data['chapters'] as List? ?? []).whereType<Map>()) {
+      final slug = (e['slug'] as String? ?? '').trim();
+      if (slug.isEmpty || !seen.add(slug)) continue;
+      items.add(
+        _ApiChapter(
+          slug,
+          (e['num'] as num?)?.toInt(),
+          (e['title'] as String? ?? '').trim(),
+        ),
+      );
+    }
+    final numbered = items.where((c) => c.num != null).length;
+    if (numbered == items.length && items.isNotEmpty) {
+      items.sort((a, b) => a.num!.compareTo(b.num!));
+    } else if (numbered == 0) {
+      // API trả chương mới nhất trước; không có số thứ tự thì đảo lại.
+      return items.reversed.toList();
+    }
+    return items;
+  }
+
+  static List<String> _paragraphs(String? text) {
+    if (text == null || text.trim().isEmpty) return const [];
+    return text
+        .replaceAll('\r\n', '\n')
+        .split(RegExp(r'\n\s*\n'))
+        .map((p) => p.trim())
+        .where((p) => p.isNotEmpty)
+        .toList();
+  }
+
+  static String? _resolveAgainst(String? path, String baseUrl) {
+    final p = path?.trim();
+    if (p == null || p.isEmpty) return null;
+    final u = Uri.tryParse(p);
+    if (u == null) return null;
+    if (u.hasScheme) return p;
+    return Uri.tryParse(baseUrl)?.resolveUri(u).toString() ?? p;
+  }
+
+  /// Lấy các biến {slug}/{chapter} từ URL trang web theo template; null khi
+  /// sai host hoặc sai hình dạng đường dẫn.
+  static Map<String, String>? templateVars(String? tpl, String url) {
+    final t = tpl == null ? null : Uri.tryParse(tpl);
+    final u = Uri.tryParse(url);
+    if (t == null || u == null) return null;
+    if (t.host.isNotEmpty && _hostOf(t) != _hostOf(u)) return null;
+    // Uri.path giữ nguyên %7B/%7D của {slug}: giải mã để template còn placeholder.
+    final tplPath = Uri.decodeComponent(t.path);
+    final names = <String>[];
+    final pattern = StringBuffer('^');
+    var last = 0;
+    for (final m in RegExp(r'\{(\w+)\}').allMatches(tplPath)) {
+      pattern.write(RegExp.escape(tplPath.substring(last, m.start)));
+      pattern.write('([^/]+)');
+      names.add(m.group(1)!);
+      last = m.end;
+    }
+    pattern.write(RegExp.escape(tplPath.substring(last)));
+    pattern.write(r'$');
+    final match = RegExp(pattern.toString())
+        .firstMatch(_stripSlash(Uri.decodeComponent(u.path)));
+    if (match == null) return null;
+    final out = <String, String>{};
+    for (var i = 0; i < names.length; i++) {
+      out[names[i]] = match.group(i + 1) ?? '';
+    }
+    return out;
+  }
+
+  static String _stripSlash(String path) =>
+      path.length > 1 && path.endsWith('/')
+      ? path.substring(0, path.length - 1)
+      : path;
+
+  static String _hostOf(Uri u) =>
+      u.host.toLowerCase().replaceFirst(RegExp(r'^www\.'), '');
+
+  static Map<String, String>? _storyVars(SourceApi api, String url) {
+    final viaStory = templateVars(api.storyPageUrl, url);
+    if (viaStory?['slug'] != null) return viaStory;
+    final viaChapter = templateVars(api.chapterPageUrl, url);
+    if (viaChapter?['slug'] != null) return {'slug': viaChapter!['slug']!};
+    final slug = slugOf(url);
+    return slug.isEmpty ? null : {'slug': slug};
+  }
+
+  static Map<String, String>? _chapterVars(SourceApi api, String url) {
+    final vars = templateVars(api.chapterPageUrl, url);
+    if (vars != null && vars['slug'] != null && vars['chapter'] != null) {
+      return vars;
+    }
+    final segs =
+        Uri.tryParse(url)?.pathSegments.where((s) => s.isNotEmpty).toList() ??
+        const <String>[];
+    for (var i = 1; i + 1 < segs.length; i++) {
+      final k = segs[i].toLowerCase();
+      if (k == 'chuong' || k == 'chapter') {
+        return {'slug': segs[i - 1], 'chapter': segs[i + 1]};
+      }
+    }
+    return null;
   }
 
   Future<NovelInfo?> _fetchStoryApi(String url, TocApi api) async {
@@ -523,4 +777,11 @@ class WebFetcher {
       } catch (_) {}
     }
   }
+}
+
+class _ApiChapter {
+  final String slug;
+  final int? num;
+  final String title;
+  const _ApiChapter(this.slug, this.num, this.title);
 }
