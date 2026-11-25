@@ -123,7 +123,6 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.text('Khám phá'), findsOneWidget);
     expect(find.text('Chưa cài nguồn truyện'), findsOneWidget);
     expect(find.text('Mở Nguồn truyện'), findsOneWidget);
   });

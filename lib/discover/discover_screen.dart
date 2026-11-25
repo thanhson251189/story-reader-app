@@ -256,77 +256,68 @@ class _DiscoverScreenState extends ConsumerState<DiscoverScreen> {
   Widget build(BuildContext context) {
     final sources = _sources;
     final domain = _effectiveDomain(sources);
+    // Không dùng AppBar: tên tab đã ở thanh dưới, bỏ đi để web có thêm chỗ.
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Khám phá'),
-        actions: [
-          IconButton(
-            tooltip: 'Nguồn truyện',
-            icon: const Icon(Icons.dns_outlined),
-            onPressed: () async {
-              await Navigator.push(
-                context,
-                MaterialPageRoute(builder: (_) => const SourcesScreen()),
-              );
-              if (mounted) setState(() {});
-            },
-          ),
-        ],
-      ),
-      body: sources.isEmpty
-          ? _empty()
-          : Column(
-              children: [
-                _sourceChips(sources, domain!),
-                _toolbar(),
-                Expanded(
-                  child: InAppWebView(
-                    key: ValueKey(domain),
-                    initialUrlRequest: URLRequest(
-                      url: WebUri(
-                        DiscoverScreen.homeUrl(
-                          sources.firstWhere((a) => a.domain == domain),
+      body: SafeArea(
+        bottom: false,
+        child: sources.isEmpty
+            ? _empty()
+            : Column(
+                children: [
+                  _sourceChips(sources, domain!),
+                  _toolbar(),
+                  SizedBox(
+                    height: 2,
+                    child: _pageLoading
+                        ? const LinearProgressIndicator(minHeight: 2)
+                        : null,
+                  ),
+                  Expanded(
+                    child: InAppWebView(
+                      key: ValueKey(domain),
+                      initialUrlRequest: URLRequest(
+                        url: WebUri(
+                          DiscoverScreen.homeUrl(
+                            sources.firstWhere((a) => a.domain == domain),
+                          ),
                         ),
                       ),
+                      initialSettings: WebFetcher.settings,
+                      onWebViewCreated: (c) {
+                        _web = c;
+                        _updateNav(c);
+                      },
+                      onLoadStart: (_, _) {
+                        if (mounted) setState(() => _pageLoading = true);
+                      },
+                      onLoadStop: (c, _) {
+                        if (mounted) setState(() => _pageLoading = false);
+                        _updateNav(c);
+                      },
+                      // Trang lỗi/mất mạng không có onLoadStop: mở lại nút
+                      // "Mở bằng app" thay vì treo spinner mãi.
+                      onReceivedError: (_, _, _) {
+                        if (mounted) setState(() => _pageLoading = false);
+                      },
+                      onReceivedHttpError: (_, _, _) {
+                        if (mounted) setState(() => _pageLoading = false);
+                      },
+                      onUpdateVisitedHistory: (c, _, _) => _updateNav(c),
                     ),
-                    initialSettings: WebFetcher.settings,
-                    onWebViewCreated: (c) {
-                      _web = c;
-                      _updateNav(c);
-                    },
-                    onLoadStart: (_, _) {
-                      if (mounted) setState(() => _pageLoading = true);
-                    },
-                    onLoadStop: (c, _) {
-                      if (mounted) setState(() => _pageLoading = false);
-                      _updateNav(c);
-                    },
-                    // Trang lỗi/mất mạng không có onLoadStop: mở lại nút
-                    // "Mở bằng app" thay vì treo spinner mãi.
-                    onReceivedError: (_, _, _) {
-                      if (mounted) setState(() => _pageLoading = false);
-                    },
-                    onReceivedHttpError: (_, _, _) {
-                      if (mounted) setState(() => _pageLoading = false);
-                    },
-                    onUpdateVisitedHistory: (c, _, _) => _updateNav(c),
                   ),
-                ),
-              ],
-            ),
-      floatingActionButton: sources.isEmpty
-          ? null
-          : FloatingActionButton.extended(
-              onPressed: _opening || _pageLoading ? null : _openInApp,
-              icon: _opening
-                  ? const SizedBox(
-                      width: 18,
-                      height: 18,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    )
-                  : const Icon(Icons.auto_stories),
-              label: Text(_opening ? 'Đang đọc trang...' : 'Mở bằng app'),
-            ),
+                ],
+              ),
+      ),
+    );
+  }
+
+  IconButton _navIcon(IconData icon, String tip, VoidCallback? onPressed) {
+    return IconButton(
+      tooltip: tip,
+      visualDensity: VisualDensity.compact,
+      iconSize: 22,
+      icon: Icon(icon),
+      onPressed: onPressed,
     );
   }
 
@@ -375,19 +366,44 @@ class _DiscoverScreenState extends ConsumerState<DiscoverScreen> {
   Widget _sourceChips(List<SourceAdapter> sources, String domain) {
     return SizedBox(
       height: 52,
-      child: ListView(
-        scrollDirection: Axis.horizontal,
-        padding: const EdgeInsets.symmetric(horizontal: 12),
+      child: Row(
         children: [
-          for (final a in sources)
-            Padding(
-              padding: const EdgeInsets.only(right: 8, top: 8, bottom: 8),
-              child: ChoiceChip(
-                label: Text(SourceRegistry.labelFor(a.domain, _names)),
-                selected: a.domain == domain,
-                onSelected: (_) => _select(a.domain),
-              ),
+          Expanded(
+            child: ListView(
+              scrollDirection: Axis.horizontal,
+              padding: const EdgeInsets.only(left: 12, right: 4),
+              children: [
+                for (final a in sources)
+                  Padding(
+                    padding: const EdgeInsets.only(
+                      right: 8,
+                      top: 8,
+                      bottom: 8,
+                    ),
+                    child: ChoiceChip(
+                      label: Text(SourceRegistry.labelFor(a.domain, _names)),
+                      selected: a.domain == domain,
+                      visualDensity: VisualDensity.compact,
+                      onSelected: (_) => _select(a.domain),
+                    ),
+                  ),
+              ],
             ),
+          ),
+          IconButton(
+            tooltip: 'Nguồn truyện',
+            visualDensity: VisualDensity.compact,
+            iconSize: 22,
+            icon: const Icon(Icons.dns_outlined),
+            onPressed: () async {
+              await Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const SourcesScreen()),
+              );
+              if (mounted) setState(() {});
+            },
+          ),
+          const SizedBox(width: 4),
         ],
       ),
     );
@@ -396,21 +412,17 @@ class _DiscoverScreenState extends ConsumerState<DiscoverScreen> {
   Widget _toolbar() {
     return Row(
       children: [
-        IconButton(
-          tooltip: 'Trang trước',
-          icon: const Icon(Icons.chevron_left),
-          onPressed: _canBack ? () => _web?.goBack() : null,
+        _navIcon(
+          Icons.chevron_left,
+          'Trang trước',
+          _canBack ? () => _web?.goBack() : null,
         ),
-        IconButton(
-          tooltip: 'Trang sau',
-          icon: const Icon(Icons.chevron_right),
-          onPressed: _canForward ? () => _web?.goForward() : null,
+        _navIcon(
+          Icons.chevron_right,
+          'Trang sau',
+          _canForward ? () => _web?.goForward() : null,
         ),
-        IconButton(
-          tooltip: 'Tải lại',
-          icon: const Icon(Icons.refresh),
-          onPressed: () => _web?.reload(),
-        ),
+        _navIcon(Icons.refresh, 'Tải lại', () => _web?.reload()),
         Expanded(
           child: Text(
             _url ?? '',
@@ -419,7 +431,29 @@ class _DiscoverScreenState extends ConsumerState<DiscoverScreen> {
             style: Theme.of(context).textTheme.bodySmall,
           ),
         ),
-        const SizedBox(width: 12),
+        const SizedBox(width: 4),
+        FilledButton.tonalIcon(
+          onPressed: _opening || _pageLoading ? null : _openInApp,
+          style: FilledButton.styleFrom(
+            visualDensity: VisualDensity.compact,
+            padding: const EdgeInsets.symmetric(horizontal: 10),
+            minimumSize: const Size(0, 34),
+            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+            textStyle: const TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          icon: _opening
+              ? const SizedBox(
+                  width: 14,
+                  height: 14,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              : const Icon(Icons.auto_stories, size: 18),
+          label: Text(_opening ? 'Đang đọc...' : 'Mở bằng app'),
+        ),
+        const SizedBox(width: 8),
       ],
     );
   }
