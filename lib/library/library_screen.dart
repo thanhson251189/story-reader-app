@@ -192,9 +192,10 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
       final n = BookUrl.chapterOf(last);
       return n == null ? 'Sách trong máy' : 'Chương ${n + 1}$suffix';
     }
+    // "Đang đọc: 87/1363" đủ nghĩa, bỏ chữ "Chương" cho đỡ chật ở cỡ chữ to.
     final n = WebFetcher.trailingNumber(last);
     return n != null
-        ? 'Đang đọc: Chương $n$suffix'
+        ? 'Đang đọc: $n$suffix'
         : Uri.tryParse(last)?.pathSegments.lastOrNull ?? '';
   }
 
@@ -661,8 +662,8 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
                       style: Theme.of(context).textTheme.bodyLarge,
                     ),
                     const SizedBox(height: 2),
-                    // Máy để chữ to thì dòng "Đang đọc: Chương 12/345" cần
-                    // xuống dòng, cắt một dòng là mất đúng số chương cần thấy.
+                    // Máy để chữ to thì dòng "Đang đọc: 12/345" cần xuống
+                    // dòng, cắt một dòng là mất đúng số chương cần thấy.
                     Row(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [

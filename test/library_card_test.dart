@@ -147,7 +147,7 @@ void main() {
     );
     await pumpLibrary(tester, db);
 
-    final progress = find.text('Đang đọc: Chương 13/741');
+    final progress = find.text('Đang đọc: 13/741');
     expect(progress, findsOneWidget);
     final para = tester.renderObject<RenderParagraph>(progress);
     expect(
@@ -195,7 +195,7 @@ void main() {
     ]);
     await pumpLibrary(tester, db);
 
-    expect(find.text('Đang đọc: Chương 5'), findsOneWidget);
+    expect(find.text('Đang đọc: 5'), findsOneWidget);
     expect(find.text('Chưa đọc: Chương 9'), findsOneWidget);
     expect(find.byKey(ValueKey('new-dot-$story')), findsNothing);
   });
