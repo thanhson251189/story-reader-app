@@ -1,12 +1,14 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'core/app_notifications.dart';
 import 'core/errors.dart';
 import 'core/providers.dart';
 import 'discover/discover_screen.dart';
+import 'fetcher/story_downloader.dart';
 import 'home/mini_player.dart';
 import 'library/library_checker.dart';
 import 'library/library_screen.dart';
@@ -148,28 +150,90 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      body: IndexedStack(
-        index: _tab,
-        children: [
-          LibraryScreen(active: _tab == 0),
-          const SearchScreen(),
-          DiscoverScreen(active: _tab == 2),
-          const SettingsScreen(),
-        ],
+    return PopScope(
+      // Back hệ thống: tab khác về Thư viện, Thư viện mới thoát. Tab Khám
+      // phá tự xử lý (lùi lịch sử web rồi mới về Thư viện).
+      canPop: false,
+      onPopInvokedWithResult: (didPop, _) {
+        if (didPop) return;
+        if (_tab == 2) return;
+        if (_tab != 0) {
+          setState(() => _tab = 0);
+          return;
+        }
+        SystemNavigator.pop();
+      },
+      child: Scaffold(
+        body: IndexedStack(
+          index: _tab,
+          children: [
+            LibraryScreen(
+              active: _tab == 0,
+              onExplore: () => setState(() => _tab = 2),
+            ),
+            SearchScreen(active: _tab == 1),
+            DiscoverScreen(
+              active: _tab == 2,
+              onBackToLibrary: () => setState(() => _tab = 0),
+            ),
+            const SettingsScreen(),
+          ],
+        ),
+        bottomNavigationBar: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            // Tải cả truyện chạy nền: đang ở tab khác vẫn thấy tiến độ và
+            // nút dừng (tab Thư viện đã có dòng chi tiết riêng).
+            if (_tab != 0) _downloadBar(),
+            // Thanh nghe nằm trên thanh tab: đang nghe ở tab nào cũng thấy,
+            // vào màn đọc thì màn đọc có thanh riêng nên không hiện trùng.
+            const MiniPlayer(),
+            HomeScreen.navBar(
+              index: _tab,
+              onSelect: (i) => setState(() => _tab = i),
+            ),
+          ],
+        ),
       ),
-      bottomNavigationBar: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          // Thanh nghe nằm trên thanh tab: đang nghe ở tab nào cũng thấy,
-          // vào màn đọc thì màn đọc có thanh riêng nên không hiện trùng.
-          const MiniPlayer(),
-          HomeScreen.navBar(
-            index: _tab,
-            onSelect: (i) => setState(() => _tab = i),
+    );
+  }
+
+  Widget _downloadBar() {
+    return ValueListenableBuilder<StoryDownloadState?>(
+      valueListenable: StoryDownloader.state,
+      builder: (context, dl, _) {
+        if (dl == null || !dl.running) return const SizedBox.shrink();
+        return Material(
+          color: Theme.of(context).colorScheme.surfaceContainerHighest,
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(16, 4, 4, 4),
+            child: Row(
+              children: [
+                const SizedBox(
+                  width: 16,
+                  height: 16,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Text(
+                    dl.title.isEmpty
+                        ? 'Đang tải cả truyện: ${dl.done}/${dl.total}'
+                        : 'Đang tải ${dl.title}: ${dl.done}/${dl.total}',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: Theme.of(context).textTheme.bodySmall,
+                  ),
+                ),
+                TextButton(
+                  onPressed: StoryDownloader.cancel,
+                  child: const Text('Dừng'),
+                ),
+              ],
+            ),
           ),
-        ],
-      ),
+        );
+      },
     );
   }
 }

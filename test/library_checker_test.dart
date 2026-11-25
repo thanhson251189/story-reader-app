@@ -11,8 +11,11 @@ import 'package:story_reader/library/library_checker.dart';
 class _ScriptFetcher extends WebFetcher {
   NovelInfo? next;
   @override
-  Future<NovelInfo> fetchStory(String url, SourceAdapter adapter) async =>
-      next!;
+  Future<NovelInfo> fetchStory(
+    String url,
+    SourceAdapter adapter, {
+    int maxTries = 8,
+  }) async => next!;
 }
 
 class _ApiFetcher extends WebFetcher {
@@ -30,7 +33,11 @@ class _ApiFetcher extends WebFetcher {
   }
 
   @override
-  Future<NovelInfo> fetchStory(String url, SourceAdapter adapter) async {
+  Future<NovelInfo> fetchStory(
+    String url,
+    SourceAdapter adapter, {
+    int maxTries = 8,
+  }) async {
     webviewCalls++;
     throw Exception('không được rơi về WebView ở chế độ nền');
   }
@@ -86,7 +93,7 @@ void main() {
 
     expect((await db.getToc(story)).length, 3);
     expect(res.fresh, 0);
-    expect(res.warns.single, contains('giữ danh sách chương cũ'));
+    expect(res.warns.single, contains('giữ bản cũ'));
     final row = (await db.getLibrary())
         .where((r) => r['story_url'] == story)
         .single;

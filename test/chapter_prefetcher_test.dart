@@ -38,7 +38,11 @@ class _FakeFetcher extends WebFetcher {
   _FakeFetcher(this.pages, {this.errorOn = const {}});
 
   @override
-  Future<ChapterContent> fetchChapter(String url, SourceAdapter adapter) async {
+  Future<ChapterContent> fetchChapter(
+    String url,
+    SourceAdapter adapter, {
+    int maxTries = 8,
+  }) async {
     fetched.add(url);
     if (errorOn.contains(url)) throw Exception('Lỗi mạng giả lập: $url');
     final c = pages[url];

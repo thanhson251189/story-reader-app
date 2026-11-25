@@ -1,5 +1,4 @@
 import '../adapters/adapter_repository.dart';
-import '../core/errors.dart';
 import '../core/models.dart';
 import '../fetcher/web_fetcher.dart';
 
@@ -24,11 +23,19 @@ class DiscoverPage {
 }
 
 /// Nhận diện trang web đang mở bằng adapter của nguồn. Không đoán theo hình
-/// dạng link (mỗi trang một kiểu): thử bóc nội dung chương trước — trang
-/// truyện thường không có khối nội dung chương; không ra thì thử mục lục.
+/// dạng link (mỗi trang một kiểu).
+///
+/// Dò chương và mục lục chạy SONG SONG: trang chương thì bóc chương xong
+/// trước, trang truyện thì không phải chờ hết vòng thử nội dung chương (trước
+/// đây mất hơn 10 giây, nhìn như app treo). Kết quả chương được ưu tiên vì
+/// trang chương cũng có link chương ở sidebar, không thể tin kết quả mục lục.
 class DiscoverOpener {
   final WebFetcher fetcher;
   final AdapterRepository repo;
+
+  /// Số lần đọc lại DOM khi dò. Trang của các nguồn hiện tại là SSR nên 3 lần
+  /// là đủ; chờ lâu hơn chỉ làm người dùng tưởng treo.
+  static const _probeTries = 3;
 
   DiscoverOpener({required this.fetcher, required this.repo});
 
@@ -40,22 +47,45 @@ class DiscoverOpener {
         'Trang này thuộc nguồn chưa cài trong app. Vào Nguồn truyện để thêm.',
       );
     }
-    // Trang chương: có nội dung là tín hiệu chắc nhất. Lỗi ở bước này không
-    // chặn bước sau — trang truyện cũng có thể trả lỗi bóc nội dung.
-    try {
-      final c = await fetcher.fetchChapter(url, adapter);
-      if (c.paragraphs.isNotEmpty) return DiscoverPage.chapter(url, c);
-    } catch (_) {}
-    try {
-      final info = await fetcher.fetchStory(url, adapter);
-      if (info.chapters.isNotEmpty) return DiscoverPage.story(url, info);
-    } catch (e) {
-      return DiscoverPage.failed(url, friendlyError(e));
+    Future<ChapterContent?> probeChapter() async {
+      try {
+        final c = await fetcher.fetchChapter(
+          url,
+          adapter,
+          maxTries: _probeTries,
+        );
+        return c.paragraphs.isEmpty ? null : c;
+      } catch (_) {
+        return null;
+      }
     }
+
+    Future<NovelInfo?> probeStory() async {
+      try {
+        final info = await fetcher.fetchStory(
+          url,
+          adapter,
+          maxTries: _probeTries,
+        );
+        return info.chapters.isEmpty ? null : info;
+      } catch (_) {
+        return null;
+      }
+    }
+
+    final chapterFuture = probeChapter();
+    final storyFuture = probeStory();
+    final chapter = await chapterFuture;
+    if (chapter != null) {
+      // Mục lục vẫn đang dò dở ở nền; nó tự dọn, không chặn màn đọc.
+      return DiscoverPage.chapter(url, chapter);
+    }
+    final story = await storyFuture;
+    if (story != null) return DiscoverPage.story(url, story);
     return DiscoverPage.failed(
       url,
-      'Không nhận ra trang truyện hay trang chương. Mở trang truyện hoặc '
-      'trang chương trên web rồi bấm lại.',
+      'Không nhận ra trang truyện hay trang chương, hoặc trang đang chặn app. '
+      'Mở lại đúng trang truyện/chương trong trình duyệt rồi dán link.',
     );
   }
 }

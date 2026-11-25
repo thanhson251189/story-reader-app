@@ -12,6 +12,7 @@ import '../fetcher/webview_fallback_screen.dart';
 import '../reader/reader_screen.dart';
 import '../sources/registry.dart';
 import '../sources/source_login_screen.dart';
+import '../sources/sources_screen.dart';
 
 enum _Status { loading, done, error }
 
@@ -23,7 +24,10 @@ class _SourceState {
 }
 
 class SearchScreen extends ConsumerStatefulWidget {
-  const SearchScreen({super.key});
+  /// Tab đang hiện: quay lại tab phải đọc lại nguồn (cài/xoá nguồn ở tab khác
+  /// không tự rebuild màn này vì nằm trong IndexedStack).
+  final bool active;
+  const SearchScreen({super.key, this.active = true});
 
   // null nghĩa là chọn tất cả; tập rỗng là không chọn nguồn nào.
   static Set<String>? toggleSource(
@@ -67,6 +71,22 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
   void initState() {
     super.initState();
     unawaited(_loadMeta());
+  }
+
+  @override
+  void didUpdateWidget(SearchScreen old) {
+    super.didUpdateWidget(old);
+    if (widget.active && !old.active) setState(() {});
+  }
+
+  Future<void> _openSources() async {
+    await Navigator.push(
+      context,
+      MaterialPageRoute(builder: (_) => const SourcesScreen()),
+    );
+    if (!mounted) return;
+    setState(() {});
+    await _loadMeta();
   }
 
   Future<void> _loadMeta() async {
@@ -145,6 +165,9 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
                 ? 'Chưa có nguồn nào hỗ trợ tìm kiếm'
                 : 'Chưa chọn nguồn nào để tìm',
           ),
+          action: _supported.isEmpty
+              ? SnackBarAction(label: 'Cài nguồn', onPressed: _openSources)
+              : null,
         ),
       );
       return;
@@ -336,6 +359,7 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
                   SourceRegistry.isAdultHost(a.domain, _adultDomains)),
         )
         .toList();
+    final noSearchSources = _supported.isEmpty;
     return Scaffold(
       appBar: AppBar(title: const Text('Tìm kiếm')),
       body: Column(
@@ -443,16 +467,30 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
                           ),
                           const SizedBox(height: 16),
                           Text(
-                            'Tìm truyện trong các nguồn',
+                            noSearchSources
+                                ? 'Chưa cài nguồn để tìm'
+                                : 'Tìm truyện trong các nguồn',
                             style: Theme.of(context).textTheme.titleMedium,
                           ),
                           const SizedBox(height: 8),
                           Text(
-                            'Nhập từ khoá rồi bấm tìm. Chọn một nguồn '
-                            'hoặc để Tất cả để tìm song song.',
+                            noSearchSources
+                                ? 'Vào Nguồn truyện để cài nguồn, rồi quay '
+                                      'lại đây tìm. Chưa có nguồn thì chỉ '
+                                      'đọc được sách trong máy.'
+                                : 'Nhập từ khoá rồi bấm tìm. Chọn một nguồn '
+                                      'hoặc để Tất cả để tìm song song.',
                             textAlign: TextAlign.center,
                             style: Theme.of(context).textTheme.bodyMedium,
                           ),
+                          if (noSearchSources) ...[
+                            const SizedBox(height: 16),
+                            FilledButton.tonalIcon(
+                              onPressed: _openSources,
+                              icon: const Icon(Icons.dns_outlined),
+                              label: const Text('Cài nguồn truyện'),
+                            ),
+                          ],
                         ],
                       ),
                     ),

@@ -160,7 +160,14 @@ class WebFetcher {
         prevUrl: c.prevUrl,
       );
 
-  Future<ChapterContent> fetchChapter(String url, SourceAdapter adapter) async {
+  /// [maxTries] là số lần đọc lại DOM khi trang chưa ra nội dung (trang render
+  /// bằng JS cần chờ). Dò nhận diện trang (Khám phá/dán link) dùng số nhỏ để
+  /// không bắt người dùng đợi cả chục giây trên trang không có nội dung.
+  Future<ChapterContent> fetchChapter(
+    String url,
+    SourceAdapter adapter, {
+    int maxTries = 8,
+  }) async {
     final api = adapter.api;
     if (api != null) {
       try {
@@ -172,11 +179,15 @@ class WebFetcher {
         // API hỏng/chặn: rơi về đọc DOM trong WebView như cũ.
       }
     }
-    final map = await _fetch(url, chapterJs(adapter));
+    final map = await _fetch(url, chapterJs(adapter), maxTries: maxTries);
     return cleanChapter(ChapterContent.fromJson(map), adapter);
   }
 
-  Future<NovelInfo> fetchStory(String url, SourceAdapter adapter) async {
+  Future<NovelInfo> fetchStory(
+    String url,
+    SourceAdapter adapter, {
+    int maxTries = 8,
+  }) async {
     final api = adapter.api;
     if (api != null) {
       try {
@@ -210,6 +221,7 @@ class WebFetcher {
       // chỉ coi là chặn bot khi cả chương lẫn nội dung đều trống.
       ok: (m) =>
           (m['chapters'] as List? ?? []).isNotEmpty || m['hasContent'] == true,
+      maxTries: maxTries,
     );
     return parseStory(map);
   }
@@ -737,6 +749,7 @@ class WebFetcher {
     String url,
     String js, {
     bool Function(Map<String, dynamic>)? ok,
+    int maxTries = 8,
   }) async {
     final accept = ok ?? (m) => (m['paragraphs'] as List? ?? []).isNotEmpty;
     final completer = Completer<Map<String, dynamic>>();
@@ -760,7 +773,7 @@ class WebFetcher {
       initialUrlRequest: URLRequest(url: WebUri(url)),
       initialSettings: settings,
       onLoadStop: (controller, u) async {
-        for (var i = 0; i < 8 && !done; i++) {
+        for (var i = 0; i < maxTries && !done; i++) {
           await Future.delayed(Duration(milliseconds: i == 0 ? 700 : 1500));
           if (done) break;
           try {

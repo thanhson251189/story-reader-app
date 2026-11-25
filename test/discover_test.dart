@@ -25,12 +25,18 @@ class FakeFetcher extends WebFetcher {
   FakeFetcher({this.chapter, this.story});
 
   @override
-  Future<ChapterContent> fetchChapter(String url, SourceAdapter a) async =>
-      chapter ??
-      ChapterContent(url: url, title: '', paragraphs: const []);
+  Future<ChapterContent> fetchChapter(
+    String url,
+    SourceAdapter a, {
+    int maxTries = 8,
+  }) async => chapter ?? ChapterContent(url: url, title: '', paragraphs: const []);
 
   @override
-  Future<NovelInfo> fetchStory(String url, SourceAdapter a) async {
+  Future<NovelInfo> fetchStory(
+    String url,
+    SourceAdapter a, {
+    int maxTries = 8,
+  }) async {
     storyCalls++;
     return story ?? NovelInfo(title: '', chapters: const []);
   }
@@ -63,7 +69,11 @@ void main() {
     ).open('https://x.test/truyen/chuong-2/');
     expect(page.chapter?.title, 'Chương 2');
     expect(page.story, isNull);
-    expect(fetcher.storyCalls, 0, reason: 'khỏi tải mục lục khi đã ra chương');
+    expect(
+      fetcher.storyCalls,
+      1,
+      reason: 'dò mục lục song song nhưng chương vẫn thắng',
+    );
   });
 
   test('opener: trang truyện không có nội dung chương thì đọc mục lục', () async {
@@ -123,8 +133,8 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.text('Chưa cài nguồn truyện'), findsOneWidget);
-    expect(find.text('Mở Nguồn truyện'), findsOneWidget);
+    expect(find.text('Chưa có nguồn truyện'), findsOneWidget);
+    expect(find.text('Cài nguồn truyện'), findsOneWidget);
   });
 }
 

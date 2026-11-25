@@ -8,6 +8,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
+import 'package:permission_handler/permission_handler.dart';
 
 import '../background/new_chapter_worker.dart';
 import '../core/app_notifications.dart';
@@ -133,9 +134,15 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       if (!granted) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text(
+            SnackBar(
+              content: const Text(
                 'Chưa có quyền thông báo. Bật trong Cài đặt hệ thống rồi thử lại.',
+              ),
+              action: SnackBarAction(
+                label: 'Mở cài đặt',
+                onPressed: () {
+                  openAppSettings();
+                },
               ),
             ),
           );

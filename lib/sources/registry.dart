@@ -43,8 +43,6 @@ class SourceRegistry {
 
   SourceRegistry(this.db, this.adapters);
 
-  static const personal = bool.fromEnvironment('PERSONAL');
-
   // Adapter cài từ bản cũ chưa có searchUrl: app seed sẵn cấu hình tìm kiếm
   // cho nguồn chính thức để bản cập nhật app là tìm được ngay, không bắt
   // người dùng cài lại nguồn. Adapter remote định nghĩa searchUrl sẽ thắng.
@@ -83,8 +81,11 @@ class SourceRegistry {
   static const adultDomainsKey = 'adultDomains';
   static const hideAdultKey = 'hideAdult';
 
+  /// Danh sách nguồn do bên phát hành app cung cấp. Bản cài mới luôn trỏ về
+  /// index mặc định để màn Nguồn truyện có thứ để cài; máy đã lưu registryUrl
+  /// riêng (bản cũ) vẫn dùng link đó.
   Future<String> indexUrl() async =>
-      await db.getSetting('registryUrl') ?? (personal ? defaultIndexUrl : '');
+      await db.getSetting('registryUrl') ?? defaultIndexUrl;
 
   Future<void> setIndexUrl(String url) => db.setSetting('registryUrl', url);
 

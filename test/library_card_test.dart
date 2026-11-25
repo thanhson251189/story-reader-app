@@ -69,7 +69,11 @@ class FakeFetcher extends WebFetcher {
   FakeFetcher(this.info);
 
   @override
-  Future<NovelInfo> fetchStory(String url, SourceAdapter adapter) async => info;
+  Future<NovelInfo> fetchStory(
+    String url,
+    SourceAdapter adapter, {
+    int maxTries = 8,
+  }) async => info;
 }
 
 Map<String, dynamic> item({
@@ -157,8 +161,8 @@ void main() {
     // Có tổng chương thì không lặp lại dòng "Chưa đọc", chỉ còn chấm nhỏ.
     expect(find.text('Chưa đọc: Chương 741'), findsNothing);
     expect(find.byKey(ValueKey('new-dot-$_story')), findsOneWidget);
-    // Icon kiểm tra chương mới từng truyện có mặt trên thẻ web.
-    expect(find.byKey(ValueKey('check-new-$_story')), findsOneWidget);
+    // Thẻ web có nút tuỳ chọn (nghe, tải cả truyện, kiểm tra chương mới...).
+    expect(find.byTooltip('Tuỳ chọn'), findsOneWidget);
   });
 
   testWidgets('Sách trong máy không có domain, vẫn hiện vị trí', (
@@ -171,7 +175,6 @@ void main() {
 
     expect(find.text('Chương 3'), findsOneWidget);
     expect(find.text('Sách trong máy'), findsOneWidget);
-    expect(find.byKey(const ValueKey('check-new-book:abc')), findsNothing);
   });
 
   testWidgets('Chưa có mục lục: vẫn hiện dòng Chưa đọc thay vì chấm', (
@@ -297,7 +300,9 @@ void main() {
       fetcher: FakeFetcher(info),
     );
 
-    await tester.tap(find.byKey(ValueKey('check-new-$_story')));
+    await tester.tap(find.byTooltip('Tuỳ chọn'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Kiểm tra chương mới'));
     await tester.pumpAndSettle();
 
     expect(find.text('Có chương mới — Chưa đọc: Chương 14'), findsOneWidget);

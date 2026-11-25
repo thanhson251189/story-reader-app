@@ -35,4 +35,4 @@ lib/
   update/     # kiểm tra bản mới, tải APK trong app (thanh tiến độ) rồi mở trình cài
 ```
 
-Adapter không đóng gói trong APK; nguồn truyện cài qua màn "Nguồn truyện" (registry). Bản cá nhân build với `--dart-define=PERSONAL=true` để có sẵn link index mặc định.
+Adapter không đóng gói trong APK; app luôn trỏ màn "Nguồn truyện" về index nguồn do bên phát hành cung cấp (link mặc định trong `lib/sources/registry.dart`). Bản cài mới mở Nguồn truyện thấy danh sách để bấm Thêm (hoặc "Cài các nguồn có sẵn"); máy đã lưu `registryUrl` riêng vẫn dùng link đó.

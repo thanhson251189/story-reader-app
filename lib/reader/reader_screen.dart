@@ -17,6 +17,7 @@ import '../fetcher/webview_fallback_screen.dart';
 import '../settings/word_fix_screen.dart';
 import '../sources/source_login_screen.dart';
 import '../sources/source_switch_screen.dart';
+import '../sources/sources_screen.dart';
 import '../tts/tts_player.dart';
 import 'reader_fonts.dart';
 import 'toc_screen.dart';
@@ -242,6 +243,8 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen>
   // Thanh trên và thanh nghe. Ẩn khi đang đọc chữ; nghe thì thanh nghe giữ lại.
   bool _chromeVisible = true;
   bool _inLibrary = false;
+  // Đã nhắc "truyện chưa có trong Thư viện" lần nào chưa (mỗi phiên đọc một lần).
+  bool _nudgedSave = false;
   static bool _askedNotif = false;
   // Offset cuộn lúc mở menu. Menu nằm ở root overlay, không đi theo
   // SingleChildScrollView — trừ delta này thì menu đứng yên đè chữ khác khi cuộn.
@@ -584,6 +587,7 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen>
         _loading = false;
       });
       unawaited(_refreshSaved());
+      unawaited(_nudgeSaveIfNeeded());
       WidgetsBinding.instance.addPostFrameCallback((_) {
         // Mở từ danh sách đánh dấu: nhảy thẳng tới đoạn đã đánh dấu thay vì
         // vị trí đọc cũ. Ưu tiên cao hơn vị trí đã lưu.
@@ -841,6 +845,27 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen>
     if (mounted) setState(() => _inLibrary = saved);
   }
 
+  /// Mở truyện từ Tìm kiếm/Khám phá mà không bấm Lưu: đọc xong quay lại
+  /// thư viện không thấy truyện, tưởng mất. Nhắc một lần kèm nút Lưu ngay
+  /// trong màn đọc; không tự thêm để tôn trọng ý "xem thử" của người dùng.
+  Future<void> _nudgeSaveIfNeeded() async {
+    if (_nudgedSave || !mounted) return;
+    final c = _content;
+    if (c == null || c.url.startsWith('book:')) return;
+    final saved = await ref.read(appDbProvider).isInLibrary(_storyUrlOf(c.url));
+    if (!mounted || saved) return;
+    _nudgedSave = true;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: const Text('Truyện chưa có trong Thư viện'),
+        action: SnackBarAction(
+          label: 'Lưu',
+          onPressed: () => unawaited(_addToLibrary()),
+        ),
+      ),
+    );
+  }
+
   Future<void> _addToLibrary() async {
     final c = _content;
     if (c == null || _addingToLib) return;
@@ -958,6 +983,8 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen>
     // bị stale, và không tải trước chương kế sau khi vượt chặn thủ công.
     unawaited(_updateProgress(filled.url));
     unawaited(ref.read(chapterPrefetcherProvider).prefetch(filled.nextUrl));
+    unawaited(_refreshSaved());
+    unawaited(_nudgeSaveIfNeeded());
   }
 
   // Nguồn yêu cầu tài khoản (adapter khai báo loginUrl): hiện nút đăng nhập
@@ -1013,9 +1040,15 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen>
       final next = await Permission.notification.request();
       if (!next.isGranted && mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text(
+          SnackBar(
+            content: const Text(
               'Chưa có quyền thông báo. Nghe vẫn chạy, nhưng nút tạm dừng trên màn khóa có thể không hiện.',
+            ),
+            action: SnackBarAction(
+              label: 'Mở cài đặt',
+              onPressed: () {
+                openAppSettings();
+              },
             ),
           ),
         );
@@ -1771,7 +1804,9 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen>
               // chương theo sau. Chặn cỡ chữ ở mức 1.6 cho vừa chiều cao
               // thanh tiêu đề cố định.
               title: c == null
-                  ? const Text('Đang tải...')
+                  ? Text(
+                      _error != null ? 'Không mở được chương' : 'Đang tải...',
+                    )
                   : MediaQuery.withClampedTextScaling(
                       maxScaleFactor: 1.6,
                       child: Column(
@@ -1830,7 +1865,7 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen>
                 PopupMenuButton<String>(
                   tooltip: _player.sleepAt != null
                       ? 'Hẹn giờ đang chạy'
-                      : 'Thêm',
+                      : 'Tuỳ chọn',
                   icon: Icon(
                     _player.sleepAt != null ? Icons.timer : Icons.more_vert,
                   ),
@@ -1970,6 +2005,8 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen>
       return const Center(child: CircularProgressIndicator());
     }
     if (_error != null) {
+      final failed = _failedUrl ?? widget.url;
+      final adapter = ref.read(adapterRepoProvider).forUrl(failed);
       return Center(
         child: Padding(
           padding: const EdgeInsets.all(24),
@@ -1986,16 +2023,34 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen>
               const SizedBox(height: 16),
               Wrap(
                 spacing: 12,
+                runSpacing: 8,
                 children: [
                   FilledButton.tonal(
                     onPressed: () =>
                         _load(_failedUrl ?? widget.url, useCache: false),
                     child: const Text('Thử lại'),
                   ),
-                  FilledButton.tonal(
-                    onPressed: _openFallback,
-                    child: const Text('Mở WebView'),
-                  ),
+                  // Chưa cài nguồn cho trang này: "Mở WebView" không có gì để
+                  // bóc (bấm vào im lặng), đưa thẳng sang màn cài nguồn.
+                  if (adapter != null)
+                    FilledButton.tonal(
+                      onPressed: _openFallback,
+                      child: const Text('Mở WebView'),
+                    )
+                  else
+                    FilledButton.tonal(
+                      // Cài xong nguồn ở màn đó thì quay lại thử mở luôn,
+                      // khỏi bắt bấm Thử lại thêm lần nữa.
+                      onPressed: () => Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => const SourcesScreen(),
+                        ),
+                      ).then((_) {
+                        if (mounted) _load(failed, useCache: false);
+                      }),
+                      child: const Text('Mở Nguồn truyện'),
+                    ),
                   ...?_loginButton(),
                 ],
               ),

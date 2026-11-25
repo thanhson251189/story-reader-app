@@ -14,11 +14,16 @@ import '../home/open_actions.dart';
 import '../reader/reader_screen.dart';
 import '../reader/toc_screen.dart';
 import '../sources/registry.dart';
+import '../sources/sources_screen.dart';
 import 'library_checker.dart';
 
 class LibraryScreen extends ConsumerStatefulWidget {
   final bool active;
-  const LibraryScreen({super.key, required this.active});
+
+  /// Nhảy sang tab Khám phá (nút ở màn trống). Home truyền vào; test không
+  /// cần thì để null và nút ẩn đi.
+  final VoidCallback? onExplore;
+  const LibraryScreen({super.key, required this.active, this.onExplore});
 
   static String? newBadge(
     String? latestUrl,
@@ -649,6 +654,7 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
   @override
   Widget build(BuildContext context) {
     final all = _display();
+    final hasSources = ref.read(adapterRepoProvider).all.isNotEmpty;
     final adultCount = _hideAdult ? all.where(_isAdultItem).length : 0;
     final hideNow = _hideAdult && !_revealAdult;
     final items = hideNow ? all.where((i) => !_isAdultItem(i)).toList() : all;
@@ -669,7 +675,7 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
                     child: CircularProgressIndicator(strokeWidth: 2),
                   )
                 : const Icon(Icons.new_releases_outlined),
-            tooltip: 'Check chương mới',
+            tooltip: 'Kiểm tra chương mới',
             onPressed: _checking ? null : _checkNew,
           ),
           PopupMenuButton<String>(
@@ -778,12 +784,37 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
                           ),
                           const SizedBox(height: 8),
                           Text(
-                            'Bấm Dán link hoặc Nhập file ở trên. '
-                            'Tìm ở tab Tìm kiếm thì phải bấm Lưu — '
-                            'tìm thôi chưa thêm vào đây.',
+                            hasSources
+                                ? 'Bấm Dán link hoặc Nhập file ở trên, hoặc mở '
+                                      'tab Khám phá để xem truyện của nguồn. '
+                                      'Tìm ở tab Tìm kiếm thì phải bấm Lưu — '
+                                      'tìm thôi chưa thêm vào đây.'
+                                : 'Chưa cài nguồn truyện nào. Cài nguồn để xem '
+                                      'và tìm truyện, hoặc bấm Dán link / '
+                                      'Nhập file ở trên.',
                             textAlign: TextAlign.center,
                             style: Theme.of(context).textTheme.bodyMedium,
                           ),
+                          if (!hasSources) ...[
+                            const SizedBox(height: 16),
+                            FilledButton.tonalIcon(
+                              onPressed: () => Navigator.push(
+                                context,
+                                MaterialPageRoute(
+                                  builder: (_) => const SourcesScreen(),
+                                ),
+                              ).then((_) => _load()),
+                              icon: const Icon(Icons.dns_outlined),
+                              label: const Text('Cài nguồn truyện'),
+                            ),
+                          ] else if (widget.onExplore != null) ...[
+                            const SizedBox(height: 16),
+                            FilledButton.tonalIcon(
+                              onPressed: widget.onExplore,
+                              icon: const Icon(Icons.explore_outlined),
+                              label: const Text('Mở Khám phá'),
+                            ),
+                          ],
                         ],
                       ),
                     ),
@@ -924,16 +955,12 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
       item['last_chapter_url'] as String?,
     );
     final storyUrl = item['story_url'] as String? ?? '';
-    final isBook = storyUrl.startsWith('book:');
     final total = _tocCounts[storyUrl];
     final source = LibraryScreen.sourceLabel(
       storyUrl,
       adapterDomain: ref.read(adapterRepoProvider).forUrl(storyUrl)?.domain,
     );
     final small = Theme.of(context).textTheme.bodySmall;
-    final checkingThis = _checkingStory == storyUrl;
-    final checkBusy =
-        _checking || LibraryChecker.running || _checkingStory != null;
     final primary = Theme.of(context).colorScheme.primary;
     // Thẻ tự dựng thay vì ListTile: hai nút xếp dọc trong trailing của ListTile
     // bị giới hạn chiều cao và tràn ở cỡ chữ lớn.
@@ -1027,20 +1054,14 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
                     tooltip: 'Xóa khỏi thư viện',
                     onPressed: () => _remove(item),
                   ),
-                  if (!isBook)
-                    IconButton(
-                      key: ValueKey('check-new-$storyUrl'),
-                      visualDensity: VisualDensity.compact,
-                      tooltip: 'Kiểm tra chương mới',
-                      icon: checkingThis
-                          ? const SizedBox(
-                              width: 20,
-                              height: 20,
-                              child: CircularProgressIndicator(strokeWidth: 2),
-                            )
-                          : const Icon(Icons.new_releases_outlined),
-                      onPressed: checkBusy ? null : () => _checkOne(item),
-                    ),
+                  // Menu rõ ràng thay vì phải biết nhấn giữ thẻ: nghe, tải cả
+                  // truyện, xoá chương đã tải, kiểm tra chương mới.
+                  IconButton(
+                    visualDensity: VisualDensity.compact,
+                    icon: const Icon(Icons.more_vert),
+                    tooltip: 'Tuỳ chọn',
+                    onPressed: () => _showItemMenu(item),
+                  ),
                 ],
               ),
             ],

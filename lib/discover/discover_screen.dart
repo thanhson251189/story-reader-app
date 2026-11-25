@@ -10,6 +10,7 @@ import '../core/providers.dart';
 import '../fetcher/web_fetcher.dart';
 import '../reader/reader_screen.dart';
 import '../sources/registry.dart';
+import '../sources/source_login_screen.dart';
 import '../sources/sources_screen.dart';
 import 'discover_opener.dart';
 
@@ -18,7 +19,11 @@ import 'discover_opener.dart';
 /// thì nhận diện trang truyện/chương rồi đọc hoặc lưu vào thư viện.
 class DiscoverScreen extends ConsumerStatefulWidget {
   final bool active;
-  const DiscoverScreen({super.key, required this.active});
+
+  /// Bấm Back hệ thống khi trang web không lùi được nữa: về tab Thư viện
+  /// thay vì thoát app (người mới hay bấm Back khi đang xem web).
+  final VoidCallback? onBackToLibrary;
+  const DiscoverScreen({super.key, required this.active, this.onBackToLibrary});
 
   static String homeUrl(SourceAdapter a) => 'https://${a.domain}/';
 
@@ -36,6 +41,7 @@ class _DiscoverScreenState extends ConsumerState<DiscoverScreen> {
   bool _opening = false;
   bool _hideAdult = false;
   Set<String> _adultDomains = {};
+  Map<String, String> _names = {};
 
   @override
   void initState() {
@@ -49,11 +55,14 @@ class _DiscoverScreenState extends ConsumerState<DiscoverScreen> {
       final saved = await db.getSetting('discoverSource');
       final hideAdult = await SourceRegistry.hideAdultEnabled(db);
       final adult = await SourceRegistry.adultDomains(db);
+      final overrides = await loadAdapterNames(db);
+      final cache = await db.getSetting('registryIndexCache');
       if (mounted) {
         setState(() {
           _preferred = saved;
           _hideAdult = hideAdult;
           _adultDomains = adult;
+          _names = SourceRegistry.namesFromCache(cache, overrides);
         });
       }
     } catch (_) {}
@@ -78,7 +87,9 @@ class _DiscoverScreenState extends ConsumerState<DiscoverScreen> {
   Future<void> _openSources() async {
     final domain = await Navigator.push<String>(
       context,
-      MaterialPageRoute(builder: (_) => const SourcesScreen()),
+      MaterialPageRoute(
+        builder: (_) => const SourcesScreen(openInDiscover: true),
+      ),
     );
     if (!mounted) return;
     if (domain != null && domain.isNotEmpty) {
@@ -86,6 +97,34 @@ class _DiscoverScreenState extends ConsumerState<DiscoverScreen> {
     } else {
       setState(() {});
     }
+    unawaited(_refreshNames());
+  }
+
+  /// Tên hiển thị có thể đổi sau khi cài/đổi tên nguồn ở màn Nguồn — đọc lại
+  /// riêng tên, không đụng nguồn đang chọn.
+  Future<void> _refreshNames() async {
+    try {
+      final db = ref.read(appDbProvider);
+      final overrides = await loadAdapterNames(db);
+      final cache = await db.getSetting('registryIndexCache');
+      if (mounted) {
+        setState(() => _names = SourceRegistry.namesFromCache(cache, overrides));
+      }
+    } catch (_) {}
+  }
+
+  /// Back hệ thống: lùi lịch sử web trước, hết thì về tab Thư viện.
+  Future<void> handleBack() async {
+    final web = _web;
+    if (web != null) {
+      try {
+        if (await web.canGoBack()) {
+          await web.goBack();
+          return;
+        }
+      } catch (_) {}
+    }
+    widget.onBackToLibrary?.call();
   }
 
   String? _effectiveDomain(List<SourceAdapter> sources) {
@@ -214,6 +253,10 @@ class _DiscoverScreenState extends ConsumerState<DiscoverScreen> {
     );
     if (!mounted) return;
     if (action == 'read') {
+      // Chọn đọc một truyện từ trang nguồn nghĩa là muốn giữ nó: lưu luôn,
+      // kẻo đọc xong quay lại Thư viện không thấy truyện.
+      if (!inLib) await _saveStory(page, title, silent: true);
+      if (!mounted) return;
       final start =
           savedLast ??
           (info.chapters.isEmpty ? page.url : info.chapters.first.url);
@@ -229,7 +272,11 @@ class _DiscoverScreenState extends ConsumerState<DiscoverScreen> {
     }
   }
 
-  Future<void> _saveStory(DiscoverPage page, String title) async {
+  Future<void> _saveStory(
+    DiscoverPage page,
+    String title, {
+    bool silent = false,
+  }) async {
     final info = page.story!;
     final db = ref.read(appDbProvider);
     // Tên trống thì lấy tên tạm để thẻ thư viện không bị trống.
@@ -249,7 +296,7 @@ class _DiscoverScreenState extends ConsumerState<DiscoverScreen> {
       );
       final last = info.chapters.last;
       await db.setLatestChapter(page.url, last.url, last.title);
-      if (!mounted) return;
+      if (!mounted || silent) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
@@ -271,56 +318,64 @@ class _DiscoverScreenState extends ConsumerState<DiscoverScreen> {
     final sources = _sources;
     final domain = _effectiveDomain(sources);
     // Không dùng AppBar: tên tab đã ở thanh dưới, bỏ đi để web có thêm chỗ.
-    // Chọn nguồn nằm ở màn Nguồn truyện (nút Mở) thay vì hàng chip.
-    return Scaffold(
-      body: SafeArea(
-        bottom: false,
-        child: sources.isEmpty
-            ? _empty()
-            : Column(
-                children: [
-                  _toolbar(),
-                  SizedBox(
-                    height: 2,
-                    child: _pageLoading
-                        ? const LinearProgressIndicator(minHeight: 2)
-                        : null,
-                  ),
-                  Expanded(
-                    child: InAppWebView(
-                      key: ValueKey(domain),
-                      initialUrlRequest: URLRequest(
-                        url: WebUri(
-                          DiscoverScreen.homeUrl(
-                            sources.firstWhere((a) => a.domain == domain),
+    return PopScope(
+      // Chặn Back khi tab Khám phá đang hiện để lùi lịch sử web trước;
+      // các tab khác để HomeScreen xử lý.
+      canPop: !widget.active,
+      onPopInvokedWithResult: (didPop, _) {
+        if (didPop) return;
+        unawaited(handleBack());
+      },
+      child: Scaffold(
+        body: SafeArea(
+          bottom: false,
+          child: sources.isEmpty
+              ? _empty()
+              : Column(
+                  children: [
+                    _toolbar(),
+                    SizedBox(
+                      height: 2,
+                      child: _pageLoading
+                          ? const LinearProgressIndicator(minHeight: 2)
+                          : null,
+                    ),
+                    Expanded(
+                      child: InAppWebView(
+                        key: ValueKey(domain),
+                        initialUrlRequest: URLRequest(
+                          url: WebUri(
+                            DiscoverScreen.homeUrl(
+                              sources.firstWhere((a) => a.domain == domain),
+                            ),
                           ),
                         ),
+                        initialSettings: WebFetcher.settings,
+                        onWebViewCreated: (c) {
+                          _web = c;
+                          _updateNav(c);
+                        },
+                        onLoadStart: (_, _) {
+                          if (mounted) setState(() => _pageLoading = true);
+                        },
+                        onLoadStop: (c, _) {
+                          if (mounted) setState(() => _pageLoading = false);
+                          _updateNav(c);
+                        },
+                        // Trang lỗi/mất mạng không có onLoadStop: mở lại nút
+                        // "Mở bằng app" thay vì treo spinner mãi.
+                        onReceivedError: (_, _, _) {
+                          if (mounted) setState(() => _pageLoading = false);
+                        },
+                        onReceivedHttpError: (_, _, _) {
+                          if (mounted) setState(() => _pageLoading = false);
+                        },
+                        onUpdateVisitedHistory: (c, _, _) => _updateNav(c),
                       ),
-                      initialSettings: WebFetcher.settings,
-                      onWebViewCreated: (c) {
-                        _web = c;
-                        _updateNav(c);
-                      },
-                      onLoadStart: (_, _) {
-                        if (mounted) setState(() => _pageLoading = true);
-                      },
-                      onLoadStop: (c, _) {
-                        if (mounted) setState(() => _pageLoading = false);
-                        _updateNav(c);
-                      },
-                      // Trang lỗi/mất mạng không có onLoadStop: mở lại nút
-                      // "Mở bằng app" thay vì treo spinner mãi.
-                      onReceivedError: (_, _, _) {
-                        if (mounted) setState(() => _pageLoading = false);
-                      },
-                      onReceivedHttpError: (_, _, _) {
-                        if (mounted) setState(() => _pageLoading = false);
-                      },
-                      onUpdateVisitedHistory: (c, _, _) => _updateNav(c),
                     ),
-                  ),
-                ],
-              ),
+                  ],
+                ),
+        ),
       ),
     );
   }
@@ -349,12 +404,12 @@ class _DiscoverScreenState extends ConsumerState<DiscoverScreen> {
             ),
             const SizedBox(height: 16),
             Text(
-              'Chưa cài nguồn truyện',
+              'Chưa có nguồn truyện',
               style: Theme.of(context).textTheme.titleMedium,
             ),
             const SizedBox(height: 8),
             Text(
-              'Vào Nguồn truyện để thêm nguồn, rồi quay lại đây để xem trang '
+              'Vào Nguồn truyện để cài nguồn, rồi quay lại đây để xem trang '
               'của nguồn ngay trong app.',
               textAlign: TextAlign.center,
               style: Theme.of(context).textTheme.bodyMedium,
@@ -363,7 +418,7 @@ class _DiscoverScreenState extends ConsumerState<DiscoverScreen> {
             FilledButton.tonalIcon(
               onPressed: _openSources,
               icon: const Icon(Icons.dns_outlined),
-              label: const Text('Mở Nguồn truyện'),
+              label: const Text('Cài nguồn truyện'),
             ),
           ],
         ),
@@ -397,12 +452,34 @@ class _DiscoverScreenState extends ConsumerState<DiscoverScreen> {
             ),
           ),
         ),
-        IconButton(
-          tooltip: 'Nguồn truyện',
-          visualDensity: VisualDensity.compact,
+        // Đổi nguồn ngay tại đây (2 chạm) thay vì phải mở hẳn màn Nguồn.
+        PopupMenuButton<String>(
+          tooltip: 'Chọn nguồn',
           iconSize: 22,
           icon: const Icon(Icons.dns_outlined),
-          onPressed: _openSources,
+          onSelected: (v) {
+            if (v == '__manage__') {
+              unawaited(_openSources());
+            } else {
+              _select(v);
+            }
+          },
+          itemBuilder: (_) {
+            final current = _effectiveDomain(_sources);
+            return [
+              for (final a in _sources)
+                CheckedPopupMenuItem(
+                  value: a.domain,
+                  checked: a.domain == current,
+                  child: Text(_labelOf(a.domain)),
+                ),
+              const PopupMenuDivider(),
+              const PopupMenuItem(
+                value: '__manage__',
+                child: Text('Quản lý nguồn…'),
+              ),
+            ];
+          },
         ),
         const SizedBox(width: 4),
         FilledButton.tonalIcon(
@@ -424,10 +501,13 @@ class _DiscoverScreenState extends ConsumerState<DiscoverScreen> {
                   child: CircularProgressIndicator(strokeWidth: 2),
                 )
               : const Icon(Icons.auto_stories, size: 18),
-          label: Text(_opening ? 'Đang đọc...' : 'Mở bằng app'),
+          label: Text(_opening ? 'Đang nhận diện...' : 'Mở bằng app'),
         ),
         const SizedBox(width: 8),
       ],
     );
   }
+
+  String _labelOf(String domain) =>
+      SourceRegistry.labelFor(domain, _names);
 }

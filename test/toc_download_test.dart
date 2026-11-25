@@ -54,7 +54,11 @@ class _Fetcher extends WebFetcher {
   Completer<void>? gate;
 
   @override
-  Future<ChapterContent> fetchChapter(String url, SourceAdapter adapter) async {
+  Future<ChapterContent> fetchChapter(
+    String url,
+    SourceAdapter adapter, {
+    int maxTries = 8,
+  }) async {
     fetched.add(url);
     final g = gate;
     if (g != null && fetched.length == 1) await g.future;

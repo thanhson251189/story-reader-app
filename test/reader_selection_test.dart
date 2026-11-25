@@ -49,7 +49,9 @@ class FakeAppDb extends AppDb {
   Future<void> touchLibrary(String storyUrl, String chapterUrl) async {}
 
   @override
-  Future<bool> isInLibrary(String storyUrl) async => false;
+  // Truyện đang đọc đã nằm trong thư viện: các test ở đây bàn chuyện bôi
+  // đen/đánh dấu, không phải nhắc lưu thư viện.
+  Future<bool> isInLibrary(String storyUrl) async => true;
 
   @override
   Future<void> savePosition(String url, double offset) async {}
@@ -473,7 +475,7 @@ void main() {
     expect(marks.single['para_index'], 0);
 
     // Danh sách đánh dấu: snippet + nhãn chương/đoạn.
-    await tester.tap(find.byTooltip('Thêm'));
+    await tester.tap(find.byTooltip('Tuỳ chọn'));
     await tester.pumpAndSettle();
     await tester.tap(find.text('Đoạn đã đánh dấu'));
     await tester.pumpAndSettle();
@@ -506,7 +508,7 @@ void main() {
     );
     await pumpReader(tester, db);
 
-    await tester.tap(find.byTooltip('Thêm'));
+    await tester.tap(find.byTooltip('Tuỳ chọn'));
     await tester.pumpAndSettle();
     await tester.tap(find.text('Đoạn đã đánh dấu'));
     await tester.pumpAndSettle();
@@ -573,7 +575,7 @@ void main() {
 
     // Mở route mới đè lên (sheet hẹn giờ là một route) — menu nằm trong root
     // overlay, không tự gỡ theo widget tree: phải bị gỡ khi rời route.
-    await tester.tap(find.byTooltip('Thêm'));
+    await tester.tap(find.byTooltip('Tuỳ chọn'));
     await tester.pumpAndSettle();
     expect(
       find.byKey(const Key('selection_menu')),
@@ -647,7 +649,7 @@ void main() {
     );
     await pumpReader(tester, db);
 
-    await tester.tap(find.byTooltip('Thêm'));
+    await tester.tap(find.byTooltip('Tuỳ chọn'));
     await tester.pumpAndSettle();
     await tester.tap(find.text('Đoạn đã đánh dấu'));
     await tester.pumpAndSettle();

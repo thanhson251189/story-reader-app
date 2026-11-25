@@ -82,7 +82,7 @@ void main() {
 
     expect(_paragraph(tester).style?.fontFamily, 'Literata');
 
-    await tester.tap(find.byTooltip('Thêm'));
+    await tester.tap(find.byTooltip('Tuỳ chọn'));
     await tester.pumpAndSettle();
     await tester.tap(find.text('Cài đặt đọc'));
     await tester.pumpAndSettle();

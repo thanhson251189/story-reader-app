@@ -140,7 +140,7 @@ class LibraryChecker {
               ? await fetcher.fetchStoryApiOnly(storyUrl, adapter)
               : await fetcher.fetchStory(storyUrl, adapter);
           if (info == null) {
-            warns.add('$title: nguồn chưa trả mục lục qua API');
+            warns.add('$title: nguồn không trả được danh sách chương');
             continue;
           }
           if (_cancel) {
@@ -153,14 +153,14 @@ class LibraryChecker {
             );
           }
           if (info.chapters.isEmpty) {
-            warns.add('$title: không lấy được mục lục');
+            warns.add('$title: không lấy được danh sách chương');
             continue;
           }
           // Bản thiếu hoặc ngắn hơn bản đang lưu: không ghi đè, không cập nhật
           // "chương mới nhất" theo danh sách cụt (sẽ báo oan hoặc mất chương).
           final saved = await db.saveTocUnlessShorter(storyUrl, info);
           if (!saved) {
-            warns.add('$title: mục lục tải chưa đủ, giữ danh sách chương cũ');
+            warns.add('$title: danh sách chương tải chưa đủ, giữ bản cũ');
             continue;
           }
           final last = info.chapters.last;
