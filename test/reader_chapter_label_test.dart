@@ -34,9 +34,8 @@ void main() {
     expect(ReaderScreen.chapterRest('Chương thử'), 'Chương thử');
   });
 
-  testWidgets('chữ hệ thống 1.6: thanh dưới vẫn hiện đủ số chương', (
-    tester,
-  ) async {
+  testWidgets('chữ hệ thống 1.6: số chương chỉ ở thanh trên, thanh dưới '
+      'không lặp lại', (tester) async {
     tester.view.physicalSize = const Size(360, 780);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.resetPhysicalSize);
@@ -85,8 +84,9 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.text('1234/1350'), findsWidgets);
-    expect(find.text('Thiên Hải Quan Vụ'), findsWidgets);
+    expect(find.text('1234/1350'), findsOneWidget);
+    expect(find.text('Thiên Hải Quan Vụ'), findsOneWidget);
+    expect(find.byTooltip('Nghe đọc'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 }

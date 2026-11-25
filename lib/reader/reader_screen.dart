@@ -1912,7 +1912,10 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen>
           : SafeArea(
               child: Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                // Chỉ nút điều khiển: số chương + tên đã ở thanh trên, không
+                // lặp lại ở đây (cỡ chữ 1,6 hai thanh hiện cùng lúc).
                 child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                   children: [
                     IconButton(
                       icon: const Icon(Icons.chevron_left),
@@ -1945,37 +1948,6 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen>
                       iconSize: 26,
                       onPressed: _skipEnabled ? _player.skipNext : null,
                       tooltip: 'Câu sau',
-                    ),
-                    Expanded(
-                      child: MediaQuery.withClampedTextScaling(
-                        maxScaleFactor: 1.6,
-                        child: Column(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            if (chapterLine != null)
-                              FittedBox(
-                                fit: BoxFit.scaleDown,
-                                child: Text(
-                                  chapterLine,
-                                  maxLines: 1,
-                                  style: TextStyle(
-                                    color: fg,
-                                    fontSize: 13,
-                                    fontWeight: FontWeight.w600,
-                                  ),
-                                ),
-                              ),
-                            if (chapterName.isNotEmpty)
-                              Text(
-                                chapterName,
-                                textAlign: TextAlign.center,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: TextStyle(color: fg, fontSize: 11),
-                              ),
-                          ],
-                        ),
-                      ),
                     ),
                     IconButton(
                       icon: const Icon(Icons.chevron_right),
