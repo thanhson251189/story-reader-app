@@ -490,14 +490,8 @@ class _SourcesScreenState extends ConsumerState<SourcesScreen> {
       );
     } else {
       label = 'Đã cài v${adapter.version}';
-      // Chỉ tab Khám phá mới cần chọn nguồn; mở từ Cài đặt thì nút "Mở"
-      // chẳng có tác dụng gì nên ẩn đi.
-      if (canSelect) {
-        action = FilledButton.tonal(
-          onPressed: () => Navigator.pop(context, e.domain),
-          child: const Text('Mở'),
-        );
-      }
+      // Dòng đã cài tự mở khi chạm nên không cần nút "Mở" riêng: nút này
+      // cộng icon đầu dòng ăn hết chỗ của địa chỉ nguồn khi chữ hệ thống lớn.
     }
     final menu = adapter == null
         ? null
@@ -527,7 +521,6 @@ class _SourcesScreenState extends ConsumerState<SourcesScreen> {
             : (adapter == null
                   ? null
                   : () => _showSourceActions(e, adapter, name)),
-        leading: const Icon(Icons.dns_outlined),
         title: Row(
           children: [
             Flexible(child: Text(name)),
