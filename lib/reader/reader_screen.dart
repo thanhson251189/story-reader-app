@@ -50,6 +50,29 @@ class ReaderScreen extends ConsumerStatefulWidget {
     return !hasNext;
   }
 
+  // "Chương 1234: Tên" / "Hồi 3 - ..." — nhóm 1 là số chương, khớp tới hết
+  // dấu phân cách để lấy phần tên chương còn lại.
+  static final _chapterHead = RegExp(
+    r'^\s*(?:chương|chapter|hồi|tiết|quyển|phần)\s*(\d+(?:[.,]\d+)?)'
+    r'\s*[:\-–—.]?\s*',
+    caseSensitive: false,
+  );
+
+  /// Số chương đọc từ đầu tiêu đề ("Chương 12: ..." → 12), null nếu tiêu đề
+  /// không mang số.
+  static int? chapterNumberFromTitle(String title) {
+    final m = _chapterHead.firstMatch(title);
+    if (m == null) return null;
+    return double.tryParse(m[1]!.replaceAll(',', '.'))?.floor();
+  }
+
+  /// Tên chương sau phần số ("Chương 12: Tên" → "Tên"); dòng số chương đã
+  /// hiện riêng nên không lặp lại ở đây. Tiêu đề không có số thì giữ nguyên.
+  static String chapterRest(String title) {
+    final m = _chapterHead.firstMatch(title);
+    return m == null ? title.trim() : title.substring(m.end).trim();
+  }
+
   /// Chương kế tiếp sau [currentUrl] trong [toc], không nhảy cóc qua chương
   /// mới khác. Khớp URL đã chuẩn hóa trước; lệch URL (trang đổi link chương)
   /// thì theo số chương: chương gần nhất có số lớn hơn chương đang đọc.
@@ -287,7 +310,6 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen>
   List<GlobalKey> _paraKeys = [];
   int _lastSpokenPara = -1;
   String? _shownError;
-  String? _progressLabel;
   // Chương đang đọc nằm ở đâu trong mục lục đã lưu: biết đang ở chương cuối
   // để hiện nút kiểm tra chương mới ngay cuối nội dung.
   int? _tocIndex;
@@ -602,12 +624,11 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen>
     }
   }
 
-  // "Chương x/y" lấy từ mục lục đã lưu; không có mục lục thì ẩn đi.
+  // Vị trí chương trong mục lục đã lưu; không có mục lục thì ẩn phần "/tổng".
   Future<void> _updateProgress(String chapterUrl) async {
     void clear() {
       if (mounted) {
         setState(() {
-          _progressLabel = null;
           _tocIndex = null;
           _tocTotal = null;
         });
@@ -625,13 +646,32 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen>
       );
       if (!mounted) return;
       setState(() {
-        _progressLabel = i < 0 ? null : 'Chương ${i + 1}/${toc.length}';
         _tocIndex = i < 0 ? null : i;
         _tocTotal = toc.length;
       });
     } catch (_) {
       clear();
     }
+  }
+
+  /// Số chương đang đọc, đánh số như mục lục: số cuối đường dẫn (nguồn web
+  /// nhét số chương vào URL), sách trong máy lấy chỉ số, cùng lắm thì đọc số
+  /// ở đầu tiêu đề hoặc vị trí trong mục lục.
+  int? _chapterNumber(ChapterContent c) {
+    final book = BookUrl.chapterOf(c.url);
+    if (book != null) return book + 1;
+    return WebFetcher.trailingNumber(c.url) ??
+        ReaderScreen.chapterNumberFromTitle(c.title) ??
+        (_tocIndex == null ? null : _tocIndex! + 1);
+  }
+
+  /// Dòng số chương ở thanh trên/dưới: "1234/1350", không có mục lục thì chỉ
+  /// "1234". Bỏ chữ "Chương" để cỡ chữ hệ thống lớn không cắt mất con số.
+  String? _chapterLine(ChapterContent c) {
+    final n = _chapterNumber(c);
+    if (n == null) return null;
+    final total = _tocTotal;
+    return total != null && n <= total ? '$n/$total' : '$n';
   }
 
   bool get _atTocEnd {
@@ -1715,6 +1755,9 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen>
   Widget build(BuildContext context) {
     final (bg, fg) = _themes[_theme] ?? _themes['light']!;
     final c = _content;
+    final chapterLine = c == null ? null : _chapterLine(c);
+    final chapterName =
+        c == null ? '' : ReaderScreen.chapterRest(c.title);
     final isPlayingThis = _player.playing && _player.chapter?.url == c?.url;
     final showBottom = c != null && (_chromeVisible || isPlayingThis);
     return Scaffold(
@@ -1724,11 +1767,35 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen>
           : AppBar(
               backgroundColor: bg,
               foregroundColor: fg,
-              title: Text(
-                c?.title ?? 'Đang tải...',
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-              ),
+              // Hai dòng: số chương đứng trước để không bị cắt mất, tên
+              // chương theo sau. Chặn cỡ chữ ở mức 1.6 cho vừa chiều cao
+              // thanh tiêu đề cố định.
+              title: c == null
+                  ? const Text('Đang tải...')
+                  : MediaQuery.withClampedTextScaling(
+                      maxScaleFactor: 1.6,
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          if (chapterLine != null)
+                            Text(
+                              chapterLine,
+                              maxLines: 1,
+                              style: const TextStyle(
+                                fontSize: 12,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          Text(
+                            chapterName.isEmpty ? c.title : chapterName,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(fontSize: 12),
+                          ),
+                        ],
+                      ),
+                    ),
               actions: [
                 if (c != null)
                   IconButton(
@@ -1880,24 +1947,34 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen>
                       tooltip: 'Câu sau',
                     ),
                     Expanded(
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Text(
-                            c.title,
-                            textAlign: TextAlign.center,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(color: fg),
-                          ),
-                          if (_progressLabel != null)
-                            Text(
-                              _progressLabel!,
-                              textAlign: TextAlign.center,
-                              maxLines: 1,
-                              style: TextStyle(color: fg, fontSize: 12),
-                            ),
-                        ],
+                      child: MediaQuery.withClampedTextScaling(
+                        maxScaleFactor: 1.6,
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            if (chapterLine != null)
+                              FittedBox(
+                                fit: BoxFit.scaleDown,
+                                child: Text(
+                                  chapterLine,
+                                  maxLines: 1,
+                                  style: TextStyle(
+                                    color: fg,
+                                    fontSize: 13,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                              ),
+                            if (chapterName.isNotEmpty)
+                              Text(
+                                chapterName,
+                                textAlign: TextAlign.center,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(color: fg, fontSize: 11),
+                              ),
+                          ],
+                        ),
                       ),
                     ),
                     IconButton(
