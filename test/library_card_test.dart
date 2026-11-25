@@ -10,7 +10,8 @@ import 'package:story_reader/data/app_db.dart';
 import 'package:story_reader/fetcher/web_fetcher.dart';
 import 'package:story_reader/library/library_screen.dart';
 
-const _story = 'https://truyendich.vn/kiem-dao-de-nhat-tien-ban-dich-chuan-full/';
+const _story =
+    'https://truyendich.vn/kiem-dao-de-nhat-tien-ban-dich-chuan-full/';
 
 List<ChapterRef> tocChapters(int count) => [
   for (var i = 1; i <= count; i++)
@@ -20,6 +21,7 @@ List<ChapterRef> tocChapters(int count) => [
 class FakeAppDb extends AppDb {
   final List<Map<String, dynamic>> library;
   final Map<String, List<ChapterRef>> tocs = {};
+  final Map<String, String> settings = {};
 
   FakeAppDb(this.library, {int tocCount = 0, String tocStory = _story}) {
     if (tocCount > 0) tocs[tocStory] = tocChapters(tocCount);
@@ -29,7 +31,7 @@ class FakeAppDb extends AppDb {
   Future<List<Map<String, dynamic>>> getLibrary() async => library;
 
   @override
-  Future<String?> getSetting(String key) async => null;
+  Future<String?> getSetting(String key) async => settings[key];
 
   @override
   Future<List<ChapterRef>> getToc(String storyUrl) async =>
@@ -109,9 +111,8 @@ Future<void> pumpLibrary(
         home: Builder(
           builder: (context) => MediaQuery(
             // Người dùng để cỡ chữ lớn — đúng ca dòng "Đang đọc" bị cắt.
-            data: MediaQuery.of(
-              context,
-            ).copyWith(textScaler: const TextScaler.linear(1.6)),
+            data: MediaQuery.of(context)
+                .copyWith(textScaler: const TextScaler.linear(1.6)),
             child: const LibraryScreen(active: true),
           ),
         ),
@@ -133,18 +134,15 @@ void main() {
   testWidgets('Chữ to: dòng đang đọc không bị cắt, có domain nguồn', (
     tester,
   ) async {
-    final db = FakeAppDb(
-      [
-        item(
-          storyUrl: _story,
-          title: 'Kiếm Đạo Đệ Nhất',
-          last: '${_story}chuong-13/',
-          latest: '${_story}chuong-741/',
-          latestTitle: 'Chương 741',
-        ),
-      ],
-      tocCount: 741,
-    );
+    final db = FakeAppDb([
+      item(
+        storyUrl: _story,
+        title: 'Kiếm Đạo Đệ Nhất',
+        last: '${_story}chuong-13/',
+        latest: '${_story}chuong-741/',
+        latestTitle: 'Chương 741',
+      ),
+    ], tocCount: 741);
     await pumpLibrary(tester, db);
 
     final progress = find.text('Đang đọc: 13/741');
@@ -167,11 +165,7 @@ void main() {
     tester,
   ) async {
     final db = FakeAppDb([
-      item(
-        storyUrl: 'book:abc',
-        title: 'Sách nhập từ máy',
-        last: 'book:abc:2',
-      ),
+      item(storyUrl: 'book:abc', title: 'Sách nhập từ máy', last: 'book:abc:2'),
     ]);
     await pumpLibrary(tester, db);
 
@@ -214,9 +208,45 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Đọc tiếp'), findsOneWidget);
+    expect(find.text('Nghe từ chương đang đọc'), findsOneWidget);
+    expect(find.text('Tải cả truyện'), findsOneWidget);
+    expect(find.text('Xoá chương đã tải'), findsOneWidget);
     expect(find.text('Kiểm tra chương mới'), findsOneWidget);
     expect(find.text('Xóa khỏi thư viện'), findsOneWidget);
     expect(find.text('Kiếm Đạo Đệ Nhất'), findsOneWidget, reason: 'chưa xóa');
+  });
+
+  testWidgets('Ẩn nguồn 18+: gom truyện người lớn, bấm Hiện thì thấy lại', (
+    tester,
+  ) async {
+    const adultStory = 'https://nguon18.test/truyen-a/';
+    final db = FakeAppDb([
+      item(
+        storyUrl: adultStory,
+        title: 'Truyện người lớn',
+        last: '${adultStory}chuong-1/',
+      ),
+      item(
+        storyUrl: _story,
+        title: 'Truyện thường',
+        last: '${_story}chuong-1/',
+      ),
+    ]);
+    db.settings['hideAdult'] = '1';
+    db.settings['adultDomains'] = '["nguon18.test"]';
+    final adapters = AdapterRepository([
+      SourceAdapter.fromJson({'domain': 'nguon18.test', 'selectors': {}}),
+    ]);
+
+    await pumpLibrary(tester, db, adapters: adapters);
+    expect(find.text('Truyện người lớn'), findsNothing);
+    expect(find.text('Truyện thường'), findsOneWidget);
+    expect(find.text('Đã ẩn 1 truyện 18+'), findsOneWidget);
+
+    await tester.tap(find.text('Hiện'));
+    await tester.pumpAndSettle();
+    expect(find.text('Truyện người lớn'), findsOneWidget);
+    expect(find.text('Đang hiện 1 truyện 18+'), findsOneWidget);
   });
 
   testWidgets('Sách trong máy: menu không có kiểm tra chương mới', (
@@ -247,7 +277,10 @@ void main() {
         latestTitle: 'Chương 13',
       ),
     ]);
-    final info = NovelInfo(title: 'Kiếm Đạo Đệ Nhất', chapters: tocChapters(14));
+    final info = NovelInfo(
+      title: 'Kiếm Đạo Đệ Nhất',
+      chapters: tocChapters(14),
+    );
     final adapters = AdapterRepository([
       SourceAdapter(
         domain: 'truyendich.vn',
@@ -267,10 +300,7 @@ void main() {
     await tester.tap(find.byKey(ValueKey('check-new-$_story')));
     await tester.pumpAndSettle();
 
-    expect(
-      find.text('Có chương mới — Chưa đọc: Chương 14'),
-      findsOneWidget,
-    );
+    expect(find.text('Có chương mới — Chưa đọc: Chương 14'), findsOneWidget);
     expect(find.text('Đọc'), findsOneWidget, reason: 'mở luôn chương mới');
     expect(
       db.library.single['latest_chapter_url'],

@@ -9,6 +9,8 @@ import 'package:package_info_plus/package_info_plus.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 
+import '../background/new_chapter_worker.dart';
+import '../core/app_notifications.dart';
 import '../core/errors.dart';
 import '../core/providers.dart';
 import '../data/backup.dart';
@@ -33,6 +35,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   String? _version;
   String? _build;
   bool _autoCheck = true;
+  bool _hideAdult = false;
+  bool _notifyNew = false;
   bool _checkingUpdate = false;
   bool _busy = false; // đang sao lưu / phục hồi
   int _wordFixCount = 0; // số cụm từ sửa lỗi người dùng đã dạy
@@ -54,12 +58,21 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     final auto =
         (await ref.read(appDbProvider).getSetting('autoCheckNew') ?? '1') ==
         '1';
+    final hideAdult = await SourceRegistry.hideAdultEnabled(
+      ref.read(appDbProvider),
+    );
+    final notifyNew =
+        (await ref.read(appDbProvider).getSetting('notifyNewChapters') ??
+            '0') ==
+        '1';
     final fixes = await ref.read(appDbProvider).getWordFixes();
     if (mounted) {
       setState(() {
         _version = version;
         _build = build;
         _autoCheck = auto;
+        _hideAdult = hideAdult;
+        _notifyNew = notifyNew;
         _wordFixCount = fixes.length;
       });
     }
@@ -104,6 +117,55 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   Future<void> _toggleAutoCheck(bool v) async {
     await ref.read(appDbProvider).setSetting('autoCheckNew', v ? '1' : '0');
     if (mounted) setState(() => _autoCheck = v);
+  }
+
+  Future<void> _toggleHideAdult(bool v) async {
+    await ref
+        .read(appDbProvider)
+        .setSetting(SourceRegistry.hideAdultKey, v ? '1' : '0');
+    if (mounted) setState(() => _hideAdult = v);
+  }
+
+  Future<void> _toggleNotify(bool v) async {
+    final db = ref.read(appDbProvider);
+    if (v) {
+      final granted = await AppNotifications.instance.ensurePermission();
+      if (!granted) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text(
+                'Chưa có quyền thông báo. Bật trong Cài đặt hệ thống rồi thử lại.',
+              ),
+            ),
+          );
+        }
+        return;
+      }
+      await db.setSetting('notifyNewChapters', '1');
+      try {
+        await NewChapterScheduler.enable();
+      } catch (e) {
+        debugPrint('Bật kiểm tra nền lỗi: $e');
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text(
+                'Đã bật báo khi mở app, nhưng chưa đăng ký được kiểm tra nền.',
+              ),
+            ),
+          );
+        }
+      }
+    } else {
+      await db.setSetting('notifyNewChapters', '0');
+      try {
+        await NewChapterScheduler.disable();
+      } catch (e) {
+        debugPrint('Tắt kiểm tra nền lỗi: $e');
+      }
+    }
+    if (mounted) setState(() => _notifyNew = v);
   }
 
   Future<void> _backup() async {
@@ -291,10 +353,31 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             child: Column(
               children: [
                 SwitchListTile(
+                  key: const ValueKey('auto-check-new'),
                   secondary: const Icon(Icons.new_releases_outlined),
                   title: const Text('Tự kiểm tra chương mới khi mở app'),
                   value: _autoCheck,
                   onChanged: _toggleAutoCheck,
+                ),
+                SwitchListTile(
+                  key: const ValueKey('hide-adult'),
+                  secondary: const Icon(Icons.visibility_off_outlined),
+                  title: const Text('Ẩn nguồn 18+'),
+                  subtitle: const Text(
+                    'Không hiện trong Tìm kiếm, Khám phá và Thư viện',
+                  ),
+                  value: _hideAdult,
+                  onChanged: _toggleHideAdult,
+                ),
+                SwitchListTile(
+                  key: const ValueKey('notify-new'),
+                  secondary: const Icon(Icons.notifications_outlined),
+                  title: const Text('Báo chương mới bằng thông báo'),
+                  subtitle: const Text(
+                    'Kiểm tra nền cho nguồn có API; nguồn khác kiểm khi mở app',
+                  ),
+                  value: _notifyNew,
+                  onChanged: _toggleNotify,
                 ),
                 ListTile(
                   leading: const Icon(Icons.explore_outlined),

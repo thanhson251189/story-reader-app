@@ -1,4 +1,5 @@
 import 'package:audio_service/audio_service.dart';
+
 import 'tts_player.dart';
 
 class TtsAudioHandler extends BaseAudioHandler {
@@ -12,27 +13,40 @@ class TtsAudioHandler extends BaseAudioHandler {
   void _sync() {
     final c = player.chapter;
     if (c != null) {
-      mediaItem.add(MediaItem(
-        id: c.url,
-        title: c.title,
-        artist: 'Story Reader',
-        duration: null,
-      ));
+      mediaItem.add(
+        MediaItem(
+          id: c.url,
+          title: c.title,
+          artist: player.storyTitle ?? 'Story Reader',
+          duration: null,
+        ),
+      );
+    } else {
+      // Đóng phiên nghe (nút X trên mini-player) phải bỏ thông báo cũ.
+      mediaItem.add(null);
     }
-    playbackState.add(playbackState.value.copyWith(
-      processingState: player.loading
-          ? AudioProcessingState.loading
-          : (player.chunks.isEmpty ? AudioProcessingState.idle : AudioProcessingState.ready),
-      playing: player.playing,
-      controls: [
-        MediaControl.skipToPrevious,
-        player.playing ? MediaControl.pause : MediaControl.play,
-        MediaControl.skipToNext,
-      ],
-      systemActions: const {MediaAction.playPause, MediaAction.skipToNext, MediaAction.skipToPrevious},
-      androidCompactActionIndices: const [0, 1, 2],
-      updatePosition: Duration.zero,
-    ));
+    playbackState.add(
+      playbackState.value.copyWith(
+        processingState: player.loading
+            ? AudioProcessingState.loading
+            : (player.chunks.isEmpty
+                  ? AudioProcessingState.idle
+                  : AudioProcessingState.ready),
+        playing: player.playing,
+        controls: [
+          MediaControl.skipToPrevious,
+          player.playing ? MediaControl.pause : MediaControl.play,
+          MediaControl.skipToNext,
+        ],
+        systemActions: const {
+          MediaAction.playPause,
+          MediaAction.skipToNext,
+          MediaAction.skipToPrevious,
+        },
+        androidCompactActionIndices: const [0, 1, 2],
+        updatePosition: Duration.zero,
+      ),
+    );
   }
 
   @override

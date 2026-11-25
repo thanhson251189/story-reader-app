@@ -3,9 +3,11 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import 'core/app_notifications.dart';
 import 'core/errors.dart';
 import 'core/providers.dart';
 import 'discover/discover_screen.dart';
+import 'home/mini_player.dart';
 import 'library/library_checker.dart';
 import 'library/library_screen.dart';
 import 'search/search_screen.dart';
@@ -110,6 +112,17 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
       );
       if (res.cancelled || !mounted) return;
       final messenger = ScaffoldMessenger.of(context);
+      // Bật thông báo thì đẩy ra notification hệ thống; tắt (hoặc máy từ
+      // chối) thì giữ snackbar như cũ để không mất tin.
+      var notified = false;
+      if (res.fresh > 0 &&
+          (await db.getSetting('notifyNewChapters') ?? '0') == '1') {
+        notified = await AppNotifications.instance.showNewChapters(
+          fresh: res.fresh,
+          titles: res.freshTitles,
+        );
+      }
+      if (!mounted) return;
       if (res.warns.isNotEmpty) {
         final head = res.fresh > 0
             ? '${res.fresh} truyện có chương mới'
@@ -117,7 +130,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
         messenger.showSnackBar(
           SnackBar(content: Text('$head\n${res.warns.join('\n')}')),
         );
-      } else if (res.fresh > 0) {
+      } else if (res.fresh > 0 && !notified) {
         messenger.showSnackBar(
           SnackBar(content: Text('${res.fresh} truyện có chương mới')),
         );
@@ -145,9 +158,17 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
           const SettingsScreen(),
         ],
       ),
-      bottomNavigationBar: HomeScreen.navBar(
-        index: _tab,
-        onSelect: (i) => setState(() => _tab = i),
+      bottomNavigationBar: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          // Thanh nghe nằm trên thanh tab: đang nghe ở tab nào cũng thấy,
+          // vào màn đọc thì màn đọc có thanh riêng nên không hiện trùng.
+          const MiniPlayer(),
+          HomeScreen.navBar(
+            index: _tab,
+            onSelect: (i) => setState(() => _tab = i),
+          ),
+        ],
       ),
     );
   }

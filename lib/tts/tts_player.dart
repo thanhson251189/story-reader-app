@@ -6,6 +6,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_tts/flutter_tts.dart';
 import 'package:just_audio/just_audio.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:permission_handler/permission_handler.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
 
 import '../adapters/adapter_repository.dart';
@@ -51,6 +52,12 @@ class TtsPlayer extends ChangeNotifier {
   /// URL truyện màn đọc truyền lúc bấm nghe. Chương kế phải dùng đúng URL này
   /// thì sửa từ "chỉ truyện này" mới khớp — đoán từ link chương thì lệch.
   String? _readingStoryUrl;
+
+  /// Tên truyện của phiên nghe hiện tại. Có tên thì thông báo khoá máy và
+  /// mini-player nói đúng truyện, không chỉ tên chương.
+  String? storyTitle;
+
+  String? get readingStoryUrl => _readingStoryUrl;
   Timer? _sleepTimer;
   DateTime? sleepAt;
   bool _disposed = false;
@@ -111,6 +118,17 @@ class TtsPlayer extends ChangeNotifier {
 
   static bool isViVoice(Map<String, String> v) =>
       (v['locale'] ?? '').toLowerCase().startsWith('vi');
+
+  // Nút nghe trên thẻ thư viện không đi qua màn đọc (nơi đang xin quyền),
+  // nên xin ở đây một lần; bị từ chối thì vẫn nghe được, chỉ mất nút trên
+  // màn khoá. Lỗi nền (test/máy lạ) bỏ qua, không chặn việc phát.
+  Future<void> _ensureNotificationPermission() async {
+    if (!Platform.isAndroid) return;
+    try {
+      if (await Permission.notification.isGranted) return;
+      await Permission.notification.request();
+    } catch (_) {}
+  }
 
   List<Map<String, String>> get viVoices => voices.where(isViVoice).toList();
 
@@ -244,8 +262,16 @@ class TtsPlayer extends ChangeNotifier {
     ChapterContent c, {
     int paraIndex = 0,
     String? storyUrl,
+    String? storyTitle,
   }) async {
-    if (storyUrl != null) _readingStoryUrl = storyUrl;
+    if (storyUrl != null) {
+      // Sang truyện khác mà nơi gọi không biết tên: bỏ tên truyện cũ để
+      // mini-player/thông báo không hiện nhầm truyện trước.
+      if (!sameChapterUrl(storyUrl, _readingStoryUrl)) this.storyTitle = null;
+      _readingStoryUrl = storyUrl;
+    }
+    final title = storyTitle?.trim();
+    if (title != null && title.isNotEmpty) this.storyTitle = title;
     _gen++;
     _navGen++;
     // start() là một lệnh phát mới từ nơi gọi — ý định chờ khi tải đã được
@@ -274,6 +300,72 @@ class TtsPlayer extends ChangeNotifier {
     _notify();
     debugPrint('TTS start: ${c.title} (${chunks.length} chunks)');
     unawaited(_loop(gen));
+  }
+
+  /// Nghe một chương mà không cần màn đọc mở (nút trên thẻ thư viện). Tự tải
+  /// chương, bổ sung chương trước/sau từ mục lục, lưu vị trí "đang đọc" rồi
+  /// phát — cùng đường _loadChapter của chế độ nghe tự sang chương.
+  Future<bool> playChapter(
+    String url, {
+    String? storyUrl,
+    String? storyTitle,
+    int paraIndex = 0,
+  }) async {
+    if (storyUrl != null) {
+      if (!sameChapterUrl(storyUrl, _readingStoryUrl)) this.storyTitle = null;
+      _readingStoryUrl = storyUrl;
+    }
+    final title = storyTitle?.trim();
+    if (title != null && title.isNotEmpty) this.storyTitle = title;
+    unawaited(_ensureNotificationPermission());
+    try {
+      final c = await _loadChapter(url);
+      if (c == null) {
+        lastError =
+            'Không tải được chương. Mở truyện bằng tay để xem chi tiết.';
+        _notify();
+        return false;
+      }
+      // Thẻ thư viện thường có sẵn tên truyện; nếu không, lấy từ dòng thư viện
+      // để mini-player không hiện link thô.
+      if (this.storyTitle == null || this.storyTitle!.trim().isEmpty) {
+        final story = storyUrl ?? storyUrlFromChapter(c.url);
+        final lib = await db.getLibrary();
+        for (final row in lib) {
+          if (sameChapterUrl(row['story_url'] as String?, story)) {
+            final t = (row['title'] as String?)?.trim();
+            if (t != null && t.isNotEmpty) {
+              this.storyTitle = t;
+              break;
+            }
+          }
+        }
+      }
+      final t = this.storyTitle?.trim();
+      if (t != null && t.isNotEmpty) await db.setSetting('lastTitle', t);
+      await start(c, paraIndex: paraIndex, storyUrl: storyUrl, storyTitle: t);
+      return true;
+    } catch (e) {
+      lastError = 'Không tải được chương: ${friendlyError(e)}';
+      _notify();
+      return false;
+    }
+  }
+
+  /// Đóng phiên nghe từ mini-player: dừng tiếng, bỏ chương đang giữ và hẹn
+  /// giờ để thanh mini biến mất hẳn (khác stop() chỉ tạm dừng phiên).
+  Future<void> closeSession() async {
+    // Chặn lượt "hết chương tự nạp chương kế" đang chạy: nếu không, nó nạp
+    // xong sẽ gán lại chapter và mini-player hiện lại ngay sau khi đóng.
+    _navGen++;
+    await stop();
+    chapter = null;
+    chunks = [];
+    _index = 0;
+    _readingStoryUrl = null;
+    storyTitle = null;
+    cancelSleepTimer();
+    _notify();
   }
 
   static String _chunkFile(int i) => 'tts_chunk_${i % 2}.wav';

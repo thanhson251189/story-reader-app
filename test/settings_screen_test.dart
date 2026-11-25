@@ -26,15 +26,15 @@ void main() {
     const channel = MethodChannel('dev.fluttercommunity.plus/package_info');
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(channel, (call) async {
-      return {
-        'appName': 'Story Reader',
-        'packageName': 'dev.storyreader.story_reader',
-        'version': '9.9.9',
-        'buildNumber': '99',
-        'buildSignature': '',
-        'installerStore': null,
-      };
-    });
+          return {
+            'appName': 'Story Reader',
+            'packageName': 'dev.storyreader.story_reader',
+            'version': '9.9.9',
+            'buildNumber': '99',
+            'buildSignature': '',
+            'installerStore': null,
+          };
+        });
     final db = AppDb(fileName: 'test_settings_screen.db');
     // Chờ thật cho _load (version + setting) hoàn tất rồi mới bơm frame
     // setState — pumpAndSettle một mình thoát ngay vì chưa có frame nào;
@@ -69,7 +69,15 @@ void main() {
     expect(find.textContaining('bản dựng 99'), findsOneWidget);
     expect(find.text('Kiểm tra cập nhật'), findsOneWidget);
     expect(find.text('Tự kiểm tra chương mới khi mở app'), findsOneWidget);
+    expect(find.text('Ẩn nguồn 18+'), findsOneWidget);
+    expect(find.text('Báo chương mới bằng thông báo'), findsOneWidget);
     expect(find.text('Quản lý nguồn truyện'), findsOneWidget);
+    // Thêm công tắc mới đẩy mục Dữ liệu xuống dưới màn: cuộn tới rồi mới thấy.
+    await tester.scrollUntilVisible(
+      find.text('Sao lưu dữ liệu'),
+      200,
+      scrollable: find.byType(Scrollable).first,
+    );
     expect(find.text('Sao lưu dữ liệu'), findsOneWidget);
     expect(find.text('Phục hồi từ file sao lưu'), findsOneWidget);
   });
@@ -84,14 +92,18 @@ void main() {
     // Mặc định bật: gạt tắt thì DB ghi '0', gạt lại thì về '1'. Gạt ĐÚNG MỘT
     // LẦN rồi poll chờ setSetting ghi DB xong + frame setState đổi công tắc —
     // gạt lại trong lúc write chưa xong là gạt ngược về giá trị cũ.
+    final tile = find.byKey(const ValueKey('auto-check-new'));
     Future<void> toggleTo(bool value) async {
-      await tester.runAsync(() => tester.tap(find.byType(Switch)));
+      await tester.runAsync(() => tester.tap(tile));
       for (var i = 0; i < 40; i++) {
         await tester.runAsync(() async {
           await Future<void>.delayed(const Duration(milliseconds: 50));
           await tester.pumpAndSettle();
         });
-        if (tester.widget<Switch>(find.byType(Switch)).value == value) {
+        final sw = tester.widget<Switch>(
+          find.descendant(of: tile, matching: find.byType(Switch)),
+        );
+        if (sw.value == value) {
           return;
         }
       }
@@ -99,15 +111,9 @@ void main() {
     }
 
     await toggleTo(false);
-    expect(
-      await tester.runAsync(() => db.getSetting('autoCheckNew')),
-      '0',
-    );
+    expect(await tester.runAsync(() => db.getSetting('autoCheckNew')), '0');
 
     await toggleTo(true);
-    expect(
-      await tester.runAsync(() => db.getSetting('autoCheckNew')),
-      '1',
-    );
+    expect(await tester.runAsync(() => db.getSetting('autoCheckNew')), '1');
   });
 }

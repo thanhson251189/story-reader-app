@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'adapters/adapter_repository.dart';
+import 'background/new_chapter_worker.dart';
 import 'core/providers.dart';
 import 'data/app_db.dart';
 import 'fetcher/chapter_prefetcher.dart';
@@ -59,6 +60,9 @@ Future<void> main() async {
   // Xoá file APK cài đặt còn sót từ lần cập nhật trước (khoảng 60MB): cài
   // xong bản mới là file hết tác dụng, lần tải kế luôn ghi đè file mới.
   unawaited(AppUpdater.cleanupLeftoverApk());
+  // Đăng ký lại lượt kiểm chương mới nền nếu người dùng đã bật. Chạy sau khi
+  // UI hiện lên để không làm chậm lần mở app.
+  unawaited(NewChapterScheduler.sync(db).catchError((_) {}));
   // Khởi tạo giọng nói SAU khi app đã hiện lên: engine TTS của một số máy có
   // thể đứng im không hồi đáp — chờ nó trước runApp là màn hình đen mãi.
   // Lỗi bỏ qua: phần đọc vẫn dùng được, phần nghe dùng cấu hình mặc định

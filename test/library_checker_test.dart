@@ -15,6 +15,27 @@ class _ScriptFetcher extends WebFetcher {
       next!;
 }
 
+class _ApiFetcher extends WebFetcher {
+  NovelInfo? next;
+  var apiCalls = 0;
+  var webviewCalls = 0;
+
+  @override
+  Future<NovelInfo?> fetchStoryApiOnly(
+    String url,
+    SourceAdapter adapter,
+  ) async {
+    apiCalls++;
+    return next;
+  }
+
+  @override
+  Future<NovelInfo> fetchStory(String url, SourceAdapter adapter) async {
+    webviewCalls++;
+    throw Exception('không được rơi về WebView ở chế độ nền');
+  }
+}
+
 void main() {
   const fileName = 'test_library_checker.db';
 
@@ -302,5 +323,82 @@ void main() {
     expect(res.cancelled, isTrue);
     expect(res.ran, isTrue);
     expect(LibraryChecker.running, isFalse);
+  });
+
+  test('chế độ nền chỉ gọi API JSON, bỏ nguồn không có API', () async {
+    final db = AppDb(fileName: fileName);
+    const apiStory = 'https://x.test/truyen-api';
+    const plainStory = 'https://x.test/truyen-thuong';
+    await db.upsertLibrary(
+      storyUrl: apiStory,
+      title: 'Truyện API',
+      lastChapterUrl: '$apiStory/chuong-1',
+    );
+    await db.saveToc(apiStory, [
+      ChapterRef(title: 'Chương 1', url: '$apiStory/chuong-1'),
+    ]);
+    await db.setLatestChapter(apiStory, '$apiStory/chuong-1', 'Chương 1');
+    await db.upsertLibrary(
+      storyUrl: plainStory,
+      title: 'Truyện thường',
+      lastChapterUrl: '$plainStory/chuong-1',
+    );
+
+    final repo = AdapterRepository([
+      SourceAdapter.fromJson({
+        'domain': 'x.test',
+        'selectors': {},
+        'api': {'storyUrl': 'https://api.x.test/{slug}'},
+      }),
+    ]);
+    final fetcher = _ApiFetcher()
+      ..next = NovelInfo(
+        title: 'Truyện API',
+        chapters: [
+          ChapterRef(title: 'Chương 1', url: '$apiStory/chuong-1'),
+          ChapterRef(title: 'Chương 2', url: '$apiStory/chuong-2'),
+        ],
+      );
+    // Truyện thứ hai dùng cùng domain nhưng mục tiêu là kiểm tra nhánh bỏ
+    // qua nguồn thiếu API: dùng repo riêng không có api.
+    final plainRepo = AdapterRepository([
+      SourceAdapter.fromJson({'domain': 'x.test', 'selectors': {}}),
+    ]);
+
+    final res = await LibraryChecker.check(
+      db: db,
+      fetcher: fetcher,
+      repo: repo,
+      gap: Duration.zero,
+      apiOnly: true,
+      items: [
+        {
+          'story_url': apiStory,
+          'title': 'Truyện API',
+          'latest_chapter_url': '$apiStory/chuong-1',
+        },
+      ],
+    );
+    expect(fetcher.webviewCalls, 0);
+    expect(res.fresh, 1);
+    expect(res.freshTitles, ['Truyện API']);
+
+    final skipped = await LibraryChecker.check(
+      db: db,
+      fetcher: fetcher,
+      repo: plainRepo,
+      gap: Duration.zero,
+      apiOnly: true,
+      items: [
+        {
+          'story_url': plainStory,
+          'title': 'Truyện thường',
+          'latest_chapter_url': null,
+        },
+      ],
+    );
+    expect(skipped.fresh, 0);
+    expect(skipped.warns, isEmpty);
+    expect(fetcher.webviewCalls, 0);
   });
 }

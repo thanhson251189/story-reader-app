@@ -44,7 +44,10 @@ class FakeAppDb extends AppDb {
       toc[storyUrl] ?? const [];
 
   @override
-  Future<void> cacheChapter(ChapterContent c, {bool touchFetchedAt = true}) async {
+  Future<void> cacheChapter(
+    ChapterContent c, {
+    bool touchFetchedAt = true,
+  }) async {
     cache[c.url] = c;
   }
 
@@ -77,6 +80,7 @@ class FakeTtsPlayer extends ChangeNotifier implements TtsPlayer {
     ChapterContent c, {
     int paraIndex = 0,
     String? storyUrl,
+    String? storyTitle,
   }) async {}
 
   @override

@@ -8,10 +8,12 @@ import '../core/cover_image.dart';
 import '../core/errors.dart';
 import '../core/models.dart';
 import '../core/providers.dart';
+import '../fetcher/story_downloader.dart';
 import '../fetcher/web_fetcher.dart';
 import '../home/open_actions.dart';
 import '../reader/reader_screen.dart';
 import '../reader/toc_screen.dart';
+import '../sources/registry.dart';
 import 'library_checker.dart';
 
 class LibraryScreen extends ConsumerStatefulWidget {
@@ -110,6 +112,10 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
   // lên đầu), 'title' (tên A–Z, không dấu). Tìm kiếm lọc theo tên.
   String _sort = 'recent';
   String _query = '';
+  bool _hideAdult = false;
+  Set<String> _adultDomains = {};
+  // Hiện lại truyện 18+ chỉ trong phiên này; rời app là ẩn lại.
+  bool _revealAdult = false;
   final TextEditingController _searchCtrl = TextEditingController();
 
   /// Danh sách hiện trên màn: lọc theo [_query] rồi sắp xếp theo [_sort].
@@ -154,14 +160,33 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
     // Kiểm tra chương mới chạy ngầm lúc mở app xong cũng phải refresh list.
     LibraryChecker.revision.addListener(_onExternalCheck);
     LibraryChecker.progress.addListener(_onProgress);
+    StoryDownloader.state.addListener(_onDownloadState);
   }
 
   @override
   void dispose() {
     LibraryChecker.revision.removeListener(_onExternalCheck);
     LibraryChecker.progress.removeListener(_onProgress);
+    StoryDownloader.state.removeListener(_onDownloadState);
     _searchCtrl.dispose();
     super.dispose();
+  }
+
+  String? _shownDownloadMessage;
+
+  void _onDownloadState() {
+    if (!mounted) return;
+    setState(() {});
+    final s = StoryDownloader.state.value;
+    if (s != null && s.running) _shownDownloadMessage = null;
+    if (s != null &&
+        !s.running &&
+        s.message != null &&
+        s.message != _shownDownloadMessage) {
+      _shownDownloadMessage = s.message;
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(s.message!)));
+    }
   }
 
   void _onProgress() {
@@ -196,6 +221,8 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
     final sort = await db.getSetting('librarySort') ?? 'recent';
     final lastUrl = await db.getSetting('lastUrl');
     final lastTitle = await db.getSetting('lastTitle');
+    final hideAdult = await SourceRegistry.hideAdultEnabled(db);
+    final adultDomains = await SourceRegistry.adultDomains(db);
     if (mounted) {
       setState(() {
         _library = lib;
@@ -203,10 +230,24 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
         _sort = sort;
         _lastUrl = lastUrl;
         _lastTitle = lastTitle;
+        _hideAdult = hideAdult;
+        _adultDomains = adultDomains;
         _loaded = true;
       });
     }
   }
+
+  bool _isAdultItem(Map<String, dynamic> item) => SourceRegistry.isAdultStory(
+    item['story_url'] as String? ?? '',
+    _adultDomains,
+    ref.read(adapterRepoProvider),
+  );
+
+  bool _isAdultUrl(String url) => SourceRegistry.isAdultStory(
+    storyUrlFromChapter(url),
+    _adultDomains,
+    ref.read(adapterRepoProvider),
+  );
 
   void _open(Map<String, dynamic> item) {
     final url =
@@ -323,9 +364,8 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
         return;
       }
       if (res.warns.isNotEmpty) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(res.warns.join('\n'))),
-        );
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text(res.warns.join('\n'))));
         return;
       }
       final rows = await db.getLibrary();
@@ -339,15 +379,16 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
         row['last_chapter_url'] as String?,
       );
       if (badge == null) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Không có chương mới')),
-        );
+        ScaffoldMessenger.of(context)
+            .showSnackBar(const SnackBar(content: Text('Không có chương mới')));
         return;
       }
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
-            res.fresh > 0 ? 'Có chương mới — $badge' : 'Còn chương chưa đọc — $badge',
+            res.fresh > 0
+                ? 'Có chương mới — $badge'
+                : 'Còn chương chưa đọc — $badge',
           ),
           action: SnackBarAction(
             label: 'Đọc',
@@ -358,7 +399,9 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Kiểm tra chương mới lỗi: ${friendlyError(e)}')),
+          SnackBar(
+            content: Text('Kiểm tra chương mới lỗi: ${friendlyError(e)}'),
+          ),
         );
       }
     } finally {
@@ -409,6 +452,24 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
             ),
             if (!isBook)
               ListTile(
+                leading: const Icon(Icons.headphones),
+                title: const Text('Nghe từ chương đang đọc'),
+                onTap: () => Navigator.pop(ctx, 'listen'),
+              ),
+            if (!isBook)
+              ListTile(
+                leading: const Icon(Icons.download_outlined),
+                title: const Text('Tải cả truyện'),
+                onTap: () => Navigator.pop(ctx, 'download'),
+              ),
+            if (!isBook)
+              ListTile(
+                leading: const Icon(Icons.delete_sweep_outlined),
+                title: const Text('Xoá chương đã tải'),
+                onTap: () => Navigator.pop(ctx, 'clearCache'),
+              ),
+            if (!isBook)
+              ListTile(
                 leading: const Icon(Icons.new_releases_outlined),
                 title: const Text('Kiểm tra chương mới'),
                 onTap: () => Navigator.pop(ctx, 'check'),
@@ -426,11 +487,121 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
     switch (action) {
       case 'open':
         _open(item);
+      case 'listen':
+        unawaited(_listen(item));
+      case 'download':
+        unawaited(_downloadAll(item));
+      case 'clearCache':
+        unawaited(_clearCached(item));
       case 'check':
         unawaited(_checkOne(item));
       case 'delete':
         _remove(item);
     }
+  }
+
+  /// Nghe ngay từ thẻ thư viện, không phải mở màn đọc: mini-player hiện lên
+  /// trên thanh tab, chương kế vẫn tự sang như chế độ nghe trong màn đọc.
+  Future<void> _listen(Map<String, dynamic> item) async {
+    final storyUrl = item['story_url'] as String? ?? '';
+    if (storyUrl.isEmpty || storyUrl.startsWith('book:')) return;
+    final chapterUrl = (item['last_chapter_url'] as String?) ?? storyUrl;
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(const SnackBar(content: Text('Đang tải chương để nghe…')));
+    final ok = await ref
+        .read(ttsPlayerProvider)
+        .playChapter(
+          chapterUrl,
+          storyUrl: storyUrl,
+          storyTitle: item['title'] as String?,
+        );
+    if (!mounted || ok) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text(
+          'Không tải được chương để nghe. Mở truyện bằng tay để xem chi tiết.',
+        ),
+      ),
+    );
+  }
+
+  Future<void> _downloadAll(Map<String, dynamic> item) async {
+    final storyUrl = item['story_url'] as String? ?? '';
+    if (storyUrl.isEmpty || storyUrl.startsWith('book:')) return;
+    if (StoryDownloader.running) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Đang tải một truyện khác, chờ xong đã')),
+      );
+      return;
+    }
+    final ok = await StoryDownloader.start(
+      db: ref.read(appDbProvider),
+      fetcher: ref.read(webFetcherProvider),
+      adapters: ref.read(adapterRepoProvider),
+      storyUrl: storyUrl,
+    );
+    if (!mounted) return;
+    if (ok) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Đang tải cả truyện. Tiến độ hiện ở đầu thư viện.'),
+        ),
+      );
+      return;
+    }
+    final msg = StoryDownloader.state.value?.message;
+    if (msg != null) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
+    }
+  }
+
+  Future<void> _clearCached(Map<String, dynamic> item) async {
+    final storyUrl = item['story_url'] as String? ?? '';
+    if (storyUrl.isEmpty || storyUrl.startsWith('book:')) return;
+    final dl = StoryDownloader.state.value;
+    if (dl != null && dl.running && dl.storyUrl == storyUrl) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Đang tải truyện này, dừng tải trước đã')),
+      );
+      return;
+    }
+    final db = ref.read(appDbProvider);
+    final count = await db.cachedChapterCountForStory(storyUrl);
+    if (!mounted) return;
+    if (count == 0) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Truyện này chưa có chương nào tải sẵn')),
+      );
+      return;
+    }
+    final title = (item['title'] as String? ?? '').trim();
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('Xoá chương đã tải?'),
+        content: Text(
+          'Xoá $count chương đã tải của "${title.isEmpty ? 'truyện này' : title}". '
+          'Đọc lại sẽ tải từ web như bình thường.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Huỷ'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Xoá'),
+          ),
+        ],
+      ),
+    );
+    if (ok != true || !mounted) return;
+    final deleted = await db.clearCachedChaptersForStory(storyUrl);
+    if (!mounted) return;
+    ScaffoldMessenger.of(context)
+        .showSnackBar(SnackBar(content: Text('Đã xoá $deleted chương đã tải')));
+    await _load();
   }
 
   Future<void> _remove(Map<String, dynamic> item) async {
@@ -452,9 +623,12 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
       ),
     );
     if (ok == true) {
-      await ref
-          .read(appDbProvider)
-          .removeFromLibrary(item['story_url'] as String);
+      final storyUrl = item['story_url'] as String;
+      final dl = StoryDownloader.state.value;
+      if (dl != null && dl.running && dl.storyUrl == storyUrl) {
+        StoryDownloader.cancel();
+      }
+      await ref.read(appDbProvider).removeFromLibrary(storyUrl);
       final cover = item['cover_url'] as String?;
       if (cover != null && !cover.startsWith('http')) {
         try {
@@ -474,7 +648,15 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final items = _display();
+    final all = _display();
+    final adultCount = _hideAdult ? all.where(_isAdultItem).length : 0;
+    final hideNow = _hideAdult && !_revealAdult;
+    final items = hideNow ? all.where((i) => !_isAdultItem(i)).toList() : all;
+    final hidden = hideNow
+        ? all.where(_isAdultItem).toList()
+        : const <Map<String, dynamic>>[];
+    final lastHidden =
+        hideNow && (_lastUrl?.isNotEmpty ?? false) && _isAdultUrl(_lastUrl!);
     return Scaffold(
       appBar: AppBar(
         title: const Text('Thư viện'),
@@ -517,6 +699,34 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
       ),
       body: Column(
         children: [
+          if (StoryDownloader.state.value case final dl? when dl.running)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 8, 8, 0),
+              child: Row(
+                children: [
+                  const SizedBox(
+                    width: 16,
+                    height: 16,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Text(
+                      dl.title.isEmpty
+                          ? 'Đang tải cả truyện: ${dl.done}/${dl.total}'
+                          : 'Đang tải ${dl.title}: ${dl.done}/${dl.total}',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: Theme.of(context).textTheme.bodySmall,
+                    ),
+                  ),
+                  TextButton(
+                    onPressed: StoryDownloader.cancel,
+                    child: const Text('Dừng'),
+                  ),
+                ],
+              ),
+            ),
           if (_checking || LibraryChecker.running)
             Padding(
               padding: const EdgeInsets.fromLTRB(16, 8, 8, 0),
@@ -543,7 +753,8 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
                 ],
               ),
             ),
-          if (_loaded && (_lastUrl?.isNotEmpty ?? false)) _continueCard(),
+          if (_loaded && (_lastUrl?.isNotEmpty ?? false) && !lastHidden)
+            _continueCard(),
           if (_loaded) _addButtons(),
           Expanded(
             child: !_loaded
@@ -606,7 +817,7 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
                         ),
                       ),
                       Expanded(
-                        child: items.isEmpty
+                        child: items.isEmpty && _query.trim().isNotEmpty
                             ? Center(
                                 child: Text(
                                   'Không có truyện khớp "${_query.trim()}"',
@@ -616,6 +827,30 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
                                 padding: const EdgeInsets.all(16),
                                 children: [
                                   for (final item in items) _card(item),
+                                  if (hidden.isNotEmpty ||
+                                      (_hideAdult && adultCount > 0))
+                                    Card(
+                                      child: ListTile(
+                                        leading: Icon(
+                                          _revealAdult
+                                              ? Icons.visibility_outlined
+                                              : Icons.visibility_off_outlined,
+                                        ),
+                                        title: Text(
+                                          _revealAdult
+                                              ? 'Đang hiện $adultCount truyện 18+'
+                                              : 'Đã ẩn $adultCount truyện 18+',
+                                        ),
+                                        trailing: TextButton(
+                                          onPressed: () => setState(
+                                            () => _revealAdult = !_revealAdult,
+                                          ),
+                                          child: Text(
+                                            _revealAdult ? 'Ẩn lại' : 'Hiện',
+                                          ),
+                                        ),
+                                      ),
+                                    ),
                                 ],
                               ),
                       ),

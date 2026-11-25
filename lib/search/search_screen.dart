@@ -60,6 +60,8 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
   final Set<String> _collapsed = {};
   Map<String, String> _names = {};
   Set<String> _saved = {};
+  bool _hideAdult = false;
+  Set<String> _adultDomains = {};
 
   @override
   void initState() {
@@ -72,10 +74,14 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
     final overrides = await loadAdapterNames(db);
     final cache = await db.getSetting('registryIndexCache');
     final lib = await db.getLibrary();
+    final hideAdult = await SourceRegistry.hideAdultEnabled(db);
+    final adult = await SourceRegistry.adultDomains(db);
     if (!mounted) return;
     setState(() {
       _names = SourceRegistry.namesFromCache(cache, overrides);
       _saved = lib.map((e) => e['story_url'] as String).toSet();
+      _hideAdult = hideAdult;
+      _adultDomains = adult;
     });
   }
 
@@ -91,10 +97,36 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
 
   List<SourceAdapter> get _adapters => ref.read(adapterRepoProvider).all;
 
-  List<SourceAdapter> get _supported =>
-      _adapters.where((a) => a.searchUrl != null).toList();
+  List<SourceAdapter> get _supported => _adapters
+      .where(
+        (a) =>
+            a.searchUrl != null &&
+            !(_hideAdult &&
+                SourceRegistry.isAdultHost(a.domain, _adultDomains)),
+      )
+      .toList();
+
+  // Tab nằm trong IndexedStack: công tắc ẩn 18+ đổi ở Cài đặt không tự
+  // làm mới màn này. Đọc lại trước mỗi lần tìm / mở danh sách nguồn.
+  Future<void> _refreshAdult() async {
+    final db = ref.read(appDbProvider);
+    final hide = await SourceRegistry.hideAdultEnabled(db);
+    final adult = await SourceRegistry.adultDomains(db);
+    if (!mounted) return;
+    final changed =
+        hide != _hideAdult ||
+        adult.length != _adultDomains.length ||
+        !adult.containsAll(_adultDomains);
+    if (!changed) return;
+    setState(() {
+      _hideAdult = hide;
+      _adultDomains = adult;
+    });
+  }
 
   Future<void> _run() async {
+    await _refreshAdult();
+    if (!mounted) return;
     final q = _q.text.trim();
     if (q.isEmpty) {
       ScaffoldMessenger.of(context)
@@ -296,7 +328,14 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final unsupported = _adapters.where((a) => a.searchUrl == null).toList();
+    final unsupported = _adapters
+        .where(
+          (a) =>
+              a.searchUrl == null &&
+              !(_hideAdult &&
+                  SourceRegistry.isAdultHost(a.domain, _adultDomains)),
+        )
+        .toList();
     return Scaffold(
       appBar: AppBar(title: const Text('Tìm kiếm')),
       body: Column(
@@ -327,7 +366,10 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 16),
             child: OutlinedButton.icon(
-              onPressed: () => setState(() => _pickerOpen = !_pickerOpen),
+              onPressed: () {
+                setState(() => _pickerOpen = !_pickerOpen);
+                if (_pickerOpen) unawaited(_refreshAdult());
+              },
               icon: Icon(
                 _pickerOpen ? Icons.arrow_drop_up : Icons.arrow_drop_down,
               ),

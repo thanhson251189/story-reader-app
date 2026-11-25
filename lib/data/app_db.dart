@@ -335,6 +335,85 @@ class AppDb {
     );
   }
 
+  /// Link chương thuộc một truyện: lấy từ mục lục đã lưu cộng các dòng cache
+  /// khớp tiền tố/đã chuẩn hoá. Nguồn CMS có thể đặt link chương ngoài tiền
+  /// tố trang truyện nên phải quét cache, không chỉ `LIKE 'storyUrl%'`.
+  Future<Set<String>> _storyChapterUrls(Database db, String storyUrl) async {
+    final out = <String>{};
+    final keys = await _storyKeys(storyUrl);
+    for (final key in keys) {
+      final toc = await db.query(
+        'toc',
+        columns: ['chapter_url'],
+        where: 'story_url = ?',
+        whereArgs: [key],
+      );
+      for (final r in toc) {
+        out.add(r['chapter_url'] as String);
+      }
+      if (key.startsWith('book:')) continue;
+      final cached = await db.query('chapter_cache', columns: ['url']);
+      for (final r in cached) {
+        final url = r['url'] as String;
+        if (sameChapterUrl(url, key) || _chapterOfStory(url, key)) {
+          out.add(url);
+        }
+      }
+    }
+    return out;
+  }
+
+  /// Số chương web của truyện đang nằm trong máy (kể cả chương đã ghim).
+  Future<int> cachedChapterCountForStory(String storyUrl) async {
+    final db = await database;
+    final urls = (await _storyChapterUrls(
+      db,
+      storyUrl,
+    )).where((u) => !u.startsWith('book:')).toList();
+    var count = 0;
+    for (var i = 0; i < urls.length; i += _pinQueryBatch) {
+      final end = i + _pinQueryBatch > urls.length
+          ? urls.length
+          : i + _pinQueryBatch;
+      final chunk = urls.sublist(i, end);
+      final ph = List.filled(chunk.length, '?').join(',');
+      count +=
+          Sqflite.firstIntValue(
+            await db.rawQuery(
+              'SELECT COUNT(*) FROM chapter_cache WHERE url IN ($ph)',
+              chunk,
+            ),
+          ) ??
+          0;
+    }
+    return count;
+  }
+
+  /// Xoá chương web đã tải của RIÊNG một truyện để trả dung lượng. Chương
+  /// đã ghim cũng bị xoá vì đây là lựa chọn rõ ràng của người dùng; sách
+  /// trong máy không bao giờ bị đụng. Trả về số dòng đã xoá.
+  Future<int> clearCachedChaptersForStory(String storyUrl) async {
+    final db = await database;
+    final urls = (await _storyChapterUrls(
+      db,
+      storyUrl,
+    )).where((u) => !u.startsWith('book:')).toList();
+    var deleted = 0;
+    for (var i = 0; i < urls.length; i += _pinQueryBatch) {
+      final end = i + _pinQueryBatch > urls.length
+          ? urls.length
+          : i + _pinQueryBatch;
+      final chunk = urls.sublist(i, end);
+      final ph = List.filled(chunk.length, '?').join(',');
+      deleted += await db.delete(
+        'chapter_cache',
+        where: 'url IN ($ph)',
+        whereArgs: chunk,
+      );
+    }
+    return deleted;
+  }
+
   /// Key thật trong cache. Đúng nguyên văn thì dùng luôn; không thì khớp link
   /// đã chuẩn hóa (bỏ slash cuối, fragment, hoa thường host, http/https).
   Future<String?> _cachedUrlKey(Database db, String url) async {
@@ -549,6 +628,50 @@ class AppDb {
         );
       }
     }
+  }
+
+  /// Đổi truyện trong thư viện sang nguồn khác, giữ vị trí theo chương đã
+  /// map. Mục lục cũ, vị trí đọc cũ và đánh dấu cũ được GIỮ trong DB để còn
+  /// quay lại nguồn cũ; chỉ dòng thư viện cũ bị bỏ để không hiện trùng.
+  Future<void> switchLibrarySource({
+    required String oldStoryUrl,
+    required String newStoryUrl,
+    required String title,
+    String? coverUrl,
+    required String chapterUrl,
+    required List<ChapterRef> toc,
+  }) async {
+    await saveToc(newStoryUrl, toc);
+    await upsertLibrary(
+      storyUrl: newStoryUrl,
+      title: title,
+      coverUrl: coverUrl,
+      lastChapterUrl: chapterUrl,
+    );
+    final db = await database;
+    for (final key in await _storyKeys(oldStoryUrl)) {
+      if (sameChapterUrl(key, newStoryUrl)) continue;
+      await db.delete('library', where: 'story_url = ?', whereArgs: [key]);
+    }
+    // Chương mới chưa có vị trí cuộn: đặt 0 để mở từ đầu chương thay vì
+    // dính vị trí của chương cùng số ở nguồn cũ (nếu có).
+    await savePosition(chapterUrl, 0);
+    await setSetting('lastUrl', chapterUrl);
+    await setSetting('lastTitle', title);
+    // Sửa từ "chỉ truyện này" là công sức người dùng dạy cho đúng bản dịch;
+    // chép sang link nguồn mới để không phải nhập lại.
+    final fixes = await getWordFixes();
+    final copied = <WordFix>[];
+    for (final f in fixes) {
+      final from = f.storyUrl;
+      if (from == null || !f.sameScope(oldStoryUrl)) continue;
+      final exists = fixes.any(
+        (x) =>
+            x.storyUrl != null && x.sameScope(newStoryUrl) && x.from == f.from,
+      );
+      if (!exists) copied.add(WordFix(f.from, f.to, storyUrl: newStoryUrl));
+    }
+    if (copied.isNotEmpty) await setWordFixes([...fixes, ...copied]);
   }
 
   // ---- Đánh dấu đoạn (bookmark) ----

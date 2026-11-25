@@ -78,6 +78,11 @@ class SourceRegistry {
   static const defaultIndexUrl =
       'https://raw.githubusercontent.com/thanhson251189/story-reader-sources/main/sources/index.json';
 
+  /// Domain nguồn 18+ đã biết (lưu từ index lúc tải/cài nguồn) — cần cho bộ
+  /// lọc ẩn nội dung khi app mở offline, lúc đó không có index để đọc.
+  static const adultDomainsKey = 'adultDomains';
+  static const hideAdultKey = 'hideAdult';
+
   Future<String> indexUrl() async =>
       await db.getSetting('registryUrl') ?? (personal ? defaultIndexUrl : '');
 
@@ -99,12 +104,72 @@ class SourceRegistry {
         // Chỉ ghi đè cache khi body đọc được: proxy chặn trả HTML mà đè mất
         // cache tốt thì lần mất mạng sau không còn danh sách nguồn nào.
         await db.setSetting('registryIndexCache', raw);
+        await _saveAdultDomains(entries);
         return entries;
       }
       raw = null;
     }
     final cached = await db.getSetting('registryIndexCache');
-    return cached == null ? const [] : (parseIndex(cached) ?? const []);
+    final entries = cached == null
+        ? const <SourceEntry>[]
+        : (parseIndex(cached) ?? const <SourceEntry>[]);
+    if (entries.isNotEmpty) await _saveAdultDomains(entries);
+    return entries;
+  }
+
+  Future<void> _saveAdultDomains(List<SourceEntry> entries) async {
+    final domains = {
+      for (final e in entries)
+        if (e.adult) e.domain.toLowerCase(),
+    }.toList()..sort();
+    final raw = jsonEncode(domains);
+    if (await db.getSetting(adultDomainsKey) == raw) return;
+    await db.setSetting(adultDomainsKey, raw);
+  }
+
+  static Future<Set<String>> adultDomains(AppDb db) async {
+    final raw = await db.getSetting(adultDomainsKey);
+    if (raw != null && raw.isNotEmpty) {
+      try {
+        return {
+          for (final d in jsonDecode(raw) as List)
+            if (d is String && d.isNotEmpty) d.toLowerCase(),
+        };
+      } catch (_) {
+        // File hỏng: rơi xuống đọc index cache bên dưới.
+      }
+    }
+    // Bản cũ chưa lưu riêng: đọc cờ adult từ cache index để bộ lọc có tác
+    // dụng ngay cả khi chưa tải lại index.
+    final out = <String>{};
+    final entries =
+        parseIndex(await db.getSetting('registryIndexCache') ?? '') ??
+        const <SourceEntry>[];
+    for (final e in entries) {
+      if (e.adult) out.add(e.domain.toLowerCase());
+    }
+    return out;
+  }
+
+  static Future<bool> hideAdultEnabled(AppDb db) async =>
+      (await db.getSetting(hideAdultKey) ?? '0') == '1';
+
+  /// [host] (hoặc domain adapter) có thuộc nguồn 18+ không. So cả subdomain
+  /// vì adapter khai domain gốc còn link truyện có thể nằm ở www/m.
+  static bool isAdultHost(String? host, Set<String> adultDomains) {
+    if (host == null || host.isEmpty) return false;
+    final h = host.toLowerCase();
+    return adultDomains.any((d) => h == d || h.endsWith('.$d'));
+  }
+
+  static bool isAdultStory(
+    String storyUrl,
+    Set<String> adultDomains,
+    AdapterRepository adapters,
+  ) {
+    final domain =
+        adapters.forUrl(storyUrl)?.domain ?? Uri.tryParse(storyUrl)?.host ?? '';
+    return isAdultHost(domain, adultDomains);
   }
 
   /// Body JSON danh sách nguồn → danh sách entry; hỏng thì trả null thay vì
@@ -265,7 +330,17 @@ class SourceRegistry {
     if (names.remove(domain) != null) {
       await db.setSetting('adapterNames', jsonEncode(names));
     }
+    await _setAdultDomain(domain, false);
     adapters.remove(domain);
+  }
+
+  Future<void> _setAdultDomain(String domain, bool adult) async {
+    final domains = await adultDomains(db);
+    final changed = adult
+        ? domains.add(domain.toLowerCase())
+        : domains.remove(domain.toLowerCase());
+    if (!changed) return;
+    await db.setSetting(adultDomainsKey, jsonEncode(domains.toList()..sort()));
   }
 
   Future<void> install(SourceEntry e) async {
@@ -278,6 +353,7 @@ class SourceRegistry {
     final saved = readSaved(await db.getSetting('installedAdapters'));
     saved[e.id] = json;
     await db.setSetting('installedAdapters', jsonEncode(saved));
+    await _setAdultDomain(e.domain, e.adult);
   }
 
   /// Chạy ngầm lúc mở app: tải index (có cache dự phòng), cài sẵn các bản

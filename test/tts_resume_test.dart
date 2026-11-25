@@ -122,10 +122,8 @@ class FakeJustAudio extends JustAudioPlatform {
       players.lastWhere((p) => p.calls.contains('play'));
 
   // stop() rồi phát lại tạo platform player mới, phải đếm mọi player.
-  int playCount() => players.fold(
-    0,
-    (n, p) => n + p.calls.where((x) => x == 'play').length,
-  );
+  int playCount() =>
+      players.fold(0, (n, p) => n + p.calls.where((x) => x == 'play').length);
 }
 
 class FakeAppDb extends AppDb {
@@ -156,7 +154,10 @@ class FakeAppDb extends AppDb {
   }
 
   @override
-  Future<void> cacheChapter(ChapterContent c, {bool touchFetchedAt = true}) async {
+  Future<void> cacheChapter(
+    ChapterContent c, {
+    bool touchFetchedAt = true,
+  }) async {
     cached[c.url] = c;
   }
 
@@ -264,10 +265,7 @@ void main() {
     expect(player.currentParaIndex, 0);
 
     await player.pause();
-    expect(
-      ja.players.any((p) => p.calls.contains('pause')),
-      isTrue,
-    );
+    expect(ja.players.any((p) => p.calls.contains('pause')), isTrue);
     final synthBefore = synthTexts.length;
     final playBefore = ja.playCount();
 
@@ -301,6 +299,60 @@ void main() {
     expect(synthTexts, isEmpty);
     expect(player.playing, isFalse);
   });
+
+  test(
+    'playChapter nạp chương từ cache, giữ tên truyện cho mini-player',
+    () async {
+      final c = chapter();
+      db.cached[c.url] = c;
+      final ok = await player.playChapter(
+        c.url,
+        storyUrl: 'https://x.com',
+        storyTitle: 'Truyện X',
+      );
+      expect(ok, isTrue);
+      expect(player.storyTitle, 'Truyện X');
+      expect(player.readingStoryUrl, 'https://x.com');
+      await waitUntil(() => synthTexts.isNotEmpty);
+      expect(player.playing, isTrue);
+    },
+  );
+
+  test(
+    'closeSession không để chương kế đang tải hồi sinh phiên nghe',
+    () async {
+      final c1 = ChapterContent(
+        url: chapterUrl(1),
+        title: 'Chương 1',
+        paragraphs: const ['Một.'],
+      );
+      final c2 = ChapterContent(
+        url: chapterUrl(2),
+        title: 'Chương 2',
+        paragraphs: const ['Hai.'],
+      );
+      db.cached[c1.url] = c1;
+      db.cached[c2.url] = c2;
+      db.toc['s'] = [
+        ChapterRef(title: 'Chương 1', url: c1.url),
+        ChapterRef(title: 'Chương 2', url: c2.url),
+      ];
+      db.slowUrls.add(c2.url);
+
+      await player.playChapter(
+        c1.url,
+        storyUrl: 'https://x.com',
+        storyTitle: 'Truyện X',
+      );
+      await waitUntil(() => ja.players.any((p) => p.calls.contains('play')));
+      ja.playing.complete();
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      await player.closeSession();
+      await Future<void>.delayed(const Duration(milliseconds: 200));
+      expect(player.chapter, isNull);
+      expect(player.playing, isFalse);
+    },
+  );
 
   test('skipNext khi đang phát phải chuyển sang chunk kế rồi đọc tiếp', () async {
     await player.start(chapter());
@@ -388,71 +440,79 @@ void main() {
     expect(player.currentChunk!.text, 'Đoạn hai.');
   });
 
-  test('skipNext ở chunk cuối khi đang dừng chỉ dời sang chương kế, không tự phát', () async {
-    final c2 = ChapterContent(
-      url: 'https://x.com/chuong-2',
-      title: 'Chương 2',
-      paragraphs: ['Đoạn hai.'],
-    );
-    final c1 = ChapterContent(
-      url: 'https://x.com/chuong-1',
-      title: 'Chương 1',
-      paragraphs: ['$s1 $s2', 'Đoạn hai.'],
-      nextUrl: c2.url,
-    );
-    db.cached[c2.url] = c2;
-    await player.start(c1);
-    await waitUntil(() => ja.players.any((p) => p.calls.contains('play')));
-    await player.pause();
+  test(
+    'skipNext ở chunk cuối khi đang dừng chỉ dời sang chương kế, không tự phát',
+    () async {
+      final c2 = ChapterContent(
+        url: 'https://x.com/chuong-2',
+        title: 'Chương 2',
+        paragraphs: ['Đoạn hai.'],
+      );
+      final c1 = ChapterContent(
+        url: 'https://x.com/chuong-1',
+        title: 'Chương 1',
+        paragraphs: ['$s1 $s2', 'Đoạn hai.'],
+        nextUrl: c2.url,
+      );
+      db.cached[c2.url] = c2;
+      await player.start(c1);
+      await waitUntil(() => ja.players.any((p) => p.calls.contains('play')));
+      await player.pause();
 
-    // Đang dừng: tua dời vị trí, chunk cuối thì sang chương 2 nhưng vẫn dừng.
-    await player.skipNext();
-    await player.skipNext();
-    expect(player.currentChunk!.text, 'Đoạn hai.');
-    expect(player.playing, isFalse);
-    await player.skipNext();
-    expect(player.chapter?.url, c2.url);
-    expect(player.currentChunk!.text, 'Đoạn hai.');
-    expect(player.playing, isFalse);
-  });
+      // Đang dừng: tua dời vị trí, chunk cuối thì sang chương 2 nhưng vẫn dừng.
+      await player.skipNext();
+      await player.skipNext();
+      expect(player.currentChunk!.text, 'Đoạn hai.');
+      expect(player.playing, isFalse);
+      await player.skipNext();
+      expect(player.chapter?.url, c2.url);
+      expect(player.currentChunk!.text, 'Đoạn hai.');
+      expect(player.playing, isFalse);
+    },
+  );
 
-  test('dừng nghe trong lúc TTS tải chương kế thì không tự bật lại tiếng', () async {
-    final c2 = ChapterContent(
-      url: 'https://x.com/chuong-2',
-      title: 'Chương 2',
-      paragraphs: ['Đoạn hai.'],
-    );
-    final c1 = ChapterContent(
-      url: 'https://x.com/chuong-1',
-      title: 'Chương 1',
-      paragraphs: ['Đoạn một.'],
-      nextUrl: c2.url,
-    );
-    db.cached[c2.url] = c2;
-    db.slowUrls.add(c2.url);
-    await player.start(c1);
-    await waitUntil(() => ja.players.any((p) => p.calls.contains('play')));
+  test(
+    'dừng nghe trong lúc TTS tải chương kế thì không tự bật lại tiếng',
+    () async {
+      final c2 = ChapterContent(
+        url: 'https://x.com/chuong-2',
+        title: 'Chương 2',
+        paragraphs: ['Đoạn hai.'],
+      );
+      final c1 = ChapterContent(
+        url: 'https://x.com/chuong-1',
+        title: 'Chương 1',
+        paragraphs: ['Đoạn một.'],
+        nextUrl: c2.url,
+      );
+      db.cached[c2.url] = c2;
+      db.slowUrls.add(c2.url);
+      await player.start(c1);
+      await waitUntil(() => ja.players.any((p) => p.calls.contains('play')));
 
-    // Hết chunk duy nhất → _chapterDone bắt đầu tải chương 2 (chậm 100ms)...
-    ja.playing.complete();
-    await Future<void>.delayed(const Duration(milliseconds: 30));
-    expect(player.loading, isTrue);
+      // Hết chunk duy nhất → _chapterDone bắt đầu tải chương 2 (chậm 100ms)...
+      ja.playing.complete();
+      await Future<void>.delayed(const Duration(milliseconds: 30));
+      expect(player.loading, isTrue);
 
-    // ...user dừng nghe giữa chừng (pause hoặc reader gọi stop khi mở
-    // chương khác). Tải xong phải nạp chương mới ở trạng thái dừng.
-    await player.pause();
-    await waitUntil(() => player.loading == false);
-    expect(player.chapter?.url, c2.url);
-    expect(player.playing, isFalse);
-  });
+      // ...user dừng nghe giữa chừng (pause hoặc reader gọi stop khi mở
+      // chương khác). Tải xong phải nạp chương mới ở trạng thái dừng.
+      await player.pause();
+      await waitUntil(() => player.loading == false);
+      expect(player.chapter?.url, c2.url);
+      expect(player.playing, isFalse);
+    },
+  );
 
   test('synth lỗi vặt thì thử lại rồi bỏ qua đoạn CÓ báo lỗi', () async {
     synthResult = 0;
-    await player.start(ChapterContent(
-      url: 'https://x.com/chuong-1',
-      title: 'Chương 1',
-      paragraphs: ['Đoạn một.'],
-    ));
+    await player.start(
+      ChapterContent(
+        url: 'https://x.com/chuong-1',
+        title: 'Chương 1',
+        paragraphs: ['Đoạn một.'],
+      ),
+    );
     // 1 lần synth + 2 lần thử lại đều lỗi → bỏ qua đoạn; hết chương (không có
     // chương kế) nên dừng. Bắt buộc có thông báo, không được nuốt im lặng.
     await waitUntil(() => player.playing == false, maxMs: 6000);
@@ -461,34 +521,42 @@ void main() {
     expect(player.playing, isFalse);
   });
 
-  test('synth hỏng hàng loạt 3 lần liền thì dừng với thông báo rõ ràng', () async {
-    synthResult = 0;
-    await player.start(ChapterContent(
-      url: 'https://x.com/chuong-1',
-      title: 'Chương 1',
-      paragraphs: ['A.', 'B.', 'C.', 'D.'],
-    ));
-    await waitUntil(() => player.playing == false, maxMs: 12000);
-    // 3 đoạn × (1 + 2 lần thử lại): đoạn thứ 4 không bị synth nữa vì đã dừng.
-    expect(synthTexts.length, 9);
-    expect(player.lastError, contains('Không tạo được âm thanh'));
-    expect(player.playing, isFalse);
-  });
+  test(
+    'synth hỏng hàng loạt 3 lần liền thì dừng với thông báo rõ ràng',
+    () async {
+      synthResult = 0;
+      await player.start(
+        ChapterContent(
+          url: 'https://x.com/chuong-1',
+          title: 'Chương 1',
+          paragraphs: ['A.', 'B.', 'C.', 'D.'],
+        ),
+      );
+      await waitUntil(() => player.playing == false, maxMs: 12000);
+      // 3 đoạn × (1 + 2 lần thử lại): đoạn thứ 4 không bị synth nữa vì đã dừng.
+      expect(synthTexts.length, 9);
+      expect(player.lastError, contains('Không tạo được âm thanh'));
+      expect(player.playing, isFalse);
+    },
+  );
 
-  test('nghe hết chương mà chương kế thiếu nguồn thì dừng kèm thông báo', () async {
-    final c1 = ChapterContent(
-      url: 'https://x.com/chuong-1',
-      title: 'Chương 1',
-      paragraphs: ['Đoạn một.'],
-      nextUrl: 'https://other-domain.com/chuong-2',
-    );
-    await player.start(c1);
-    await waitUntil(() => ja.players.any((p) => p.calls.contains('play')));
-    ja.playing.complete();
-    await waitUntil(() => player.playing == false, maxMs: 4000);
-    expect(player.lastError, contains('chương kế'));
-    expect(player.playing, isFalse);
-  });
+  test(
+    'nghe hết chương mà chương kế thiếu nguồn thì dừng kèm thông báo',
+    () async {
+      final c1 = ChapterContent(
+        url: 'https://x.com/chuong-1',
+        title: 'Chương 1',
+        paragraphs: ['Đoạn một.'],
+        nextUrl: 'https://other-domain.com/chuong-2',
+      );
+      await player.start(c1);
+      await waitUntil(() => ja.players.any((p) => p.calls.contains('play')));
+      ja.playing.complete();
+      await waitUntil(() => player.playing == false, maxMs: 4000);
+      expect(player.lastError, contains('chương kế'));
+      expect(player.playing, isFalse);
+    },
+  );
 
   test('nghe tự sang chương kế trên nguồn không có nút prev/next', () async {
     // Mô phỏng dammyy/docln: chương fetch về không có nextUrl, nav suy từ
@@ -528,45 +596,48 @@ void main() {
     await waitUntil(() => player.playing == false, maxMs: 4000);
   });
 
-  test('bấm Play trong lúc tải chương kế thì chương mới phát khi tải xong', () async {
-    final c2 = ChapterContent(
-      url: chapterUrl(2),
-      title: 'Chương 2',
-      paragraphs: ['Đoạn hai.'],
-    );
-    final c1 = ChapterContent(
-      url: chapterUrl(1),
-      title: 'Chương 1',
-      paragraphs: ['Đoạn một.'],
-      nextUrl: chapterUrl(2),
-    );
-    db.cached[c2.url] = c2;
-    db.slowUrls.add(c2.url);
-    await player.start(c1);
-    await waitUntil(() => ja.players.any((p) => p.calls.contains('play')));
+  test(
+    'bấm Play trong lúc tải chương kế thì chương mới phát khi tải xong',
+    () async {
+      final c2 = ChapterContent(
+        url: chapterUrl(2),
+        title: 'Chương 2',
+        paragraphs: ['Đoạn hai.'],
+      );
+      final c1 = ChapterContent(
+        url: chapterUrl(1),
+        title: 'Chương 1',
+        paragraphs: ['Đoạn một.'],
+        nextUrl: chapterUrl(2),
+      );
+      db.cached[c2.url] = c2;
+      db.slowUrls.add(c2.url);
+      await player.start(c1);
+      await waitUntil(() => ja.players.any((p) => p.calls.contains('play')));
 
-    // Hết chương 1 → TTS tải chương 2 (chậm 100ms)...
-    ja.playing.complete();
-    await Future<void>.delayed(const Duration(milliseconds: 30));
-    expect(player.loading, isTrue);
+      // Hết chương 1 → TTS tải chương 2 (chậm 100ms)...
+      ja.playing.complete();
+      await Future<void>.delayed(const Duration(milliseconds: 30));
+      expect(player.loading, isTrue);
 
-    // ...user bấm Play giữa lúc tải: KHÔNG được phát nhầm chương cũ (bắt
-    // sự đó không synth lại đoạn chương cũ).
-    final synthBefore = synthTexts.length;
-    await player.resume();
-    await Future<void>.delayed(const Duration(milliseconds: 40));
-    expect(
-      synthTexts.length,
-      synthBefore,
-      reason: 'phát nhầm chương cũ là synth lại đoạn cũ ngay lập tức',
-    );
+      // ...user bấm Play giữa lúc tải: KHÔNG được phát nhầm chương cũ (bắt
+      // sự đó không synth lại đoạn chương cũ).
+      final synthBefore = synthTexts.length;
+      await player.resume();
+      await Future<void>.delayed(const Duration(milliseconds: 40));
+      expect(
+        synthTexts.length,
+        synthBefore,
+        reason: 'phát nhầm chương cũ là synth lại đoạn cũ ngay lập tức',
+      );
 
-    // Tải xong: chương mới nạp và phát luôn — ý định Play không bị nuốt.
-    await waitUntil(() => player.chapter?.url == c2.url, maxMs: 4000);
-    expect(player.playing, isTrue);
-    await waitUntil(() => synthTexts.contains('Đoạn hai.'), maxMs: 4000);
-    expect(player.currentChunk!.text, 'Đoạn hai.');
-  });
+      // Tải xong: chương mới nạp và phát luôn — ý định Play không bị nuốt.
+      await waitUntil(() => player.chapter?.url == c2.url, maxMs: 4000);
+      expect(player.playing, isTrue);
+      await waitUntil(() => synthTexts.contains('Đoạn hai.'), maxMs: 4000);
+      expect(player.currentChunk!.text, 'Đoạn hai.');
+    },
+  );
 
   test('bấm Play chờ tải rồi dừng hẳn thì không tự bật lại tiếng', () async {
     final c2 = ChapterContent(

@@ -11,6 +11,10 @@ class LibraryCheckResult {
   final List<String> warns;
   final bool cancelled;
 
+  /// Tên các truyện vừa có chương mới — thông báo hệ thống cần tên, không chỉ
+  /// con số.
+  final List<String> freshTitles;
+
   /// false khi một lượt kiểm tra khác đang chạy — người gọi không được
   /// ghi đè mốc thời gian của lượt đó.
   final bool ran;
@@ -19,6 +23,7 @@ class LibraryCheckResult {
     this.warns, {
     this.cancelled = false,
     this.ran = true,
+    this.freshTitles = const [],
   });
 }
 
@@ -75,6 +80,8 @@ class LibraryChecker {
     List<Map<String, dynamic>>? items,
     void Function(String progress)? onProgress,
     Duration gap = storyGap,
+    // Chỉ kiểm nguồn có API JSON, không dùng WebView — dành cho worker nền.
+    bool apiOnly = false,
   }) async {
     if (_running) {
       return const LibraryCheckResult(0, [], ran: false);
@@ -88,17 +95,28 @@ class LibraryChecker {
           .where((i) => !(i['story_url'] as String? ?? '').startsWith('book:'))
           .toList();
       var fresh = 0;
+      final freshTitles = <String>[];
       final warns = <String>[];
       for (var i = 0; i < targets.length; i++) {
         if (_cancel) {
           revision.value++;
-          return LibraryCheckResult(fresh, warns, cancelled: true);
+          return LibraryCheckResult(
+            fresh,
+            warns,
+            cancelled: true,
+            freshTitles: freshTitles,
+          );
         }
         if (i > 0 && gap > Duration.zero) {
           final paused = await _pause(gap);
           if (!paused) {
             revision.value++;
-            return LibraryCheckResult(fresh, warns, cancelled: true);
+            return LibraryCheckResult(
+              fresh,
+              warns,
+              cancelled: true,
+              freshTitles: freshTitles,
+            );
           }
         }
         final item = targets[i];
@@ -112,11 +130,27 @@ class LibraryChecker {
           warns.add('$title: chưa cài nguồn — mở màn "Nguồn truyện" để thêm');
           continue;
         }
+        // Nền: bỏ nguồn không có API và nguồn cần đăng nhập (cookie WebView
+        // không có trong tiến trình worker).
+        if (apiOnly && (adapter.api == null || adapter.loginUrl != null)) {
+          continue;
+        }
         try {
-          final info = await fetcher.fetchStory(storyUrl, adapter);
+          final info = apiOnly
+              ? await fetcher.fetchStoryApiOnly(storyUrl, adapter)
+              : await fetcher.fetchStory(storyUrl, adapter);
+          if (info == null) {
+            warns.add('$title: nguồn chưa trả mục lục qua API');
+            continue;
+          }
           if (_cancel) {
             revision.value++;
-            return LibraryCheckResult(fresh, warns, cancelled: true);
+            return LibraryCheckResult(
+              fresh,
+              warns,
+              cancelled: true,
+              freshTitles: freshTitles,
+            );
           }
           if (info.chapters.isEmpty) {
             warns.add('$title: không lấy được mục lục');
@@ -140,13 +174,16 @@ class LibraryChecker {
               prevLatest.isNotEmpty &&
               !sameChapterUrl(last.url, prevLatest);
           await db.setLatestChapter(storyUrl, last.url, last.title);
-          if (isNew) fresh++;
+          if (isNew) {
+            fresh++;
+            freshTitles.add(title);
+          }
         } catch (e) {
           warns.add('$title: ${friendlyError(e)}');
         }
       }
       revision.value++;
-      return LibraryCheckResult(fresh, warns);
+      return LibraryCheckResult(fresh, warns, freshTitles: freshTitles);
     } finally {
       _running = false;
       _cancel = false;

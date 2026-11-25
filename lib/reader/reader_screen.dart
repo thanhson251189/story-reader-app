@@ -16,6 +16,7 @@ import '../fetcher/web_fetcher.dart';
 import '../fetcher/webview_fallback_screen.dart';
 import '../settings/word_fix_screen.dart';
 import '../sources/source_login_screen.dart';
+import '../sources/source_switch_screen.dart';
 import '../tts/tts_player.dart';
 import 'reader_fonts.dart';
 import 'toc_screen.dart';
@@ -654,7 +655,9 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen>
     if (adapter == null) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('Chưa cài nguồn cho truyện này — vào Nguồn truyện để thêm'),
+          content: Text(
+            'Chưa cài nguồn cho truyện này — vào Nguồn truyện để thêm',
+          ),
         ),
       );
       return;
@@ -693,9 +696,9 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen>
       if (!mounted) return;
       if (next == null) {
         if (matched >= 0 || sameChapter) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Chưa có chương mới')),
-          );
+          ScaffoldMessenger.of(
+            context,
+          ).showSnackBar(const SnackBar(content: Text('Chưa có chương mới')));
         } else {
           // Trang đổi link chương hoặc mục lục đổi dạng: không đoán chương
           // để khỏi mở chương mới nhất và bỏ qua các chương mới ở giữa.
@@ -710,14 +713,16 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen>
         }
         return;
       }
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Có chương mới: ${next.title}')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Có chương mới: ${next.title}')));
       await _load(next.url);
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Kiểm tra chương mới lỗi: ${friendlyError(e)}')),
+          SnackBar(
+            content: Text('Kiểm tra chương mới lỗi: ${friendlyError(e)}'),
+          ),
         );
       }
     } finally {
@@ -731,15 +736,63 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen>
     Navigator.push(
       context,
       MaterialPageRoute(
-        builder: (_) => TocScreen(
-          storyUrl: _storyUrlOf(c.url),
-          currentChapterUrl: c.url,
-        ),
+        builder: (_) =>
+            TocScreen(storyUrl: _storyUrlOf(c.url), currentChapterUrl: c.url),
       ),
     );
   }
 
   bool _addingToLib = false;
+
+  /// Dò truyện đang đọc trên nguồn khác rồi thay màn đọc hiện tại bằng chương
+  /// đã ghép. Không đẩy thêm một màn đọc mới lên chồng: quay lại là về thư
+  /// viện chứ không về bản đọc của nguồn cũ đã chết.
+  Future<void> _openSourceSwitch() async {
+    final c = _content;
+    if (c == null || c.url.startsWith('book:')) return;
+    final storyUrl = _storyUrlOf(c.url);
+    var title = widget.storyTitle?.trim() ?? '';
+    if (title.isEmpty) {
+      try {
+        final lib = await ref.read(appDbProvider).getLibrary();
+        for (final r in lib) {
+          if (sameChapterUrl(r['story_url'] as String?, storyUrl)) {
+            title = (r['title'] as String? ?? '').trim();
+            break;
+          }
+        }
+      } catch (_) {}
+    }
+    if (!mounted) return;
+    final result = await Navigator.push<SourceSwitchResult>(
+      context,
+      MaterialPageRoute(
+        builder: (_) => SourceSwitchScreen(
+          storyTitle: title,
+          storyUrl: storyUrl,
+          chapterUrl: c.url,
+          chapterTitle: c.title,
+        ),
+      ),
+    );
+    if (result == null || !mounted) return;
+    // Phiên nghe của truyện cũ không được tiếp tục dưới nguồn mới.
+    final sessionStory = _player.readingStoryUrl;
+    if (sessionStory != null && sameChapterUrl(sessionStory, storyUrl)) {
+      await _player.closeSession();
+      if (!mounted) return;
+    }
+    Navigator.pushReplacement(
+      context,
+      MaterialPageRoute(
+        builder: (_) => ReaderScreen(
+          url: result.chapterUrl,
+          storyUrl: result.storyUrl,
+          storyTitle: result.title,
+        ),
+      ),
+    );
+  }
 
   Future<void> _refreshSaved() async {
     final c = _content;
@@ -958,7 +1011,12 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen>
       }
       // Luôn phát từ đầu đoạn văn đang hiển thị; nghe dở rồi dừng thì đọc lại
       // từ đầu đoạn đó (resume() cũng theo semantics này cho nút media/headset).
-      _player.start(c, paraIndex: para, storyUrl: story);
+      _player.start(
+        c,
+        paraIndex: para,
+        storyUrl: story,
+        storyTitle: widget.storyTitle,
+      );
     }());
   }
 
@@ -1713,12 +1771,18 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen>
                     if (v == 'marks') _openBookmarks();
                     if (v == 'timer') _sleepTimerMenu();
                     if (v == 'settings') _openSettings();
+                    if (v == 'switch') unawaited(_openSourceSwitch());
                   },
                   itemBuilder: (_) => [
                     if (c != null)
                       const PopupMenuItem(
                         value: 'marks',
                         child: Text('Đoạn đã đánh dấu'),
+                      ),
+                    if (c != null && !c.url.startsWith('book:'))
+                      const PopupMenuItem(
+                        value: 'switch',
+                        child: Text('Tìm truyện ở nguồn khác'),
                       ),
                     PopupMenuItem(
                       value: 'timer',

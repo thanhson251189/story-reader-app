@@ -1,9 +1,12 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../core/errors.dart';
 import '../core/models.dart';
 import '../core/providers.dart';
+import '../fetcher/story_downloader.dart';
 import '../fetcher/web_fetcher.dart';
 import 'reader_screen.dart';
 
@@ -73,7 +76,18 @@ class _TocScreenState extends ConsumerState<TocScreen> {
   @override
   void initState() {
     super.initState();
+    StoryDownloader.state.addListener(_onStoryDownload);
     _load();
+  }
+
+  void _onStoryDownload() {
+    final s = StoryDownloader.state.value;
+    if (!mounted || s == null || s.storyUrl != widget.storyUrl) return;
+    setState(() {
+      if (!s.running && s.message != null) _dlResult = s.message;
+    });
+    // Tải xong/dừng thì mục lục phải tô lại dấu "đã có trong máy".
+    if (!s.running) unawaited(_load());
   }
 
   @override
@@ -81,6 +95,7 @@ class _TocScreenState extends ConsumerState<TocScreen> {
     // Rời mục lục (Back hoặc mở chương) phải dừng tải. Không có cờ này thì vòng
     // lặp vẫn tải tiếp sau khi thanh tiến độ và nút Huỷ đã biến mất.
     _dlCancel = true;
+    StoryDownloader.state.removeListener(_onStoryDownload);
     _scroll.dispose();
     _filterCtrl.dispose();
     super.dispose();
@@ -151,6 +166,30 @@ class _TocScreenState extends ConsumerState<TocScreen> {
   }
 
   Future<void> _downloadAhead(int count) async {
+    if (count < 0) {
+      // Tải cả truyện chạy ở tầng riêng nên không chết khi rời màn mục lục.
+      if (StoryDownloader.running) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Đang tải một truyện khác, chờ xong đã'),
+          ),
+        );
+        return;
+      }
+      final ok = await StoryDownloader.start(
+        db: ref.read(appDbProvider),
+        fetcher: ref.read(webFetcherProvider),
+        adapters: ref.read(adapterRepoProvider),
+        storyUrl: widget.storyUrl,
+      );
+      if (ok || !mounted) return;
+      final msg = StoryDownloader.state.value?.message;
+      if (msg != null) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text(msg)));
+      }
+      return;
+    }
     if (_downloading || _chapters.isEmpty) return;
     setState(() {
       _downloading = true;
@@ -353,6 +392,7 @@ class _TocScreenState extends ConsumerState<TocScreen> {
               enabled: !_downloading,
               onSelected: _downloadAhead,
               itemBuilder: (_) => const [
+                PopupMenuItem(value: -1, child: Text('Tải cả truyện')),
                 PopupMenuItem(value: 5, child: Text('Tải 5 chương tiếp')),
                 PopupMenuItem(value: 50, child: Text('Tải 50 chương tiếp')),
                 PopupMenuItem(value: 100, child: Text('Tải 100 chương tiếp')),
@@ -382,6 +422,26 @@ class _TocScreenState extends ConsumerState<TocScreen> {
             )
           : Column(
               children: [
+                if (StoryDownloader.state.value case final dl?
+                    when dl.storyUrl == widget.storyUrl && dl.running)
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: LinearProgressIndicator(
+                            value: dl.total == 0 ? null : dl.done / dl.total,
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Text('${dl.done}/${dl.total}'),
+                        TextButton(
+                          onPressed: StoryDownloader.cancel,
+                          child: const Text('Dừng'),
+                        ),
+                      ],
+                    ),
+                  ),
                 if (_downloading)
                   Padding(
                     padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
@@ -495,7 +555,8 @@ class _TocScreenState extends ConsumerState<TocScreen> {
                                               )
                                             : null),
                                 ),
-                                trailing: _cached.contains(TocScreen.normUrl(c.url))
+                                trailing:
+                                    _cached.contains(TocScreen.normUrl(c.url))
                                     ? const Icon(
                                         Icons.offline_pin,
                                         size: 18,

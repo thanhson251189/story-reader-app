@@ -214,6 +214,22 @@ class WebFetcher {
     return parseStory(map);
   }
 
+  /// Chỉ lấy mục lục qua API JSON (HTTP thuần, không WebView). Dùng cho tác
+  /// vụ nền: WebView không đáng tin trong tiến trình chạy ngầm, nên nguồn
+  /// không có `api` trả null thay vì rơi về quét DOM.
+  Future<NovelInfo?> fetchStoryApiOnly(
+    String url,
+    SourceAdapter adapter,
+  ) async {
+    final api = adapter.api;
+    if (api == null) return null;
+    try {
+      return await _fetchStoryJsonApi(url, api);
+    } catch (_) {
+      return null;
+    }
+  }
+
   static String slugOf(String url) {
     final segs = Uri.parse(url).pathSegments.where((s) => s.isNotEmpty);
     return segs.isEmpty ? '' : segs.last;

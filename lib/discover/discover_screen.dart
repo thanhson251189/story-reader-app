@@ -9,6 +9,7 @@ import '../core/models.dart';
 import '../core/providers.dart';
 import '../fetcher/web_fetcher.dart';
 import '../reader/reader_screen.dart';
+import '../sources/registry.dart';
 import '../sources/sources_screen.dart';
 import 'discover_opener.dart';
 
@@ -33,6 +34,8 @@ class _DiscoverScreenState extends ConsumerState<DiscoverScreen> {
   bool _canForward = false;
   bool _pageLoading = true;
   bool _opening = false;
+  bool _hideAdult = false;
+  Set<String> _adultDomains = {};
 
   @override
   void initState() {
@@ -42,8 +45,17 @@ class _DiscoverScreenState extends ConsumerState<DiscoverScreen> {
 
   Future<void> _loadPreferred() async {
     try {
-      final saved = await ref.read(appDbProvider).getSetting('discoverSource');
-      if (mounted) setState(() => _preferred = saved);
+      final db = ref.read(appDbProvider);
+      final saved = await db.getSetting('discoverSource');
+      final hideAdult = await SourceRegistry.hideAdultEnabled(db);
+      final adult = await SourceRegistry.adultDomains(db);
+      if (mounted) {
+        setState(() {
+          _preferred = saved;
+          _hideAdult = hideAdult;
+          _adultDomains = adult;
+        });
+      }
     } catch (_) {}
   }
 
@@ -51,11 +63,14 @@ class _DiscoverScreenState extends ConsumerState<DiscoverScreen> {
   void didUpdateWidget(DiscoverScreen old) {
     super.didUpdateWidget(old);
     // Tab nằm trong IndexedStack: cài thêm nguồn ở màn khác rồi quay lại phải
-    // thấy nguồn mới trong danh sách nguồn.
-    if (widget.active && !old.active) setState(() {});
+    // thấy nguồn mới trong danh sách nguồn; đổi công tắc ẩn 18+ cũng áp ngay.
+    if (widget.active && !old.active) unawaited(_loadPreferred());
   }
 
   List<SourceAdapter> get _sources => [...ref.read(adapterRepoProvider).all]
+    ..removeWhere(
+      (a) => _hideAdult && SourceRegistry.isAdultHost(a.domain, _adultDomains),
+    )
     ..sort((a, b) => a.domain.compareTo(b.domain));
 
   /// Mở màn Nguồn truyện để chọn nguồn; bấm "Mở" ở một nguồn trả domain về
@@ -140,7 +155,9 @@ class _DiscoverScreenState extends ConsumerState<DiscoverScreen> {
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Không mở được bằng app: ${friendlyError(e)}')),
+          SnackBar(
+            content: Text('Không mở được bằng app: ${friendlyError(e)}'),
+          ),
         );
       }
     } finally {
@@ -203,11 +220,8 @@ class _DiscoverScreenState extends ConsumerState<DiscoverScreen> {
       await Navigator.push(
         context,
         MaterialPageRoute(
-          builder: (_) => ReaderScreen(
-            url: start,
-            storyUrl: page.url,
-            storyTitle: title,
-          ),
+          builder: (_) =>
+              ReaderScreen(url: start, storyUrl: page.url, storyTitle: title),
         ),
       );
     } else if (action == 'save') {
