@@ -1,9 +1,11 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../core/cover_image.dart';
+import '../core/errors.dart';
 import '../core/models.dart';
 import '../core/providers.dart';
 import '../fetcher/web_fetcher.dart';
@@ -65,6 +67,8 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
   bool _loaded = false;
   bool _checking = false;
   String? _checkProgress;
+  // Truyện đang được kiểm tra riêng từ nút trên thẻ (null khi không chạy).
+  String? _checkingStory;
   // storyUrl → số chương trong mục lục đã lưu, để hiện "Chương x/y".
   Map<String, int> _tocCounts = {};
   // Sắp xếp: 'recent' (mới đọc — mặc định theo DB), 'newest' (có chương mới
@@ -246,6 +250,147 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
         ),
       ),
     );
+  }
+
+  /// Kiểm tra chương mới cho riêng một truyện từ nút trên thẻ. Không cập
+  /// nhật mốc 6 giờ của lần kiểm tra cả thư viện — các truyện khác chưa quét.
+  Future<void> _checkOne(Map<String, dynamic> item) async {
+    final storyUrl = item['story_url'] as String? ?? '';
+    if (storyUrl.startsWith('book:') || _checkingStory != null) return;
+    if (LibraryChecker.running) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Đang kiểm tra chương mới, chờ chút nhé')),
+      );
+      return;
+    }
+    setState(() => _checkingStory = storyUrl);
+    final db = ref.read(appDbProvider);
+    try {
+      final res = await LibraryChecker.check(
+        db: db,
+        fetcher: ref.read(webFetcherProvider),
+        repo: ref.read(adapterRepoProvider),
+        items: [item],
+      );
+      await _load();
+      if (!mounted) return;
+      if (!res.ran) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Đang kiểm tra chương mới, chờ chút nhé'),
+          ),
+        );
+        return;
+      }
+      if (res.warns.isNotEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(res.warns.join('\n'))),
+        );
+        return;
+      }
+      final rows = await db.getLibrary();
+      final row = rows
+          .where((r) => sameChapterUrl(r['story_url'] as String?, storyUrl))
+          .firstOrNull;
+      if (row == null || !mounted) return;
+      final badge = LibraryScreen.newBadge(
+        row['latest_chapter_url'] as String?,
+        row['latest_chapter_title'] as String?,
+        row['last_chapter_url'] as String?,
+      );
+      if (badge == null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Không có chương mới')),
+        );
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            res.fresh > 0 ? 'Có chương mới — $badge' : 'Còn chương chưa đọc — $badge',
+          ),
+          action: SnackBarAction(
+            label: 'Đọc',
+            onPressed: () => unawaited(_openNextUnread(row)),
+          ),
+        ),
+      );
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Kiểm tra chương mới lỗi: ${friendlyError(e)}')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _checkingStory = null);
+    }
+  }
+
+  /// Mở chương chưa đọc kế tiếp — chương ngay sau vị trí đang đọc, không nhảy
+  /// thẳng chương mới nhất để đọc lần lượt các chương mới.
+  Future<void> _openNextUnread(Map<String, dynamic> row) async {
+    final storyUrl = row['story_url'] as String? ?? '';
+    final last = row['last_chapter_url'] as String? ?? storyUrl;
+    List<ChapterRef> toc;
+    try {
+      toc = await ref.read(appDbProvider).getToc(storyUrl);
+    } catch (_) {
+      toc = const [];
+    }
+    final url = ReaderScreen.nextChapterAfter(last, toc)?.url ?? last;
+    if (!mounted) return;
+    await Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => ReaderScreen(
+          url: url,
+          storyUrl: storyUrl,
+          storyTitle: row['title'] as String?,
+        ),
+      ),
+    );
+    if (mounted) _load();
+  }
+
+  /// Chạm giữ thẻ: menu thao tác — xóa không còn là chạm giữ trực tiếp nên
+  /// không xóa nhầm.
+  Future<void> _showItemMenu(Map<String, dynamic> item) async {
+    final isBook = (item['story_url'] as String? ?? '').startsWith('book:');
+    final action = await showModalBottomSheet<String>(
+      context: context,
+      builder: (ctx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: const Icon(Icons.menu_book),
+              title: const Text('Đọc tiếp'),
+              onTap: () => Navigator.pop(ctx, 'open'),
+            ),
+            if (!isBook)
+              ListTile(
+                leading: const Icon(Icons.new_releases_outlined),
+                title: const Text('Kiểm tra chương mới'),
+                onTap: () => Navigator.pop(ctx, 'check'),
+              ),
+            ListTile(
+              leading: const Icon(Icons.delete_outline),
+              title: const Text('Xóa khỏi thư viện'),
+              onTap: () => Navigator.pop(ctx, 'delete'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (!mounted) return;
+    switch (action) {
+      case 'open':
+        _open(item);
+      case 'check':
+        unawaited(_checkOne(item));
+      case 'delete':
+        _remove(item);
+    }
   }
 
   Future<void> _remove(Map<String, dynamic> item) async {
@@ -477,60 +622,128 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
       item['last_chapter_url'] as String?,
     );
     final storyUrl = item['story_url'] as String? ?? '';
+    final isBook = storyUrl.startsWith('book:');
+    final total = _tocCounts[storyUrl];
     final source = LibraryScreen.sourceLabel(
       storyUrl,
       adapterDomain: ref.read(adapterRepoProvider).forUrl(storyUrl)?.domain,
     );
     final small = Theme.of(context).textTheme.bodySmall;
+    final checkingThis = _checkingStory == storyUrl;
+    final checkBusy =
+        _checking || LibraryChecker.running || _checkingStory != null;
+    final primary = Theme.of(context).colorScheme.primary;
+    // Thẻ tự dựng thay vì ListTile: hai nút xếp dọc trong trailing của ListTile
+    // bị giới hạn chiều cao và tràn ở cỡ chữ lớn.
     return Card(
-      child: ListTile(
-        isThreeLine: true,
-        leading: CoverImage(url: item['cover_url'] as String?),
-        title: Text(
-          item['title'] as String? ?? '',
-          maxLines: 2,
-          overflow: TextOverflow.ellipsis,
-        ),
-        // Máy để chữ to thì dòng "Đang đọc: Chương 12/345" cần xuống dòng,
-        // cắt một dòng là mất đúng số chương người đọc cần thấy.
-        subtitle: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              _subtitle(item),
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-              style: small,
-            ),
-            if (source.isNotEmpty)
-              Text(
-                source,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: small?.copyWith(
-                  color: Theme.of(context).colorScheme.outline,
-                ),
-              ),
-            if (badge != null)
-              Text(
-                badge,
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  color: Theme.of(context).colorScheme.primary,
-                  fontWeight: FontWeight.bold,
-                  fontSize: 12,
-                ),
-              ),
-          ],
-        ),
-        trailing: IconButton(
-          icon: const Icon(Icons.delete_outline),
-          tooltip: 'Xóa khỏi thư viện',
-          onPressed: () => _remove(item),
-        ),
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
         onTap: () => _open(item),
-        onLongPress: () => _remove(item),
+        onLongPress: () => _showItemMenu(item),
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(16, 12, 4, 12),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              SizedBox(
+                width: 48,
+                child: CoverImage(url: item['cover_url'] as String?),
+              ),
+              const SizedBox(width: 16),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      item['title'] as String? ?? '',
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: Theme.of(context).textTheme.bodyLarge,
+                    ),
+                    const SizedBox(height: 2),
+                    // Máy để chữ to thì dòng "Đang đọc: Chương 12/345" cần
+                    // xuống dòng, cắt một dòng là mất đúng số chương cần thấy.
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        // Có tổng số chương rồi thì "87/1363" đã nói chưa
+                        // đọc hết; chấm nhỏ giữ tín hiệu, không lặp cả dòng.
+                        if (badge != null && total != null)
+                          Semantics(
+                            label: 'Còn chương chưa đọc',
+                            child: Padding(
+                              padding: const EdgeInsets.only(top: 5, right: 6),
+                              child: Icon(
+                                Icons.circle,
+                                key: ValueKey('new-dot-$storyUrl'),
+                                size: 8,
+                                color: primary,
+                              ),
+                            ),
+                          ),
+                        Expanded(
+                          child: Text(
+                            _subtitle(item),
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: small,
+                          ),
+                        ),
+                      ],
+                    ),
+                    if (source.isNotEmpty)
+                      Text(
+                        source,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: small?.copyWith(
+                          color: Theme.of(context).colorScheme.outline,
+                        ),
+                      ),
+                    // Chưa lưu được mục lục (không có tổng) thì dòng này là
+                    // thông tin duy nhất báo còn chương chưa đọc.
+                    if (badge != null && total == null)
+                      Text(
+                        badge,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: primary,
+                          fontWeight: FontWeight.bold,
+                          fontSize: 12,
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+              Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  IconButton(
+                    visualDensity: VisualDensity.compact,
+                    icon: const Icon(Icons.delete_outline),
+                    tooltip: 'Xóa khỏi thư viện',
+                    onPressed: () => _remove(item),
+                  ),
+                  if (!isBook)
+                    IconButton(
+                      key: ValueKey('check-new-$storyUrl'),
+                      visualDensity: VisualDensity.compact,
+                      tooltip: 'Kiểm tra chương mới',
+                      icon: checkingThis
+                          ? const SizedBox(
+                              width: 20,
+                              height: 20,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : const Icon(Icons.new_releases_outlined),
+                      onPressed: checkBusy ? null : () => _checkOne(item),
+                    ),
+                ],
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }
