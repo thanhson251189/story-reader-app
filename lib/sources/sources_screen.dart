@@ -322,7 +322,20 @@ class _SourcesScreenState extends ConsumerState<SourcesScreen> {
       child: ListTile(
         leading: const Icon(Icons.dns_outlined),
         title: Text(_names[e.domain] ?? e.name),
-        subtitle: Text(label),
+        subtitle: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // Tên nguồn đổi được nên không cho biết nguồn trỏ trang nào;
+            // domain là địa chỉ thật, luôn hiện.
+            Text(
+              'https://${e.domain}',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
+            Text(label),
+          ],
+        ),
         trailing: Row(
           mainAxisSize: MainAxisSize.min,
           children: [?action, ?menu],

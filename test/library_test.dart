@@ -74,6 +74,30 @@ void main() {
     expect(LibraryScreen.matchesQuery(item('Bất kỳ'), '   '), isTrue);
   });
 
+  test('sourceLabel: domain của nguồn, sách trong máy thì ghi rõ', () {
+    expect(
+      LibraryScreen.sourceLabel(
+        'https://truyendich.vn/kiem-dao/chapter-5/',
+        adapterDomain: 'truyendich.vn',
+      ),
+      'truyendich.vn',
+    );
+    expect(
+      LibraryScreen.sourceLabel('http://truyendich.us/truyen/x/'),
+      'truyendich.us',
+    );
+    expect(
+      LibraryScreen.sourceLabel(
+        'https://x.example.com/truyen',
+        adapterDomain: 'example.com',
+      ),
+      'example.com',
+      reason: 'adapter đã cài là nguồn tin cậy hơn host trong link',
+    );
+    expect(LibraryScreen.sourceLabel('book:abc123'), 'Sách trong máy');
+    expect(LibraryScreen.sourceLabel('không phải link'), '');
+  });
+
   test('hasNew: đúng với badge chương mới', () {
     expect(
       LibraryScreen.hasNew(

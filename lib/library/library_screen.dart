@@ -37,6 +37,15 @@ class LibraryScreen extends ConsumerStatefulWidget {
   static String title(Map<String, dynamic> item) =>
       (item['title'] as String?) ?? '';
 
+  /// Tên miền nguồn của truyện, để hai bản cùng tên ở hai trang không lẫn.
+  /// Adapter đã cài (nếu có) là nguồn tin cậy — đúng cả khi link có subdomain.
+  static String sourceLabel(String storyUrl, {String? adapterDomain}) {
+    if (storyUrl.startsWith('book:')) return 'Sách trong máy';
+    final d = adapterDomain?.trim();
+    if (d != null && d.isNotEmpty) return d;
+    return Uri.tryParse(storyUrl)?.host ?? '';
+  }
+
   /// Truyện chưa đọc tới chương cuối đứng trước, trong nhóm đó mới đọc
   /// trước trước (updated_at DESC từ DB).
   static bool hasNew(Map<String, dynamic> item) =>
@@ -467,22 +476,45 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
       item['latest_chapter_title'] as String?,
       item['last_chapter_url'] as String?,
     );
+    final storyUrl = item['story_url'] as String? ?? '';
+    final source = LibraryScreen.sourceLabel(
+      storyUrl,
+      adapterDomain: ref.read(adapterRepoProvider).forUrl(storyUrl)?.domain,
+    );
+    final small = Theme.of(context).textTheme.bodySmall;
     return Card(
       child: ListTile(
+        isThreeLine: true,
         leading: CoverImage(url: item['cover_url'] as String?),
         title: Text(
           item['title'] as String? ?? '',
           maxLines: 2,
           overflow: TextOverflow.ellipsis,
         ),
+        // Máy để chữ to thì dòng "Đang đọc: Chương 12/345" cần xuống dòng,
+        // cắt một dòng là mất đúng số chương người đọc cần thấy.
         subtitle: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(_subtitle(item), maxLines: 1, overflow: TextOverflow.ellipsis),
+            Text(
+              _subtitle(item),
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: small,
+            ),
+            if (source.isNotEmpty)
+              Text(
+                source,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: small?.copyWith(
+                  color: Theme.of(context).colorScheme.outline,
+                ),
+              ),
             if (badge != null)
               Text(
                 badge,
-                maxLines: 1,
+                maxLines: 2,
                 overflow: TextOverflow.ellipsis,
                 style: TextStyle(
                   color: Theme.of(context).colorScheme.primary,

@@ -184,4 +184,31 @@ void main() {
     expect(ReaderScreen.shorterThanCached(full, edited), isFalse);
     expect(ReaderScreen.shorterThanCached(stub, full), isFalse);
   });
+
+  test('atTocEnd: chương cuối mục lục mới hiện nút kiểm tra', () {
+    // Có mục lục: tin vị trí, kể cả khi trang còn nút chương sau (mục lục cũ).
+    expect(
+      ReaderScreen.atTocEnd(tocIndex: 740, tocTotal: 741, hasNext: false),
+      isTrue,
+    );
+    expect(
+      ReaderScreen.atTocEnd(tocIndex: 740, tocTotal: 741, hasNext: true),
+      isTrue,
+      reason: 'vị trí trong mục lục là nguồn tin cậy hơn nút trên trang',
+    );
+    expect(
+      ReaderScreen.atTocEnd(tocIndex: 5, tocTotal: 741, hasNext: false),
+      isFalse,
+      reason: 'còn chương sau trong mục lục thì không phải cuối truyện',
+    );
+    // Chưa có mục lục (hoặc chương không khớp mục lục): dựa vào nút chương sau.
+    expect(
+      ReaderScreen.atTocEnd(tocIndex: null, tocTotal: null, hasNext: false),
+      isTrue,
+    );
+    expect(
+      ReaderScreen.atTocEnd(tocIndex: null, tocTotal: 741, hasNext: true),
+      isFalse,
+    );
+  });
 }

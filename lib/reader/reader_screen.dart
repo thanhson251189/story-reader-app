@@ -38,6 +38,17 @@ class ReaderScreen extends ConsumerStatefulWidget {
     this.initialParagraph,
   });
 
+  /// Đang ở chương cuối: ưu tiên vị trí trong mục lục đã lưu; chưa có mục
+  /// lục thì dựa vào việc trang chương có nút chương sau hay không.
+  static bool atTocEnd({
+    required int? tocIndex,
+    required int? tocTotal,
+    required bool hasNext,
+  }) {
+    if (tocIndex != null && tocTotal != null) return tocIndex == tocTotal - 1;
+    return !hasNext;
+  }
+
   /// Bản web mới ngắn hơn nhiều so với bản đã lưu: thường là trang đăng nhập,
   /// trang chặn, hoặc trang chưa tải hết chữ. Không ghi đè bản đầy đủ.
   /// Chương vốn đã ngắn (dưới 400 chữ) thì nhận bản mới — không có gì để giữ.
@@ -252,6 +263,11 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen>
   int _lastSpokenPara = -1;
   String? _shownError;
   String? _progressLabel;
+  // Chương đang đọc nằm ở đâu trong mục lục đã lưu: biết đang ở chương cuối
+  // để hiện nút kiểm tra chương mới ngay cuối nội dung.
+  int? _tocIndex;
+  int? _tocTotal;
+  bool _checkingNew = false;
   // Tìm trong chương: từ khoá giữ nguyên giữa các lần mở sheet; đoạn khớp khi
   // bấm kết quả được nháy sáng 2.5s để mắt bám theo chỗ cuộn tới.
   final TextEditingController _searchCtrl = TextEditingController();
@@ -563,10 +579,20 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen>
 
   // "Chương x/y" lấy từ mục lục đã lưu; không có mục lục thì ẩn đi.
   Future<void> _updateProgress(String chapterUrl) async {
+    void clear() {
+      if (mounted) {
+        setState(() {
+          _progressLabel = null;
+          _tocIndex = null;
+          _tocTotal = null;
+        });
+      }
+    }
+
     try {
       final toc = await ref.read(appDbProvider).getToc(_storyUrlOf(chapterUrl));
       if (toc.isEmpty) {
-        if (mounted) setState(() => _progressLabel = null);
+        clear();
         return;
       }
       final i = toc.indexWhere(
@@ -575,9 +601,88 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen>
       if (!mounted) return;
       setState(() {
         _progressLabel = i < 0 ? null : 'Chương ${i + 1}/${toc.length}';
+        _tocIndex = i < 0 ? null : i;
+        _tocTotal = toc.length;
       });
     } catch (_) {
-      if (mounted) setState(() => _progressLabel = null);
+      clear();
+    }
+  }
+
+  bool get _atTocEnd {
+    final c = _content;
+    if (c == null) return false;
+    return ReaderScreen.atTocEnd(
+      tocIndex: _tocIndex,
+      tocTotal: _tocTotal,
+      hasNext: c.nextUrl != null,
+    );
+  }
+
+  /// Kiểm tra chương mới ngay tại chương cuối: tải lại mục lục, có chương sau
+  /// chương đang đọc thì mở luôn. Không đụng mốc 6 giờ của lần kiểm tra cả
+  /// thư viện — lần đó quét mọi truyện nên mới được tính.
+  Future<void> _checkNewChapter() async {
+    final c = _content;
+    if (c == null || _checkingNew) return;
+    final storyUrl = _storyUrlOf(c.url);
+    final adapter = ref.read(adapterRepoProvider).forUrl(storyUrl);
+    if (adapter == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Chưa cài nguồn cho truyện này — vào Nguồn truyện để thêm'),
+        ),
+      );
+      return;
+    }
+    setState(() => _checkingNew = true);
+    final db = ref.read(appDbProvider);
+    try {
+      final info = await ref
+          .read(webFetcherProvider)
+          .fetchStory(storyUrl, adapter);
+      if (info.chapters.isEmpty) throw Exception('Không lấy được mục lục');
+      // Bản thiếu page không được xoá mục lục đang có (quy tắc chung của app).
+      final saved = await db.saveTocUnlessShorter(storyUrl, info);
+      if (!saved) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Mục lục tải chưa đủ vài trang — giữ danh sách chương cũ',
+            ),
+          ),
+        );
+        return;
+      }
+      final last = info.chapters.last;
+      await db.setLatestChapter(storyUrl, last.url, last.title);
+      final toc = await db.getToc(storyUrl);
+      final cur = TocScreen.normUrl(c.url);
+      final i = toc.indexWhere((ch) => TocScreen.normUrl(ch.url) == cur);
+      final hasNew = i >= 0
+          ? i < toc.length - 1
+          : !sameChapterUrl(last.url, c.url);
+      if (!mounted) return;
+      if (!hasNew) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Chưa có chương mới')),
+        );
+        return;
+      }
+      final next = i >= 0 ? toc[i + 1] : last;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Có chương mới: ${next.title}')),
+      );
+      await _load(next.url);
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Kiểm tra chương mới lỗi: ${friendlyError(e)}')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _checkingNew = false);
     }
   }
 
@@ -1810,6 +1915,43 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen>
                         },
                         icon: const Icon(Icons.arrow_forward),
                         label: const Text('Chương sau'),
+                      ),
+                    ),
+                  ),
+                if (!c.url.startsWith('book:') && _atTocEnd)
+                  Center(
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 24),
+                      child: Column(
+                        children: [
+                          Text(
+                            'Đã hết chương đang có',
+                            style: TextStyle(color: fg, fontSize: 12),
+                          ),
+                          const SizedBox(height: 8),
+                          FilledButton.icon(
+                            onPressed: _checkingNew
+                                ? null
+                                : () {
+                                    _ateTap = true;
+                                    _checkNewChapter();
+                                  },
+                            icon: _checkingNew
+                                ? const SizedBox(
+                                    width: 16,
+                                    height: 16,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 2,
+                                    ),
+                                  )
+                                : const Icon(Icons.new_releases_outlined),
+                            label: Text(
+                              _checkingNew
+                                  ? 'Đang kiểm tra...'
+                                  : 'Kiểm tra chương mới',
+                            ),
+                          ),
+                        ],
                       ),
                     ),
                   ),
