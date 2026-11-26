@@ -438,8 +438,9 @@ class AppDb {
   }
 
   /// Link chương thuộc một truyện: lấy từ mục lục đã lưu cộng các dòng cache
-  /// khớp tiền tố/đã chuẩn hoá. Nguồn CMS có thể đặt link chương ngoài tiền
-  /// tố trang truyện nên phải quét cache, không chỉ `LIKE 'storyUrl%'`.
+  /// khớp truyện/tiền tố đường dẫn. Nguồn CMS có thể đặt link chương ngoài
+  /// tiền tố trang truyện nên phải tra cache, nhưng tra bằng norm có index
+  /// thay vì quét cả bảng.
   Future<Set<String>> _storyChapterUrls(Database db, String storyUrl) async {
     final out = <String>{};
     final keys = await _storyKeys(storyUrl);
@@ -453,13 +454,18 @@ class AppDb {
       for (final r in toc) {
         out.add(r['chapter_url'] as String);
       }
-      if (key.startsWith('book:')) continue;
-      final cached = await db.query('chapter_cache', columns: ['url']);
+      final norm = normalizeChapterUrl(key);
+      // norm_story: truyện suy ngược từ link chương (CMS đặt chương trong
+      // thư mục con riêng vẫn ra đúng). Dải norm_url phủ nốt chương nằm dưới
+      // đường dẫn truyện mà suy ngược không ra (vd. /truyen/x/tap/1).
+      final cached = await db.query(
+        'chapter_cache',
+        columns: ['url'],
+        where: 'norm_story = ? OR (norm_url >= ? AND norm_url < ?)',
+        whereArgs: [norm, '$norm/', '${norm}0'],
+      );
       for (final r in cached) {
-        final url = r['url'] as String;
-        if (sameChapterUrl(url, key) || _chapterOfStory(url, key)) {
-          out.add(url);
-        }
+        out.add(r['url'] as String);
       }
     }
     return out;
@@ -468,21 +474,26 @@ class AppDb {
   /// Số chương web của truyện đang nằm trong máy (kể cả chương đã ghim).
   Future<int> cachedChapterCountForStory(String storyUrl) async {
     final db = await database;
-    final urls = (await _storyChapterUrls(
-      db,
-      storyUrl,
-    )).where((u) => !u.startsWith('book:')).toList();
+    // So bằng norm: link mục lục và link lúc tải hay lệch slash/http, so
+    // nguyên văn thì đếm thiếu.
+    final norms = {
+      for (final u in (await _storyChapterUrls(
+        db,
+        storyUrl,
+      )).where((u) => !u.startsWith('book:')))
+        normalizeChapterUrl(u),
+    }.toList();
     var count = 0;
-    for (var i = 0; i < urls.length; i += _pinQueryBatch) {
-      final end = i + _pinQueryBatch > urls.length
-          ? urls.length
+    for (var i = 0; i < norms.length; i += _pinQueryBatch) {
+      final end = i + _pinQueryBatch > norms.length
+          ? norms.length
           : i + _pinQueryBatch;
-      final chunk = urls.sublist(i, end);
+      final chunk = norms.sublist(i, end);
       final ph = List.filled(chunk.length, '?').join(',');
       count +=
           Sqflite.firstIntValue(
             await db.rawQuery(
-              'SELECT COUNT(*) FROM chapter_cache WHERE url IN ($ph)',
+              'SELECT COUNT(*) FROM chapter_cache WHERE norm_url IN ($ph)',
               chunk,
             ),
           ) ??
@@ -496,20 +507,23 @@ class AppDb {
   /// trong máy không bao giờ bị đụng. Trả về số dòng đã xoá.
   Future<int> clearCachedChaptersForStory(String storyUrl) async {
     final db = await database;
-    final urls = (await _storyChapterUrls(
-      db,
-      storyUrl,
-    )).where((u) => !u.startsWith('book:')).toList();
+    final norms = {
+      for (final u in (await _storyChapterUrls(
+        db,
+        storyUrl,
+      )).where((u) => !u.startsWith('book:')))
+        normalizeChapterUrl(u),
+    }.toList();
     var deleted = 0;
-    for (var i = 0; i < urls.length; i += _pinQueryBatch) {
-      final end = i + _pinQueryBatch > urls.length
-          ? urls.length
+    for (var i = 0; i < norms.length; i += _pinQueryBatch) {
+      final end = i + _pinQueryBatch > norms.length
+          ? norms.length
           : i + _pinQueryBatch;
-      final chunk = urls.sublist(i, end);
+      final chunk = norms.sublist(i, end);
       final ph = List.filled(chunk.length, '?').join(',');
       deleted += await db.delete(
         'chapter_cache',
-        where: 'url IN ($ph)',
+        where: 'norm_url IN ($ph)',
         whereArgs: chunk,
       );
     }
@@ -604,18 +618,6 @@ class AppDb {
       return [storyUrl, ...found.where((k) => k != storyUrl)];
     }
     return found;
-  }
-
-  bool _chapterOfStory(String chapterUrl, String storyUrl) {
-    if (storyUrl.startsWith('book:')) {
-      return chapterUrl == storyUrl || chapterUrl.startsWith('$storyUrl:');
-    }
-    if (sameChapterUrl(chapterUrl, storyUrl)) return true;
-    final base = storyUrl.endsWith('/') ? storyUrl : '$storyUrl/';
-    if (chapterUrl.startsWith(base)) return true;
-    final nb = normalizeChapterUrl(storyUrl);
-    final nc = normalizeChapterUrl(chapterUrl);
-    return nc == nb || nc.startsWith('$nb/');
   }
 
   Future<void> upsertLibrary({

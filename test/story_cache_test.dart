@@ -33,16 +33,22 @@ void main() {
       await db.cacheChapter(ch('$a/chuong-2'));
       await db.cacheChapter(ch('$a/chuong-3'));
       await db.pinChapter('$a/chuong-2');
+      // Lệch slash so với link mục lục, và chương nằm trong thư mục con (suy
+      // ngược từ link không ra link truyện) — vẫn phải tính đúng truyện.
+      await db.cacheChapter(ch('$a/chuong-1/'));
+      await db.cacheChapter(ch('$a/tap-1/chuong-9'));
       await db.cacheChapter(ch('$b/chuong-1'));
       await db.cacheChapter(ch('book:abc:0'));
 
-      expect(await db.cachedChapterCountForStory(a), 3);
+      expect(await db.cachedChapterCountForStory(a), 5);
       expect(await db.cachedChapterCountForStory(b), 1);
 
       final deleted = await db.clearCachedChaptersForStory(a);
-      expect(deleted, 3);
+      expect(deleted, 5);
       expect(await db.cachedChapterCountForStory(a), 0);
       expect(await db.cachedChapterCountForStory(b), 1);
+      expect(await db.getCachedChapter('$a/chuong-1/'), isNull);
+      expect(await db.getCachedChapter('$a/tap-1/chuong-9'), isNull);
       expect(await db.getCachedChapter('book:abc:0'), isNotNull);
       expect(await db.getCachedChapter('$b/chuong-1'), isNotNull);
       await (await db.database).close();
