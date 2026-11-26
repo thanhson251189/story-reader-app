@@ -16,6 +16,8 @@ class _TocDb extends AppDb {
   final toc = <String, List<ChapterRef>>{};
   final cachedUrls = <String>{};
   final pinned = <String>[];
+  final contents = <String, ChapterContent>{};
+  final filled = <String>[];
 
   @override
   Future<List<ChapterRef>> getToc(String storyUrl) async => toc[storyUrl] ?? [];
@@ -31,9 +33,29 @@ class _TocDb extends AppDb {
     pinned.add(url);
   }
 
+  /// Bổ sung chương kế từ mục lục như AppDb thật — để test bắt được đường
+  /// tải trước quên fillNav làm cache mất next_url.
+  @override
+  Future<ChapterContent> fillNav(ChapterContent c) async {
+    filled.add(c.url);
+    final list = toc.values.firstWhere(
+      (l) => l.any((e) => e.url == c.url),
+      orElse: () => const [],
+    );
+    final i = list.indexWhere((e) => e.url == c.url);
+    return ChapterContent(
+      url: c.url,
+      title: c.title,
+      paragraphs: c.paragraphs,
+      nextUrl: i >= 0 && i + 1 < list.length ? list[i + 1].url : c.nextUrl,
+      prevUrl: i > 0 ? list[i - 1].url : c.prevUrl,
+    );
+  }
+
   @override
   Future<void> cacheChapter(ChapterContent c, {bool touchFetchedAt = true}) async {
     cachedUrls.add(c.url);
+    contents[c.url] = c;
   }
 }
 
@@ -149,6 +171,10 @@ void main() {
     expect(fetcher.fetched, [ch(4), ch(5)]);
     expect(db.pinned, containsAll([ch(1), ch(2), ch(3), ch(4), ch(5)]));
     expect(db.pinned, isNot(contains(ch(6))));
+    // Chương tải từ mục lục phải qua fillNav và cache giữ next_url, nếu không
+    // chuỗi tải trước/nghe tự sang chương kế đứt ở đây.
+    expect(db.filled, [ch(4), ch(5)]);
+    expect(db.contents[ch(4)]?.nextUrl, ch(5));
     expect(find.text('Đã xong 5 chương, tải mới 2'), findsOneWidget);
   });
 

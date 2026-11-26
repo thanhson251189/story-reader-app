@@ -45,22 +45,27 @@ class DataBackup {
     }
     final d = await db.database;
 
+    // Gom mọi bảng vào một batch: khôi phục vài nghìn vị trí đọc mà insert
+    // từng dòng thì mỗi dòng một lần ghi đĩa, chậm và dễ nghẽn UI.
+    final batch = d.batch();
     for (final r in (data['settings'] as List? ?? [])) {
       final m = Map<String, dynamic>.from(r as Map);
       if (m['key'] is String && m['value'] != null) {
-        await db.setSetting(m['key'] as String, '${m['value']}');
+        batch.insert('settings', {
+          'key': m['key'] as String,
+          'value': '${m['value']}',
+        }, conflictAlgorithm: ConflictAlgorithm.replace);
       }
     }
 
     for (final r in (data['library'] as List? ?? [])) {
-      await d.insert(
+      batch.insert(
         'library',
         Map<String, dynamic>.from(r as Map),
         conflictAlgorithm: ConflictAlgorithm.replace,
       );
     }
 
-    final batch = d.batch();
     for (final r in (data['toc'] as List? ?? [])) {
       batch.insert(
         'toc',
@@ -68,15 +73,15 @@ class DataBackup {
         conflictAlgorithm: ConflictAlgorithm.replace,
       );
     }
-    await batch.commit(noResult: true);
 
     for (final r in (data['positions'] as List? ?? [])) {
-      await d.insert(
+      batch.insert(
         'positions',
         Map<String, dynamic>.from(r as Map),
         conflictAlgorithm: ConflictAlgorithm.replace,
       );
     }
+    await batch.commit(noResult: true);
 
     // Đánh dấu đoạn: bỏ id, dedupe theo (story, chapter, para) đã có UNIQUE —
     // trùng với đánh dấu hiện có thì bỏ qua, không đè created_at mới hơn.

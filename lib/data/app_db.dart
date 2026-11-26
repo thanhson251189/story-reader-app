@@ -893,10 +893,7 @@ class AppDb {
     if (raw == null || raw.isEmpty) return const [];
     try {
       final list = jsonDecode(raw) as List;
-      return [
-        for (final e in list)
-          if (_parseWordFix(e) case final fix?) fix,
-      ];
+      return [for (final e in list) ?_parseWordFix(e)];
     } catch (_) {
       return const [];
     }

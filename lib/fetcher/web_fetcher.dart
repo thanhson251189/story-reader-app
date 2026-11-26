@@ -586,7 +586,9 @@ class WebFetcher {
         .get(Uri.parse(url), headers: await _headersFor(url))
         .timeout(const Duration(seconds: 20));
     if (res.statusCode != 200) throw Exception('HTTP ${res.statusCode}');
-    return html_parser.parse(res.body);
+    // Nhiều trang trả text/html không kèm charset: res.body khi đó giải mã
+    // latin1 làm vỡ dấu tiếng Việt, nên đọc thẳng UTF-8.
+    return html_parser.parse(utf8.decode(res.bodyBytes, allowMalformed: true));
   }
 
   // Mục lục phân trang HTML (SSR): tải song song qua HTTP, không cần WebView.

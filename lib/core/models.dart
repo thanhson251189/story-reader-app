@@ -1,3 +1,5 @@
+import 'package:flutter/foundation.dart';
+
 class TocApi {
   final String novelUrl;
   final String listUrl;
@@ -123,16 +125,36 @@ class SourceAdapter {
     return host == domain || host.endsWith('.$domain');
   }
 
-  String clean(String text) => _applyRules(text, textCleanup);
+  late final List<(RegExp, String)> _textRules = _compileRules(textCleanup);
 
-  String cleanTitle(String text) => _applyRules(text, titleCleanup);
+  late final List<(RegExp, String)> _titleRules = _compileRules(titleCleanup);
 
-  static String _applyRules(String text, List<Map<String, String>> rules) {
-    var t = text;
+  String clean(String text) => _applyRules(text, _textRules);
+
+  String cleanTitle(String text) => _applyRules(text, _titleRules);
+
+  /// Biên dịch luật một lần cho mỗi adapter. Luật hỏng bị bỏ RIÊNG: một regex
+  /// sai trong registry remote không được làm hỏng cả đường mở chương.
+  static List<(RegExp, String)> _compileRules(
+    List<Map<String, String>> rules,
+  ) {
+    final out = <(RegExp, String)>[];
     for (final rule in rules) {
       final p = rule['pattern'];
       if (p == null || p.isEmpty) continue;
-      t = t.replaceAll(RegExp(p), rule['replacement'] ?? '');
+      try {
+        out.add((RegExp(p), rule['replacement'] ?? ''));
+      } on FormatException catch (e) {
+        debugPrint('Bỏ luật dọn hỏng "$p": $e');
+      }
+    }
+    return out;
+  }
+
+  static String _applyRules(String text, List<(RegExp, String)> rules) {
+    var t = text;
+    for (final (re, replacement) in rules) {
+      t = t.replaceAll(re, replacement);
     }
     return t.trim();
   }

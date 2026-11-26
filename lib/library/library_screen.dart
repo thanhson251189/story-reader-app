@@ -455,12 +455,11 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
               title: const Text('Đọc tiếp'),
               onTap: () => Navigator.pop(ctx, 'open'),
             ),
-            if (!isBook)
-              ListTile(
-                leading: const Icon(Icons.headphones),
-                title: const Text('Nghe từ chương đang đọc'),
-                onTap: () => Navigator.pop(ctx, 'listen'),
-              ),
+            ListTile(
+              leading: const Icon(Icons.headphones),
+              title: const Text('Nghe từ chương đang đọc'),
+              onTap: () => Navigator.pop(ctx, 'listen'),
+            ),
             if (!isBook)
               ListTile(
                 leading: const Icon(Icons.download_outlined),
@@ -509,11 +508,19 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
   /// trên thanh tab, chương kế vẫn tự sang như chế độ nghe trong màn đọc.
   Future<void> _listen(Map<String, dynamic> item) async {
     final storyUrl = item['story_url'] as String? ?? '';
-    if (storyUrl.isEmpty || storyUrl.startsWith('book:')) return;
-    final chapterUrl = (item['last_chapter_url'] as String?) ?? storyUrl;
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(const SnackBar(content: Text('Đang tải chương để nghe…')));
+    if (storyUrl.isEmpty) return;
+    final isBook = storyUrl.startsWith('book:');
+    final last = (item['last_chapter_url'] as String?)?.trim() ?? '';
+    // Chương sách trong máy đã nằm sẵn trong cache; URL trần book:<id>
+    // không phải chương nên khi thiếu vị trí thì rơi về chương đầu.
+    final chapterUrl = last.isNotEmpty
+        ? last
+        : (isBook ? '$storyUrl:0' : storyUrl);
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(isBook ? 'Đang mở sách để nghe…' : 'Đang tải chương để nghe…'),
+      ),
+    );
     final ok = await ref
         .read(ttsPlayerProvider)
         .playChapter(

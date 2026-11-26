@@ -1,12 +1,54 @@
+import 'dart:convert';
+
+import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
+import 'package:story_reader/adapters/adapter_repository.dart';
 import 'package:story_reader/core/models.dart';
+import 'package:story_reader/core/providers.dart';
 import 'package:story_reader/data/app_db.dart';
+import 'package:story_reader/fetcher/web_fetcher.dart';
 import 'package:story_reader/sources/registry.dart';
 import 'package:story_reader/sources/source_switch.dart';
+import 'package:story_reader/sources/source_switch_screen.dart';
+
+class _SwitchDb extends AppDb {
+  final settings = <String, String>{};
+
+  @override
+  Future<String?> getSetting(String key) async => settings[key];
+
+  @override
+  Future<void> setSetting(String key, String value) async {
+    settings[key] = value;
+  }
+}
+
+class _RecordingFetcher extends WebFetcher {
+  final hits = <String>[];
+
+  @override
+  Future<List<SearchResult>> searchStories(
+    String query,
+    SourceAdapter a,
+  ) async {
+    hits.add(a.domain);
+    return const [];
+  }
+}
 
 ChapterRef ch(String url, String title) => ChapterRef(title: title, url: url);
+
+SourceAdapter adapter(String domain, {String? searchUrl}) => SourceAdapter(
+  domain: domain,
+  version: 1,
+  selectors: const {},
+  removeSelectors: const [],
+  textCleanup: const [],
+  searchUrl: searchUrl,
+);
 
 void main() {
   test('đổi nguồn: ưu tiên cùng số chương dù vị trí mục lục lệch', () {
@@ -72,6 +114,74 @@ void main() {
       ),
       isNull,
     );
+  });
+
+  test('đổi nguồn: bỏ nguồn 18+ khi bật ẩn, giữ khi tắt', () {
+    final adapters = [
+      adapter('b.test', searchUrl: 'https://b.test/s?q='),
+      adapter('a.test', searchUrl: 'https://a.test/s?q='),
+      adapter('truyensacfull.com', searchUrl: 'https://truyensacfull.com/s?q='),
+      adapter('cur.test', searchUrl: 'https://cur.test/s?q='),
+      adapter('nosearch.test'),
+    ];
+    const adult = {'truyensacfull.com'};
+
+    final hidden = SourceSwitch.availableTargets(
+      adapters: adapters,
+      currentDomain: 'cur.test',
+      hideAdult: true,
+      adultDomains: adult,
+    );
+    expect(hidden.map((a) => a.domain), ['a.test', 'b.test']);
+
+    final shown = SourceSwitch.availableTargets(
+      adapters: adapters,
+      currentDomain: 'cur.test',
+      hideAdult: false,
+      adultDomains: adult,
+    );
+    expect(shown.map((a) => a.domain), [
+      'a.test',
+      'b.test',
+      'truyensacfull.com',
+    ]);
+  });
+
+  testWidgets('mở màn đổi nguồn: tự tìm ngay vẫn tôn trọng ẩn 18+', (
+    tester,
+  ) async {
+    final db = _SwitchDb();
+    // Màn tự tìm trong initState, trước mọi await — cờ 18+ phải được nạp
+    // xong trước khi chọn nguồn, nếu không nguồn 18+ lọt vào lượt đầu.
+    db.settings[SourceRegistry.hideAdultKey] = '1';
+    db.settings[SourceRegistry.adultDomainsKey] = jsonEncode(['adult.test']);
+    final fetcher = _RecordingFetcher();
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          appDbProvider.overrideWithValue(db),
+          webFetcherProvider.overrideWithValue(fetcher),
+          adapterRepoProvider.overrideWithValue(
+            AdapterRepository([
+              adapter('b.test', searchUrl: 'https://b.test/s'),
+              adapter('adult.test', searchUrl: 'https://adult.test/s'),
+              adapter('a.test', searchUrl: 'https://a.test/s'),
+            ]),
+          ),
+        ],
+        child: MaterialApp(
+          home: SourceSwitchScreen(
+            storyTitle: 'Truyện',
+            storyUrl: 'https://cur.test/truyen',
+            chapterUrl: 'https://cur.test/truyen/1',
+            chapterTitle: 'Chương 1',
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(fetcher.hits, ['a.test', 'b.test']);
   });
 
   test('mục 18+: khớp domain và subdomain, không khớp domain khác', () {

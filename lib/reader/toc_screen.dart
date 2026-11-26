@@ -233,7 +233,9 @@ class _TocScreenState extends ConsumerState<TocScreen> {
       if (adapter == null) break;
       try {
         final c = await fetcher.fetchChapter(url, adapter);
-        await db.cacheChapter(c);
+        // Cache kèm chương trước/sau suy từ mục lục: thiếu next_url thì chuỗi
+        // tải trước và nghe nền dừng ở chương này.
+        await db.cacheChapter(await db.fillNav(c));
         await db.pinChapter(url);
         downloaded++;
         if (_dlCancel) {

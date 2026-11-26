@@ -56,18 +56,33 @@ class _SourceSwitchScreenState extends ConsumerState<SourceSwitchScreen> {
   final Map<String, String> _errors = {};
   final Set<String> _loading = {};
   Map<String, String> _names = {};
+  bool _hideAdult = false;
+  Set<String> _adultDomains = {};
 
   List<SourceAdapter> get _targets {
     final current = ref
         .read(adapterRepoProvider)
         .forUrl(widget.storyUrl)
         ?.domain;
-    return ref
-        .read(adapterRepoProvider)
-        .all
-        .where((a) => a.searchUrl != null && a.domain != current)
-        .toList()
-      ..sort((a, b) => a.domain.compareTo(b.domain));
+    return SourceSwitch.availableTargets(
+      adapters: ref.read(adapterRepoProvider).all,
+      currentDomain: current,
+      hideAdult: _hideAdult,
+      adultDomains: _adultDomains,
+    );
+  }
+
+  /// Màn là route riêng nên hiếm khi cài đặt đổi giữa chừng, nhưng đọc lại
+  /// trước mỗi lượt tìm là rẻ và tránh tự tìm ngay lúc mở khi cờ 18+ chưa nạp.
+  Future<void> _refreshAdult() async {
+    final db = ref.read(appDbProvider);
+    final hide = await SourceRegistry.hideAdultEnabled(db);
+    final adult = await SourceRegistry.adultDomains(db);
+    if (!mounted) return;
+    setState(() {
+      _hideAdult = hide;
+      _adultDomains = adult;
+    });
   }
 
   @override
@@ -89,6 +104,10 @@ class _SourceSwitchScreenState extends ConsumerState<SourceSwitchScreen> {
   }
 
   Future<void> _run() async {
+    // Nạp cờ 18+ TRƯỚC khi lấy _targets: lượt tự tìm lúc mở màn chạy trước
+    // mọi await nên nếu để song song sẽ vẫn lộ nguồn 18+.
+    await _refreshAdult();
+    if (!mounted) return;
     final q = _q.text.trim();
     if (q.isEmpty) {
       ScaffoldMessenger.of(

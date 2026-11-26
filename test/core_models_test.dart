@@ -35,4 +35,15 @@ void main() {
     // titleCleanup không được rò sang nội dung chương.
     expect(a.clean('2 đoạn văn'), '2 đoạn văn');
   });
+
+  test('luật dọn hỏng bị bỏ riêng, luật còn lại vẫn chạy', () {
+    final a = SourceAdapter.fromJson({
+      'domain': 'x.test',
+      'textCleanup': [
+        {'pattern': '(', 'replacement': ''},
+        {'pattern': 'bad', 'replacement': 'ok'},
+      ],
+    });
+    expect(a.clean('bad text'), 'ok text');
+  });
 }
