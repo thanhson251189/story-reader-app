@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 import 'package:html/dom.dart' as html_dom;
 import 'package:html/parser.dart' as html_parser;
@@ -175,8 +176,9 @@ class WebFetcher {
         if (c != null) return cleanChapter(c, adapter);
       } on ComicChapterException {
         rethrow;
-      } catch (_) {
+      } catch (e) {
         // API hỏng/chặn: rơi về đọc DOM trong WebView như cũ.
+        debugPrint('API chương lỗi, đọc bằng WebView $url: $e');
       }
     }
     final map = await _fetch(url, chapterJs(adapter), maxTries: maxTries);
@@ -193,8 +195,9 @@ class WebFetcher {
       try {
         final info = await _fetchStoryJsonApi(url, api);
         if (info != null) return info;
-      } catch (_) {
+      } catch (e) {
         // API hỏng/chặn bot: rơi về quét DOM như cũ.
+        debugPrint('API mục lục lỗi, quét DOM $url: $e');
       }
     }
     final toc = adapter.tocApi;
@@ -202,16 +205,18 @@ class WebFetcher {
       try {
         final info = await _fetchStoryApi(url, toc);
         if (info != null) return info;
-      } catch (_) {
+      } catch (e) {
         // API hỏng/chặn bot: rơi về quét DOM như cũ.
+        debugPrint('API mục lục (tocApi) lỗi, quét DOM $url: $e');
       }
     }
     if (adapter.tocPageUrl != null) {
       try {
         final info = await _fetchStoryHtmlPages(url, adapter);
         if (info != null) return info;
-      } catch (_) {
+      } catch (e) {
         // Phân trang HTML hỏng: rơi về quét DOM WebView như cũ.
+        debugPrint('Mục lục phân trang HTML lỗi, quét DOM $url: $e');
       }
     }
     final map = await _fetch(

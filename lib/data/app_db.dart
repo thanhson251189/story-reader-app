@@ -51,9 +51,108 @@ class AppDb {
   static const _createBookmarksSql =
       'CREATE TABLE bookmarks(id INTEGER PRIMARY KEY AUTOINCREMENT, story_url TEXT NOT NULL, chapter_url TEXT NOT NULL, chapter_title TEXT NOT NULL, para_index INTEGER NOT NULL, snippet TEXT NOT NULL, created_at INTEGER NOT NULL, UNIQUE(story_url, chapter_url, para_index))';
 
+  // URL đã chuẩn hóa của chương (bỏ scheme, slash cuối, fragment, hoa thường
+  // host). Cột norm_* được đánh index để tra cứu thay vì quét cả bảng.
+  static String _normStoryOf(String chapterUrl) =>
+      normalizeChapterUrl(storyUrlFromChapter(chapterUrl));
+
+  static Future<void> _addNormColumns(DatabaseExecutor db) async {
+    await db.execute('ALTER TABLE positions ADD COLUMN norm_url TEXT');
+    await db.execute('ALTER TABLE chapter_cache ADD COLUMN norm_url TEXT');
+    await db.execute('ALTER TABLE chapter_cache ADD COLUMN norm_story TEXT');
+    await db.execute('ALTER TABLE library ADD COLUMN norm_story TEXT');
+    await db.execute('ALTER TABLE toc ADD COLUMN norm_url TEXT');
+    await db.execute('ALTER TABLE toc ADD COLUMN norm_story TEXT');
+    await db.execute('ALTER TABLE bookmarks ADD COLUMN norm_story TEXT');
+  }
+
+  static Future<void> _createNormIndexes(DatabaseExecutor db) async {
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_positions_norm ON positions(norm_url)',
+    );
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_cache_norm_url ON chapter_cache(norm_url)',
+    );
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_cache_norm_story ON chapter_cache(norm_story)',
+    );
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_library_norm ON library(norm_story)',
+    );
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_toc_norm_url ON toc(norm_url)',
+    );
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_toc_norm_story ON toc(norm_story)',
+    );
+    // chapterNeighbors lấy chương kế/trước theo (story_url, idx).
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_toc_idx ON toc(story_url, idx)',
+    );
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_bookmarks_norm ON bookmarks(norm_story)',
+    );
+  }
+
+  /// Nâng cấp cũ: tính norm cho dữ liệu đã có, theo lô để không nuốt RAM khi
+  /// mục lục vài chục nghìn dòng.
+  static Future<void> _backfillNormColumns(Database db) async {
+    Future<void> fill(
+      String table,
+      List<String> columns,
+      Map<String, String> Function(Map<String, Object?>) toValues,
+    ) async {
+      const chunk = 2000;
+      var last = 0;
+      while (true) {
+        final rows = await db.rawQuery(
+          'SELECT rowid AS rid, ${columns.join(', ')} FROM $table '
+          'WHERE rowid > ? ORDER BY rowid ASC LIMIT ?',
+          [last, chunk],
+        );
+        if (rows.isEmpty) break;
+        final batch = db.batch();
+        for (final r in rows) {
+          last = r['rid'] as int;
+          batch.update(table, toValues(r), where: 'rowid = ?', whereArgs: [last]);
+        }
+        await batch.commit(noResult: true);
+      }
+    }
+
+    await fill(
+      'positions',
+      ['url'],
+      (r) => {'norm_url': normalizeChapterUrl(r['url'] as String)},
+    );
+    await fill('chapter_cache', ['url'], (r) {
+      final url = r['url'] as String;
+      return {
+        'norm_url': normalizeChapterUrl(url),
+        'norm_story': _normStoryOf(url),
+      };
+    });
+    await fill(
+      'library',
+      ['story_url'],
+      (r) => {'norm_story': normalizeChapterUrl(r['story_url'] as String)},
+    );
+    await fill('toc', ['story_url', 'chapter_url'], (r) {
+      return {
+        'norm_url': normalizeChapterUrl(r['chapter_url'] as String),
+        'norm_story': normalizeChapterUrl(r['story_url'] as String),
+      };
+    });
+    await fill(
+      'bookmarks',
+      ['story_url'],
+      (r) => {'norm_story': normalizeChapterUrl(r['story_url'] as String)},
+    );
+  }
+
   Future<Database> get database async => _db ??= await openDatabase(
     p.join(await getDatabasesPath(), fileName),
-    version: 8,
+    version: 9,
     onCreate: (db, v) async {
       await db.execute(
         'CREATE TABLE positions(url TEXT PRIMARY KEY, offset REAL NOT NULL, updated_at INTEGER NOT NULL)',
@@ -71,6 +170,8 @@ class AppDb {
         'CREATE TABLE toc(story_url TEXT NOT NULL, chapter_url TEXT NOT NULL, title TEXT NOT NULL, idx INTEGER NOT NULL, PRIMARY KEY(story_url, chapter_url))',
       );
       await db.execute(_createBookmarksSql);
+      await _addNormColumns(db);
+      await _createNormIndexes(db);
     },
     onUpgrade: (db, from, to) async {
       if (from < 7) await db.execute(_createBookmarksSql);
@@ -118,6 +219,13 @@ class AppDb {
           "UPDATE settings SET value = replace(value, '$old', '$neu') WHERE key IN ('installedAdapters', 'adapterNames') AND value LIKE '$like'",
         );
       }
+      if (from < 9) {
+        // Cột URL chuẩn hóa + index: tra cứu chương/truyện/vị trí không còn
+        // quét cả bảng. Backfill sau các bước đổi tên miền cũ để norm đúng.
+        await _addNormColumns(db);
+        await _backfillNormColumns(db);
+        await _createNormIndexes(db);
+      }
     },
   );
 
@@ -125,6 +233,7 @@ class AppDb {
     final db = await database;
     await db.insert('positions', {
       'url': url,
+      'norm_url': normalizeChapterUrl(url),
       'offset': offset,
       'updated_at': DateTime.now().millisecondsSinceEpoch,
     }, conflictAlgorithm: ConflictAlgorithm.replace);
@@ -150,24 +259,15 @@ class AppDb {
     String url,
   ) async {
     if (url.startsWith('book:')) return null;
-    final want = normalizeChapterUrl(url);
     final rows = await db.query(
       'positions',
       columns: ['url', 'offset', 'updated_at'],
+      where: 'norm_url = ?',
+      whereArgs: [normalizeChapterUrl(url)],
+      orderBy: 'updated_at DESC',
+      limit: 1,
     );
-    Map<String, Object?>? best;
-    var bestAt = -1;
-    for (final r in rows) {
-      final stored = r['url'] as String;
-      if (stored.startsWith('book:')) continue;
-      if (normalizeChapterUrl(stored) != want) continue;
-      final at = r['updated_at'] as int? ?? 0;
-      if (at >= bestAt) {
-        bestAt = at;
-        best = r;
-      }
-    }
-    return best;
+    return rows.isEmpty ? null : rows.first;
   }
 
   /// Mọi URL chương đã từng mở (bảng positions) — dùng để đánh dấu chương
@@ -242,6 +342,8 @@ class AppDb {
       // fetched_at giữ nguyên thì lần mở sau 7 ngày vẫn được làm mới.
       batch.insert('chapter_cache', {
         'url': c.url,
+        'norm_url': normalizeChapterUrl(c.url),
+        'norm_story': _normStoryOf(c.url),
         'title': c.title,
         'content': jsonEncode(c.paragraphs),
         'next_url': c.nextUrl,
@@ -426,14 +528,14 @@ class AppDb {
     );
     if (exact.isNotEmpty) return exact.first['url'] as String;
     if (url.startsWith('book:')) return null;
-    final want = normalizeChapterUrl(url);
-    final rows = await db.query('chapter_cache', columns: ['url']);
-    for (final r in rows) {
-      final stored = r['url'] as String;
-      if (stored.startsWith('book:')) continue;
-      if (normalizeChapterUrl(stored) == want) return stored;
-    }
-    return null;
+    final rows = await db.query(
+      'chapter_cache',
+      columns: ['url'],
+      where: 'norm_url = ?',
+      whereArgs: [normalizeChapterUrl(url)],
+      limit: 1,
+    );
+    return rows.isEmpty ? null : rows.first['url'] as String;
   }
 
   Future<ChapterContent?> getCachedChapter(String url) async {
@@ -477,11 +579,14 @@ class AppDb {
       }
     }
 
+    final norm = normalizeChapterUrl(storyUrl);
     for (final table in const ['library', 'toc', 'bookmarks']) {
       final rows = await db.query(
         table,
         columns: ['story_url'],
         distinct: true,
+        where: 'norm_story = ?',
+        whereArgs: [norm],
       );
       for (final r in rows) {
         add(r['story_url'] as String?);
@@ -534,6 +639,7 @@ class AppDb {
     );
     await db.insert('library', {
       'story_url': key,
+      'norm_story': normalizeChapterUrl(key),
       'title': title,
       'cover_url': coverUrl ?? (old.isEmpty ? null : old.first['cover_url']),
       'last_chapter_url': lastChapterUrl,
@@ -557,12 +663,15 @@ class AppDb {
   /// Truyện đã nằm trong thư viện chưa. So link đã chuẩn hóa vì cùng một
   /// truyện có thể lệch slash cuối hoặc hoa thường tên miền.
   Future<bool> isInLibrary(String storyUrl) async {
-    final rows = await getLibrary();
-    for (final r in rows) {
-      final stored = r['story_url'] as String? ?? '';
-      if (sameChapterUrl(stored, storyUrl)) return true;
-    }
-    return false;
+    final db = await database;
+    final rows = await db.query(
+      'library',
+      columns: ['story_url'],
+      where: 'norm_story = ?',
+      whereArgs: [normalizeChapterUrl(storyUrl)],
+      limit: 1,
+    );
+    return rows.isNotEmpty;
   }
 
   Future<void> touchLibrary(String storyUrl, String chapterUrl) async {
@@ -607,11 +716,14 @@ class AppDb {
       );
       chapterUrls.addAll(rows.map((r) => r['chapter_url'] as String));
     }
-    final positions = await db.query('positions', columns: ['url']);
+    final positions = await db.query('positions', columns: ['url', 'norm_url']);
+    final tocNorms = {for (final c in chapterUrls) normalizeChapterUrl(c)};
+    final keyNorms = {for (final k in keys) normalizeChapterUrl(k)};
     for (final r in positions) {
       final url = r['url'] as String;
-      final inToc = chapterUrls.any((c) => c == url || sameChapterUrl(c, url));
-      final inStory = keys.any((k) => _chapterOfStory(url, k));
+      final norm = (r['norm_url'] as String?) ?? normalizeChapterUrl(url);
+      final inToc = tocNorms.contains(norm);
+      final inStory = keyNorms.any((k) => norm == k || norm.startsWith('$k/'));
       if (inToc || inStory) {
         await db.delete('positions', where: 'url = ?', whereArgs: [url]);
       }
@@ -689,14 +801,11 @@ class AppDb {
     final keys = await _storyKeys(storyUrl);
     final rows = await db.query(
       'bookmarks',
-      where: 'para_index = ?',
-      whereArgs: [paraIndex],
+      where: 'para_index = ? AND norm_story = ?',
+      whereArgs: [paraIndex, normalizeChapterUrl(storyUrl)],
     );
     for (final r in rows) {
-      final story = r['story_url'] as String? ?? '';
       final chapter = r['chapter_url'] as String? ?? '';
-      final sameStory = keys.contains(story) || sameChapterUrl(story, storyUrl);
-      if (!sameStory) continue;
       if (chapter != chapterUrl && !sameChapterUrl(chapter, chapterUrl)) {
         continue;
       }
@@ -705,6 +814,7 @@ class AppDb {
     }
     await db.insert('bookmarks', {
       'story_url': keys.first,
+      'norm_story': normalizeChapterUrl(keys.first),
       'chapter_url': chapterUrl,
       'chapter_title': chapterTitle,
       'para_index': paraIndex,
@@ -718,13 +828,14 @@ class AppDb {
   /// link lệch nhẹ của cùng truyện.
   Future<List<Map<String, dynamic>>> getBookmarks(String storyUrl) async {
     final db = await database;
-    final keys = await _storyKeys(storyUrl);
-    final merged = <Map<String, dynamic>>[];
-    for (final key in keys) {
-      merged.addAll(
-        await db.query('bookmarks', where: 'story_url = ?', whereArgs: [key]),
-      );
-    }
+    final rows = await db.query(
+      'bookmarks',
+      where: 'norm_story = ?',
+      whereArgs: [normalizeChapterUrl(storyUrl)],
+    );
+    final merged = [
+      for (final r in rows) Map<String, dynamic>.from(r),
+    ];
     merged.sort((a, b) {
       final at = (a['created_at'] as int? ?? 0).compareTo(
         b['created_at'] as int? ?? 0,
@@ -755,6 +866,8 @@ class AppDb {
           'chapter_url': chapters[i].url,
           'title': chapters[i].title,
           'idx': i,
+          'norm_url': normalizeChapterUrl(chapters[i].url),
+          'norm_story': normalizeChapterUrl(key),
         });
       }
       await batch.commit(noResult: true);
@@ -785,27 +898,37 @@ class AppDb {
     return best;
   }
 
+  /// Số chương theo từng truyện, khóa là URL truyện đã chuẩn hóa — màn Thư
+  /// viện đếm bằng một truy vấn thay vì gọi getToc cho từng truyện.
+  Future<Map<String, int>> tocCountByStory() async {
+    final db = await database;
+    final rows = await db.rawQuery(
+      'SELECT norm_story, COUNT(*) AS n FROM toc '
+      'WHERE norm_story IS NOT NULL GROUP BY norm_story',
+    );
+    return {
+      for (final r in rows)
+        if (r['norm_story'] is String)
+          r['norm_story'] as String: (r['n'] as num).toInt(),
+    };
+  }
+
   /// Chương trước/sau của một URL chương suy từ mục lục đã lưu. Dùng làm dự
   /// phòng cho nguồn không có nút prev/next trên trang chương (trang có nút
   /// thì link trên trang luôn thắng). Khớp chương theo URL đã chuẩn hóa để
   /// không lệch một ký tự (slash cuối, fragment) mà âm thầm vô hiệu.
   Future<(String?, String?)> chapterNeighbors(String chapterUrl) async {
     final db = await database;
-    final want = normalizeChapterUrl(chapterUrl);
-    final rows = await db.query(
+    final hit = await db.query(
       'toc',
-      columns: ['story_url', 'chapter_url', 'idx'],
+      columns: ['story_url', 'idx'],
+      where: 'norm_url = ?',
+      whereArgs: [normalizeChapterUrl(chapterUrl)],
+      limit: 1,
     );
-    Map<String, dynamic>? hit;
-    for (final r in rows) {
-      if (normalizeChapterUrl(r['chapter_url'] as String) == want) {
-        hit = r;
-        break;
-      }
-    }
-    if (hit == null) return (null, null);
-    final storyUrl = hit['story_url'] as String;
-    final idx = hit['idx'] as int;
+    if (hit.isEmpty) return (null, null);
+    final storyUrl = hit.first['story_url'] as String;
+    final idx = hit.first['idx'] as int;
     Future<String?> at(int i) async {
       final r = await db.query(
         'toc',

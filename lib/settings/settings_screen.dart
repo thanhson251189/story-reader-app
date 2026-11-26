@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:isolate';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
@@ -192,7 +193,9 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       );
       await dir.create(recursive: true);
       final file = File(p.join(dir.path, name));
-      await file.writeAsString(jsonEncode(data));
+      // Sách đã nhập nằm trong file: mã hoá vài chục MB trên isolate riêng để
+      // UI không đơ trong lúc tạo bản sao lưu.
+      await file.writeAsString(await Isolate.run(() => jsonEncode(data)));
       if (!mounted) return;
       await showDialog<void>(
         context: context,
@@ -297,8 +300,9 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         const SnackBar(content: Text('Đang khôi phục dữ liệu...')),
       );
       final db = ref.read(appDbProvider);
+      final text = await File(path).readAsString();
       final data =
-          jsonDecode(await File(path).readAsString()) as Map<String, dynamic>;
+          (await Isolate.run(() => jsonDecode(text))) as Map<String, dynamic>;
       await DataBackup(db).import(data);
       // Bản nguồn truyện đã cài nằm trong settings khôi phục; nạp luôn để
       // không phải mở lại app.

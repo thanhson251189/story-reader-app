@@ -60,4 +60,51 @@ void main() {
 
     await (await dst.database).close();
   });
+
+  test('phục hồi file v1 (không có cột norm) vẫn tra cứu chuẩn hóa được', () async {
+    final dst = await freshDb('test_backup_v1.db');
+    await DataBackup(dst).import({
+      'app': 'story-reader',
+      'backupVersion': 1,
+      'settings': [
+        {'key': 'lastTitle', 'value': 'T'},
+      ],
+      'library': [
+        {
+          'story_url': 'https://x.test/truyen/',
+          'title': 'Truyện',
+          'last_chapter_url': 'https://x.test/truyen/c1',
+          'updated_at': 1,
+        },
+      ],
+      'toc': [
+        {
+          'story_url': 'https://x.test/truyen/',
+          'chapter_url': 'https://x.test/truyen/c1',
+          'title': 'C1',
+          'idx': 0,
+        },
+        {
+          'story_url': 'https://x.test/truyen/',
+          'chapter_url': 'https://x.test/truyen/c2',
+          'title': 'C2',
+          'idx': 1,
+        },
+      ],
+      'positions': [
+        {
+          'url': 'https://x.test/truyen/c1/',
+          'offset': 12.0,
+          'updated_at': 2,
+        },
+      ],
+      'bookmarks': [],
+      'bookCache': [],
+    });
+
+    expect(await dst.getPosition('https://x.test/truyen/c1'), 12);
+    expect(await dst.getToc('https://x.test/truyen'), hasLength(2));
+    expect((await dst.tocCountByStory())['x.test/truyen'], 2);
+    await (await dst.database).close();
+  });
 }

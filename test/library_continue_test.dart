@@ -24,6 +24,9 @@ class FakeAppDb extends AppDb {
 
   @override
   Future<List<ChapterRef>> getToc(String storyUrl) async => const [];
+
+  @override
+  Future<Map<String, int>> tocCountByStory() async => const {};
 }
 
 void main() {

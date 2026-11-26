@@ -38,6 +38,11 @@ class FakeAppDb extends AppDb {
       tocs[storyUrl] ?? const [];
 
   @override
+  Future<Map<String, int>> tocCountByStory() async => {
+    for (final e in tocs.entries) normalizeChapterUrl(e.key): e.value.length,
+  };
+
+  @override
   Future<bool> saveTocUnlessShorter(String storyUrl, NovelInfo info) async {
     if (!info.tocComplete || info.chapters.isEmpty) return false;
     final cur = tocs[storyUrl] ?? const <ChapterRef>[];

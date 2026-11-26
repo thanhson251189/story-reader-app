@@ -13,7 +13,9 @@ class DataBackup {
   final AppDb db;
   DataBackup(this.db);
 
-  static const backupVersion = 1;
+  // v2 (app 1.0.73): bảng có cột norm_*. Bản cũ từ chối file v2 thay vì
+  // chèn cột lạ vào bảng cũ; bản mới vẫn đọc được file v1 và tự tính norm.
+  static const backupVersion = 2;
 
   Future<Map<String, dynamic>> export() async {
     final d = await db.database;
@@ -59,25 +61,36 @@ class DataBackup {
     }
 
     for (final r in (data['library'] as List? ?? [])) {
+      final m = Map<String, dynamic>.from(r as Map);
+      final story = m['story_url'];
+      if (story is String) m['norm_story'] = normalizeChapterUrl(story);
       batch.insert(
         'library',
-        Map<String, dynamic>.from(r as Map),
+        m,
         conflictAlgorithm: ConflictAlgorithm.replace,
       );
     }
 
     for (final r in (data['toc'] as List? ?? [])) {
+      final m = Map<String, dynamic>.from(r as Map);
+      final story = m['story_url'];
+      final chapter = m['chapter_url'];
+      if (story is String) m['norm_story'] = normalizeChapterUrl(story);
+      if (chapter is String) m['norm_url'] = normalizeChapterUrl(chapter);
       batch.insert(
         'toc',
-        Map<String, dynamic>.from(r as Map),
+        m,
         conflictAlgorithm: ConflictAlgorithm.replace,
       );
     }
 
     for (final r in (data['positions'] as List? ?? [])) {
+      final m = Map<String, dynamic>.from(r as Map);
+      final url = m['url'];
+      if (url is String) m['norm_url'] = normalizeChapterUrl(url);
       batch.insert(
         'positions',
-        Map<String, dynamic>.from(r as Map),
+        m,
         conflictAlgorithm: ConflictAlgorithm.replace,
       );
     }
@@ -88,6 +101,8 @@ class DataBackup {
     final batchBookmarks = d.batch();
     for (final r in (data['bookmarks'] as List? ?? [])) {
       final m = Map<String, dynamic>.from(r as Map)..remove('id');
+      final story = m['story_url'];
+      if (story is String) m['norm_story'] = normalizeChapterUrl(story);
       batchBookmarks.insert(
         'bookmarks',
         m,

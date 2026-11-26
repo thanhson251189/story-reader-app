@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:package_info_plus/package_info_plus.dart';
 
@@ -98,7 +99,9 @@ class SourceRegistry {
           .get(Uri.parse(url))
           .timeout(const Duration(seconds: 10));
       if (res.statusCode == 200) raw = res.body;
-    } catch (_) {}
+    } catch (e) {
+      debugPrint('Tải index nguồn lỗi $url: $e');
+    }
     if (raw != null) {
       final entries = parseIndex(raw);
       if (entries != null) {
@@ -370,7 +373,9 @@ class SourceRegistry {
       try {
         await install(e);
         ok++;
-      } catch (_) {}
+      } catch (err) {
+        debugPrint('Cập nhật nguồn ${e.domain} lỗi: $err');
+      }
     }
     return ok;
   }

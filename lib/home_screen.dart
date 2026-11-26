@@ -91,7 +91,9 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
           SnackBar(content: Text('Đã tự cập nhật $updated nguồn truyện')),
         );
       }
-    } catch (_) {}
+    } catch (e) {
+      debugPrint('Tự cập nhật nguồn lỗi: $e');
+    }
     if (!mounted) return;
     if ((await db.getSetting('autoCheckNew') ?? '1') != '1') return;
     if (LibraryChecker.running) return;

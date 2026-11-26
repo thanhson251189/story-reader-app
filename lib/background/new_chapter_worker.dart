@@ -19,8 +19,8 @@ const _taskName = 'story_reader_new_chapters';
 void newChapterCallbackDispatcher() {
   Workmanager().executeTask((task, inputData) async {
     DartPluginRegistrant.ensureInitialized();
+    final db = AppDb();
     try {
-      final db = AppDb();
       if ((await db.getSetting('notifyNewChapters') ?? '0') != '1') {
         return true;
       }
@@ -42,6 +42,12 @@ void newChapterCallbackDispatcher() {
     } catch (e) {
       debugPrint('Kiểm chương mới nền lỗi: $e');
       return false;
+    } finally {
+      try {
+        await (await db.database).close();
+      } catch (e) {
+        debugPrint('Đóng DB worker lỗi: $e');
+      }
     }
   });
 }

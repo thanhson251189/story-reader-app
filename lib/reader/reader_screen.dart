@@ -311,6 +311,14 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen>
 
   bool _isTopRoute = true;
   List<GlobalKey> _paraKeys = [];
+
+  // Widget đoạn văn dùng lại giữa các lần rebuild: TtsPlayer phát sự kiện
+  // liên tục, nếu mỗi lần dựng lại 300 Text thì giật khi chương dài. Widget
+  // dùng lại đúng object nên Flutter bỏ qua cả cây con; chỉ đoạn đang đọc
+  // (hoặc đoạn nháy sáng) được dựng lại.
+  List<Widget>? _paraBaseCache;
+  ChapterContent? _paraBaseContent;
+  String _paraBaseStyle = '';
   int _lastSpokenPara = -1;
   String? _shownError;
   // Chương đang đọc nằm ở đâu trong mục lục đã lưu: biết đang ở chương cuối
@@ -546,10 +554,14 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen>
                 } else {
                   c = fresh;
                 }
-              } catch (_) {}
+              } catch (e) {
+                debugPrint('Làm mới chương lỗi, giữ bản cũ $url: $e');
+              }
             }
           }
-        } catch (_) {}
+        } catch (e) {
+          debugPrint('Đọc chương/vị trí lỗi $url: $e');
+        }
       }
       if (c == null) {
         if (url.startsWith('book:')) {
@@ -2106,17 +2118,7 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen>
                   ),
                 ),
                 const SizedBox(height: 16),
-                for (var i = 0; i < c.paragraphs.length; i++)
-                  Padding(
-                    padding: EdgeInsets.only(bottom: _fontSize * 0.7),
-                    child: _paragraph(
-                      i,
-                      c.paragraphs[i],
-                      style,
-                      activePara == i,
-                      chunkText,
-                    ),
-                  ),
+                ..._paragraphWidgets(c, style, activePara, chunkText, fg),
                 if (c.nextUrl != null)
                   Center(
                     child: Padding(
@@ -2562,6 +2564,46 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen>
         ),
       ),
     );
+  }
+
+  /// Dựng danh sách đoạn, giữ nguyên object cho đoạn thường để Flutter bỏ qua
+  /// subtree. Chỉ đoạn đang đọc/đoạn nháy sáng cần dựng mới.
+  List<Widget> _paragraphWidgets(
+    ChapterContent c,
+    TextStyle style,
+    int active,
+    String chunkText,
+    Color fg,
+  ) {
+    final styleKey =
+        '$_fontId|$_fontSize|$_lineHeight|${fg.toARGB32()}';
+    var base = _paraBaseCache;
+    if (base == null ||
+        !identical(c, _paraBaseContent) ||
+        styleKey != _paraBaseStyle ||
+        base.length != c.paragraphs.length) {
+      base = [
+        for (var i = 0; i < c.paragraphs.length; i++)
+          Text(
+            c.paragraphs[i],
+            key: i < _paraKeys.length ? _paraKeys[i] : null,
+            style: style,
+          ),
+      ];
+      _paraBaseCache = base;
+      _paraBaseContent = c;
+      _paraBaseStyle = styleKey;
+    }
+    final pad = EdgeInsets.only(bottom: _fontSize * 0.7);
+    return [
+      for (var i = 0; i < c.paragraphs.length; i++)
+        Padding(
+          padding: pad,
+          child: (i == active && chunkText.isNotEmpty) || _flashPara == i
+              ? _paragraph(i, c.paragraphs[i], style, i == active, chunkText)
+              : base[i],
+        ),
+    ];
   }
 
   Widget _paragraph(

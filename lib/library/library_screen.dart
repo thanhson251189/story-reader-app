@@ -214,14 +214,19 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
     final lib = await db.getLibrary();
     // Đếm chương trong mục lục đã lưu cho từng truyện; truyện chưa có mục
     // lục (hoặc DB lỗi) thì bỏ qua, subtitle về dạng cũ.
+    // Đếm bằng một truy vấn GROUP BY thay vì getToc cho từng truyện (mỗi lần
+    // getToc còn phải dò biến thể URL truyện trên 3 bảng).
     final counts = <String, int>{};
-    for (final item in lib) {
-      final url = item['story_url'] as String?;
-      if (url == null) continue;
-      try {
-        final toc = await db.getToc(url);
-        if (toc.isNotEmpty) counts[url] = toc.length;
-      } catch (_) {}
+    try {
+      final tocCounts = await db.tocCountByStory();
+      for (final item in lib) {
+        final url = item['story_url'] as String?;
+        if (url == null) continue;
+        final n = tocCounts[normalizeChapterUrl(url)];
+        if (n != null && n > 0) counts[url] = n;
+      }
+    } catch (e) {
+      debugPrint('Đếm chương thư viện lỗi: $e');
     }
     final sort = await db.getSetting('librarySort') ?? 'recent';
     final lastUrl = await db.getSetting('lastUrl');

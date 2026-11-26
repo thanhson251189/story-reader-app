@@ -365,6 +365,97 @@ void main() {
     await (await db.database).close();
   });
 
+  test('nâng cấp v8 → v9: backfill norm và tra cứu lệch URL vẫn khớp', () async {
+    const name = 'db_migrate_v9_test.db';
+    final path = p.join(await getDatabasesPath(), name);
+    if (await databaseFactory.databaseExists(path)) {
+      await databaseFactory.deleteDatabase(path);
+    }
+    // Dựng DB phiên bản 8 y như bản cũ: chưa có cột norm_*.
+    final old = await databaseFactory.openDatabase(
+      path,
+      options: OpenDatabaseOptions(
+        version: 8,
+        onCreate: (db, v) async {
+          await db.execute(
+            'CREATE TABLE positions(url TEXT PRIMARY KEY, offset REAL NOT NULL, updated_at INTEGER NOT NULL)',
+          );
+          await db.execute(
+            'CREATE TABLE settings(key TEXT PRIMARY KEY, value TEXT NOT NULL)',
+          );
+          await db.execute(
+            'CREATE TABLE chapter_cache(url TEXT PRIMARY KEY, title TEXT NOT NULL, content TEXT NOT NULL, next_url TEXT, prev_url TEXT, fetched_at INTEGER NOT NULL, pinned INTEGER NOT NULL DEFAULT 0, opened_at INTEGER NOT NULL DEFAULT 0)',
+          );
+          await db.execute(
+            'CREATE TABLE library(story_url TEXT PRIMARY KEY, title TEXT NOT NULL, cover_url TEXT, last_chapter_url TEXT, latest_chapter_url TEXT, latest_chapter_title TEXT, updated_at INTEGER NOT NULL)',
+          );
+          await db.execute(
+            'CREATE TABLE toc(story_url TEXT NOT NULL, chapter_url TEXT NOT NULL, title TEXT NOT NULL, idx INTEGER NOT NULL, PRIMARY KEY(story_url, chapter_url))',
+          );
+          await db.execute(
+            'CREATE TABLE bookmarks(id INTEGER PRIMARY KEY AUTOINCREMENT, story_url TEXT NOT NULL, chapter_url TEXT NOT NULL, chapter_title TEXT NOT NULL, para_index INTEGER NOT NULL, snippet TEXT NOT NULL, created_at INTEGER NOT NULL, UNIQUE(story_url, chapter_url, para_index))',
+          );
+        },
+      ),
+    );
+    const story = 'https://x.test/truyen/';
+    await old.insert('library', {
+      'story_url': story,
+      'title': 'Truyện',
+      'last_chapter_url': '${story}chuong-2',
+      'updated_at': 1,
+    });
+    await old.insert('toc', {
+      'story_url': story,
+      'chapter_url': '${story}chuong-1',
+      'title': 'C1',
+      'idx': 0,
+    });
+    await old.insert('toc', {
+      'story_url': story,
+      'chapter_url': '${story}chuong-2',
+      'title': 'C2',
+      'idx': 1,
+    });
+    await old.insert('positions', {
+      'url': '${story}chuong-2/',
+      'offset': 40.0,
+      'updated_at': 5,
+    });
+    await old.insert('chapter_cache', {
+      'url': '${story}chuong-2/',
+      'title': 'C2',
+      'content': '["a"]',
+      'fetched_at': 5,
+    });
+    await old.insert('bookmarks', {
+      'story_url': story,
+      'chapter_url': '${story}chuong-2',
+      'chapter_title': 'C2',
+      'para_index': 1,
+      'snippet': 'x',
+      'created_at': 1,
+    });
+    await old.close();
+
+    // Lần mở này nâng cấp lên v9 và backfill norm.
+    final db = AppDb(fileName: name);
+    expect(await db.getPosition('https://x.test/truyen/chuong-2'), 40);
+    expect(
+      await db.getCachedChapter('https://x.test/truyen/chuong-2'),
+      isNotNull,
+    );
+    expect(await db.getToc('https://x.test/truyen'), hasLength(2));
+    expect(await db.isInLibrary('https://x.test/truyen'), isTrue);
+    expect(await db.getBookmarks('https://x.test/truyen'), hasLength(1));
+    expect((await db.tocCountByStory())['x.test/truyen'], 2);
+    expect(
+      await db.chapterNeighbors('http://x.test/truyen/chuong-2'),
+      ('https://x.test/truyen/chuong-1', null),
+    );
+    await (await db.database).close();
+  });
+
   test(
     'link truyện lệch slash vẫn cập nhật đang đọc và lấy được mục lục',
     () async {
